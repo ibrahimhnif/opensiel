@@ -1,6 +1,6 @@
 import { and, count, eq, isNull } from "drizzle-orm";
 import type { EnvironmentDto, ProjectDto } from "@opensiel/shared";
-import { badRequest, forbidden, notFound } from "./errors.js";
+import { AppError, badRequest, forbidden, notFound } from "./errors.js";
 import { unwrapDek } from "./crypto.js";
 import type { Db } from "./db/client.js";
 import { environments, orgs, projects, secrets } from "./db/schema.js";
@@ -102,7 +102,20 @@ export function assertEnvScope(actor: MachineActor, environmentId: string): void
 }
 
 export function projectDek(deps: Deps, project: ProjectRow): Buffer {
-  return unwrapDek(deps.env.masterKey, {
+  const key =
+    project.kekVersion === deps.env.masterKeyVersion
+      ? deps.env.masterKey
+      : project.kekVersion === deps.env.nextMasterKeyVersion
+        ? deps.env.nextMasterKey
+        : undefined;
+  if (!key) {
+    throw new AppError(
+      500,
+      `master key version ${project.kekVersion} is not configured`,
+      "missing_key_version",
+    );
+  }
+  return unwrapDek(key, {
     wrapped: project.dekWrapped,
     iv: project.dekIv,
     tag: project.dekTag,

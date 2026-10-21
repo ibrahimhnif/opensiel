@@ -56,8 +56,7 @@ metadata contains key names and paths, never values.
 
 ## Known limitations (v0)
 
-- No SAML, MFA, secret scanning, dynamic credentials, PKI, or external KMS/HSM.
-- No key rotation tooling yet. Rotating `OPENSIEL_MASTER_KEY` requires rewrapping DEKs.
+- No SAML, MFA, PKI, or external KMS/HSM.
 - TLS must be terminated in front of the app (reverse proxy, ingress, or tunnel). Do not
   serve the app directly over plain HTTP on the public internet.
 - The reference deployment uses a single Postgres instance and a single app replica; it is

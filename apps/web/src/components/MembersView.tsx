@@ -11,6 +11,7 @@ import { Label } from "./ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "./ui/select";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "./ui/table";
 import { Notice } from "./Notice";
+import { KeyRotationCard } from "./KeyRotationCard";
 
 interface OrgData {
   org: { id: string; name: string; slug: string };
@@ -327,6 +328,7 @@ export function MembersView() {
           </Table>
         </Card>
       )}
+      {data?.isOwner && <KeyRotationCard />}
     </section>
   );
 }

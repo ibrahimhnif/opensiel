@@ -23,6 +23,7 @@ if (!databaseUrl) {
     host: "127.0.0.1",
     databaseUrl,
     masterKey: parseMasterKey(generateMasterKey()),
+    masterKeyVersion: 1,
     jwtSecret: "test-secret-that-is-long-enough-for-hs256",
     allowSignup: true,
     autoMigrate: true,
@@ -1246,5 +1247,110 @@ if (!databaseUrl) {
     const actions = audit.json<{ logs: { action: string }[] }>().logs.map((log) => log.action);
     expect(actions).toContain("dynamic.lease.create");
     expect(actions).toContain("dynamic.lease.revoke");
+  });
+
+  it("rotates project data keys to the next master key", async () => {
+    const owner = await signup(`rotate-${Date.now()}@test.dev`);
+    const auth = { authorization: `Bearer ${owner.token}` };
+    const projectId = owner.projectId;
+
+    await app.inject({
+      method: "POST",
+      url: `/api/projects/${projectId}/secrets`,
+      headers: auth,
+      payload: { key: "ROTATE_ME", value: "rotate-value", env: "dev" },
+    });
+
+    const status = await app.inject({ method: "GET", url: "/api/admin/key", headers: auth });
+    expect(status.statusCode).toBe(200);
+    expect(status.json<{ currentVersion: number; nextConfigured: boolean }>()).toMatchObject({
+      currentVersion: 1,
+      nextConfigured: false,
+    });
+
+    const noNext = await app.inject({
+      method: "POST",
+      url: "/api/admin/rotate-key",
+      headers: auth,
+    });
+    expect(noNext.statusCode).toBe(409);
+
+    const member = await inviteAndAccept(
+      owner.token,
+      `rotate-member-${Date.now()}@test.dev`,
+      "member",
+    );
+    const forbidden = await app.inject({
+      method: "POST",
+      url: "/api/admin/rotate-key",
+      headers: { authorization: `Bearer ${member.token}` },
+    });
+    expect(forbidden.statusCode).toBe(403);
+
+    env.nextMasterKey = parseMasterKey(generateMasterKey());
+    env.nextMasterKeyVersion = 2;
+
+    const rotated = await app.inject({
+      method: "POST",
+      url: "/api/admin/rotate-key",
+      headers: auth,
+    });
+    expect(rotated.statusCode).toBe(200);
+    const result = rotated.json<{ rotated: number; targetVersion: number }>();
+    expect(result.targetVersion).toBe(2);
+    expect(result.rotated).toBeGreaterThanOrEqual(1);
+
+    const readable = await app.inject({
+      method: "GET",
+      url: `/api/projects/${projectId}/secrets?env=dev`,
+      headers: auth,
+    });
+    expect(
+      readable.json<{ secrets: { key: string; value: string }[] }>().secrets.find(
+        (secret) => secret.key === "ROTATE_ME",
+      )?.value,
+    ).toBe("rotate-value");
+
+    const versions = await database.sql<{ kek_version: number }[]>`
+      select distinct kek_version from projects order by kek_version
+    `;
+    expect(versions.map((row) => row.kek_version)).toEqual([2]);
+
+    const nextKey = env.nextMasterKey!;
+    env.masterKey = nextKey;
+    env.masterKeyVersion = 2;
+    env.nextMasterKey = undefined;
+    env.nextMasterKeyVersion = undefined;
+
+    const afterRestart = await app.inject({
+      method: "GET",
+      url: `/api/projects/${projectId}/secrets?env=dev`,
+      headers: auth,
+    });
+    expect(
+      afterRestart.json<{ secrets: { key: string; value: string }[] }>().secrets.find(
+        (secret) => secret.key === "ROTATE_ME",
+      )?.value,
+    ).toBe("rotate-value");
+
+    const created = await app.inject({
+      method: "POST",
+      url: "/api/projects",
+      headers: auth,
+      payload: { name: "post-rotation" },
+    });
+    expect(created.statusCode).toBe(201);
+    const newProjectId = created.json<{ project: { id: string } }>().project.id;
+    const newRows = await database.sql<{ kek_version: number }[]>`
+      select kek_version from projects where id = ${newProjectId}
+    `;
+    expect(newRows[0]?.kek_version).toBe(2);
+
+    const audit = await app.inject({ method: "GET", url: "/api/audit", headers: auth });
+    expect(
+      audit
+        .json<{ logs: { action: string }[] }>()
+        .logs.some((log) => log.action === "admin.key_rotate"),
+    ).toBe(true);
   });
 }

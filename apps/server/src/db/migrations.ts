@@ -256,4 +256,10 @@ create table dynamic_secret_leases (
 create index dynamic_secret_leases_config_idx on dynamic_secret_leases (config_id, expires_at);
 `,
   },
+  {
+    name: "0006_kek_version",
+    sql: `
+alter table projects add column kek_version integer not null default 1;
+`,
+  },
 ];

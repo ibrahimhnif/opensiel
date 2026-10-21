@@ -24,6 +24,7 @@ export async function createProject(deps: Deps, orgId: string, name: string): Pr
       dekWrapped: wrapped.wrapped,
       dekIv: wrapped.iv,
       dekTag: wrapped.tag,
+      kekVersion: deps.env.masterKeyVersion,
     })
     .returning();
 

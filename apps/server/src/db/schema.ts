@@ -109,6 +109,7 @@ export const projects = pgTable(
     dekWrapped: text("dek_wrapped").notNull(),
     dekIv: text("dek_iv").notNull(),
     dekTag: text("dek_tag").notNull(),
+    kekVersion: integer("kek_version").notNull().default(1),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (table) => [uniqueIndex("projects_org_slug_uq").on(table.orgId, table.slug)],

@@ -22,6 +22,8 @@ identities. MIT licensed, single service, Postgres-backed.
   patterns; every UI surface is built with Tailwind CSS v4 and shadcn-style components.
 - **Dynamic database credentials** — issue short-lived PostgreSQL roles with a TTL, revoke
   them manually, and let the background sweep drop expired roles.
+- **Master key rotation** — rewrap every project data key to a new KEK without re-encrypting
+  secrets.
 - **Machine identities** — client credentials, 15-minute tokens, environment scopes,
   `viewer` / `member` roles.
 - **Audit** — all mutations and secret reads are recorded, values never included.
@@ -125,6 +127,8 @@ token from `POST /api/auth/login`, or machine token from `POST /api/auth/token`)
 | GET | `/projects/:id/dynamic-secrets/leases` | list leases |
 | POST | `/projects/:id/dynamic-secrets/:configId/leases` | issue credentials |
 | POST | `/projects/:id/dynamic-secrets/leases/:leaseId/revoke` | revoke a lease |
+| GET | `/admin/key` | key version status |
+| POST | `/admin/rotate-key` | rewrap project DEKs to the next key |
 | GET/DELETE | `/projects/:id/secrets/:key` | read / soft-delete |
 | GET | `/projects/:id/secrets/:key/versions` | version history |
 | POST | `/projects/:id/secrets/:key/rollback` | roll back to a version |
@@ -239,6 +243,23 @@ The admin connection string is encrypted with the project data key and never ret
 API. Deleting a configuration does not drop roles created by its earlier leases. Only
 PostgreSQL is supported in v0.
 
+## Master key rotation
+
+Secrets are encrypted with per-project data keys; only those keys are wrapped by the master
+key. Rotation therefore rewraps DEKs and leaves secret ciphertext untouched.
+
+1. Generate a new key: `openssl rand -base64 32`.
+2. Set `OPENSIEL_MASTER_KEY_NEXT` to it (optionally `OPENSIEL_MASTER_KEY_NEXT_VERSION`, which
+   defaults to the current version + 1) and restart the server.
+3. Owners open **Members → Encryption key** and click *rotate keys*, or call
+   `POST /api/admin/rotate-key`. Every project moves to the new key version.
+4. Promote the new key: set `OPENSIEL_MASTER_KEY` to the next key,
+   `OPENSIEL_MASTER_KEY_VERSION` to the new version, remove the `_NEXT` variables, and
+   restart.
+
+Keep the old key until step 4 finishes; projects on an unknown version fail to decrypt with
+`missing_key_version`. New projects always use the current `OPENSIEL_MASTER_KEY_VERSION`.
+
 ## Deployment (Kubernetes)
 
 ```bash
@@ -288,7 +309,7 @@ KMS yet.
 
 ## Roadmap
 
-v1: SAML SSO, key rotation, webhook/CI integrations.
+v1: SAML SSO and webhook/CI integrations.
 
 ## License
 

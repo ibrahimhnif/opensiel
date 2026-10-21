@@ -7,6 +7,9 @@ const schema = z.object({
   HOST: z.string().default("0.0.0.0"),
   DATABASE_URL: z.string().min(1),
   OPENSIEL_MASTER_KEY: z.string().min(1),
+  OPENSIEL_MASTER_KEY_VERSION: z.coerce.number().int().min(1).default(1),
+  OPENSIEL_MASTER_KEY_NEXT: z.string().optional(),
+  OPENSIEL_MASTER_KEY_NEXT_VERSION: z.coerce.number().int().min(1).optional(),
   OPENSIEL_JWT_SECRET: z.string().min(32, "OPENSIEL_JWT_SECRET must be at least 32 characters"),
   OPENSIEL_PUBLIC_URL: z.string().url().optional(),
   OPENSIEL_WEB_DIR: z.string().optional(),
@@ -38,6 +41,9 @@ export interface Env {
   host: string;
   databaseUrl: string;
   masterKey: Buffer;
+  masterKeyVersion: number;
+  nextMasterKey?: Buffer;
+  nextMasterKeyVersion?: number;
   jwtSecret: string;
   publicUrl?: string;
   webDir?: string;
@@ -59,6 +65,16 @@ export function loadEnv(source: NodeJS.ProcessEnv = process.env): Env {
   const masterKey = Buffer.from(s.OPENSIEL_MASTER_KEY, "base64");
   if (masterKey.length !== 32) {
     throw new Error("OPENSIEL_MASTER_KEY must decode to exactly 32 bytes (openssl rand -base64 32)");
+  }
+  const nextMasterKeyRaw = s.OPENSIEL_MASTER_KEY_NEXT?.trim() || undefined;
+  const nextMasterKey = nextMasterKeyRaw ? Buffer.from(nextMasterKeyRaw, "base64") : undefined;
+  if (nextMasterKey && nextMasterKey.length !== 32) {
+    throw new Error("OPENSIEL_MASTER_KEY_NEXT must decode to exactly 32 bytes");
+  }
+  const nextMasterKeyVersion =
+    s.OPENSIEL_MASTER_KEY_NEXT_VERSION ?? (nextMasterKey ? s.OPENSIEL_MASTER_KEY_VERSION + 1 : undefined);
+  if (nextMasterKey && nextMasterKeyVersion !== undefined && nextMasterKeyVersion <= s.OPENSIEL_MASTER_KEY_VERSION) {
+    throw new Error("OPENSIEL_MASTER_KEY_NEXT_VERSION must be greater than OPENSIEL_MASTER_KEY_VERSION");
   }
   const isProd = s.NODE_ENV === "production";
   const oidcValues = [s.OPENSIEL_OIDC_ISSUER, s.OPENSIEL_OIDC_CLIENT_ID, s.OPENSIEL_OIDC_CLIENT_SECRET];
@@ -94,6 +110,9 @@ export function loadEnv(source: NodeJS.ProcessEnv = process.env): Env {
     host: s.HOST,
     databaseUrl: s.DATABASE_URL,
     masterKey,
+    masterKeyVersion: s.OPENSIEL_MASTER_KEY_VERSION,
+    nextMasterKey,
+    nextMasterKeyVersion,
     jwtSecret: s.OPENSIEL_JWT_SECRET,
     publicUrl,
     webDir: s.OPENSIEL_WEB_DIR,
