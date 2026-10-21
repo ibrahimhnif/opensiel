@@ -29,6 +29,18 @@ export interface SecretVersion {
   current: boolean;
 }
 
+export interface ChangeRequestSummary {
+  id: string;
+  status: string;
+  requiredApprovals: number;
+  approvals: number;
+}
+
+export interface MutationResult {
+  secret?: { key: string; version: number };
+  changeRequest?: ChangeRequestSummary;
+}
+
 export class OpensielError extends Error {
   constructor(
     public readonly status: number,
@@ -104,14 +116,19 @@ export class OpensielClient {
     key: string,
     value: string,
     options: { path?: string; comment?: string } = {},
-  ): Promise<{ secret: { key: string; version: number } }> {
+  ): Promise<MutationResult> {
     return this.request(`/api/projects/${projectId}/secrets`, {
       method: "POST",
       body: { key, value, env, path: options.path, comment: options.comment },
     });
   }
 
-  deleteSecret(projectId: string, env: string, key: string, path = "/"): Promise<{ ok: boolean }> {
+  deleteSecret(
+    projectId: string,
+    env: string,
+    key: string,
+    path = "/",
+  ): Promise<{ ok?: boolean; changeRequest?: ChangeRequestSummary }> {
     const query = new URLSearchParams({ env, path });
     return this.request(`/api/projects/${projectId}/secrets/${encodeURIComponent(key)}?${query}`, {
       method: "DELETE",
@@ -134,7 +151,7 @@ export class OpensielClient {
     key: string,
     version: number,
     path = "/",
-  ): Promise<{ secret: { version: number } }> {
+  ): Promise<MutationResult> {
     return this.request(`/api/projects/${projectId}/secrets/${encodeURIComponent(key)}/rollback`, {
       method: "POST",
       body: { version, env, path },

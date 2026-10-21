@@ -1,5 +1,6 @@
 import { sql } from "drizzle-orm";
 import {
+  boolean,
   index,
   integer,
   jsonb,
@@ -10,7 +11,7 @@ import {
   uniqueIndex,
   uuid,
 } from "drizzle-orm/pg-core";
-import type { IdentityRole, Role } from "@opensiel/shared";
+import type { ChangeRequestAction, ChangeRequestStatus, IdentityRole, Role } from "@opensiel/shared";
 
 export const users = pgTable(
   "users",
@@ -123,6 +124,8 @@ export const environments = pgTable(
     name: text("name").notNull(),
     slug: text("slug").notNull(),
     position: integer("position").notNull().default(0),
+    approvalRequired: boolean("approval_required").notNull().default(false),
+    requiredApprovals: integer("required_approvals").notNull().default(1),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (table) => [uniqueIndex("environments_project_slug_uq").on(table.projectId, table.slug)],
@@ -206,6 +209,55 @@ export const identityScopes = pgTable(
   (table) => [primaryKey({ columns: [table.identityId, table.environmentId] })],
 );
 
+export const changeRequests = pgTable(
+  "change_requests",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    projectId: uuid("project_id")
+      .notNull()
+      .references(() => projects.id, { onDelete: "cascade" }),
+    environmentId: uuid("environment_id")
+      .notNull()
+      .references(() => environments.id, { onDelete: "cascade" }),
+    action: text("action").$type<ChangeRequestAction>().notNull(),
+    secretKey: text("secret_key").notNull(),
+    path: text("path").notNull(),
+    targetVersion: integer("target_version"),
+    payloadCiphertext: text("payload_ciphertext"),
+    payloadIv: text("payload_iv"),
+    payloadTag: text("payload_tag"),
+    comment: text("comment"),
+    status: text("status").$type<ChangeRequestStatus>().notNull().default("pending"),
+    requestedByType: text("requested_by_type").notNull(),
+    requestedById: text("requested_by_id").notNull(),
+    requestedByName: text("requested_by_name").notNull(),
+    requestedAt: timestamp("requested_at", { withTimezone: true }).notNull().defaultNow(),
+    decidedAt: timestamp("decided_at", { withTimezone: true }),
+    decidedBy: text("decided_by"),
+    decisionNote: text("decision_note"),
+  },
+  (table) => [
+    index("change_requests_project_status_idx").on(table.projectId, table.status, table.requestedAt),
+    index("change_requests_environment_idx").on(table.environmentId, table.status),
+  ],
+);
+
+export const changeRequestApprovals = pgTable(
+  "change_request_approvals",
+  {
+    requestId: uuid("request_id")
+      .notNull()
+      .references(() => changeRequests.id, { onDelete: "cascade" }),
+    userId: uuid("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    decision: text("decision").notNull(),
+    note: text("note"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [primaryKey({ columns: [table.requestId, table.userId] })],
+);
+
 export const auditLogs = pgTable(
   "audit_logs",
   {
@@ -237,3 +289,4 @@ export type EnvironmentRow = typeof environments.$inferSelect;
 export type SecretRow = typeof secrets.$inferSelect;
 export type SecretVersionRow = typeof secretVersions.$inferSelect;
 export type IdentityRow = typeof identities.$inferSelect;
+export type ChangeRequestRow = typeof changeRequests.$inferSelect;

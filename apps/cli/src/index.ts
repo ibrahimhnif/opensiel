@@ -303,20 +303,26 @@ secrets
       if (index <= 0) fail(`invalid pair '${pair}', expected KEY=VALUE`);
       const key = pair.slice(0, index);
       const value = pair.slice(index + 1);
-      const result = await apiRequest<{ secret: { key: string; version: number } }>(
-        `/api/projects/${projectId}/secrets`,
-        {
-          method: "POST",
-          body: {
-            key,
-            value,
-            env,
-            path: options.path,
-            comment: options.comment,
-          },
+      const result = await apiRequest<{
+        secret?: { key: string; version: number };
+        changeRequest?: { id: string; requiredApprovals: number };
+      }>(`/api/projects/${projectId}/secrets`, {
+        method: "POST",
+        body: {
+          key,
+          value,
+          env,
+          path: options.path,
+          comment: options.comment,
         },
-      );
-      console.log(`set ${result.secret.key} (v${result.secret.version}) in ${env}`);
+      });
+      if (result.changeRequest) {
+        console.log(
+          `submitted ${key} for approval (${result.changeRequest.id}) — needs ${result.changeRequest.requiredApprovals} approval(s)`,
+        );
+      } else if (result.secret) {
+        console.log(`set ${result.secret.key} (v${result.secret.version}) in ${env}`);
+      }
     }
   });
 
@@ -330,10 +336,15 @@ secrets
     const env = resolveEnv(options.env as string | undefined);
     const query = new URLSearchParams({ env });
     if (options.path) query.set("path", options.path as string);
-    await apiRequest(`/api/projects/${projectId}/secrets/${encodeURIComponent(key)}?${query}`, {
-      method: "DELETE",
-    });
-    console.log(`deleted ${key} from ${env}`);
+    const result = await apiRequest<{ ok?: boolean; changeRequest?: { id: string } }>(
+      `/api/projects/${projectId}/secrets/${encodeURIComponent(key)}?${query}`,
+      { method: "DELETE" },
+    );
+    console.log(
+      result.changeRequest
+        ? `delete of ${key} submitted for approval (${result.changeRequest.id})`
+        : `deleted ${key} from ${env}`,
+    );
   });
 
 secrets
@@ -378,14 +389,18 @@ secrets
   .action(async (key: string, options) => {
     const projectId = resolveProjectId();
     const env = resolveEnv(options.env as string | undefined);
-    const result = await apiRequest<{ secret: { version: number } }>(
-      `/api/projects/${projectId}/secrets/${encodeURIComponent(key)}/rollback`,
-      {
-        method: "POST",
-        body: { version: Number(options.version), env, path: options.path },
-      },
+    const result = await apiRequest<{
+      secret?: { version: number };
+      changeRequest?: { id: string; requiredApprovals: number };
+    }>(`/api/projects/${projectId}/secrets/${encodeURIComponent(key)}/rollback`, {
+      method: "POST",
+      body: { version: Number(options.version), env, path: options.path },
+    });
+    console.log(
+      result.changeRequest
+        ? `rollback of ${key} submitted for approval (${result.changeRequest.id})`
+        : `rolled back ${key} to v${options.version} (new version v${result.secret?.version})`,
     );
-    console.log(`rolled back ${key} to v${options.version} (new version v${result.secret.version})`);
   });
 
 program

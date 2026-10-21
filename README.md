@@ -10,6 +10,8 @@ identities. MIT licensed, single service, Postgres-backed.
 - **Versioning** — every write is an immutable version; rollback creates a new version.
 - **Team management** — email invites (link shown once), roles `owner/admin/member/viewer`,
   owner-only escalation, and last-owner protection.
+- **Approvals** — opt-in per environment: writes become change requests that need
+  `requiredApprovals` approvals from owners/admins before they are applied.
 - **Machine identities** — client credentials, 15-minute tokens, environment scopes,
   `viewer` / `member` roles.
 - **Audit** — all mutations and secret reads are recorded, values never included.
@@ -104,10 +106,29 @@ token from `POST /api/auth/login`, or machine token from `POST /api/auth/token`)
 | GET/DELETE | `/projects/:id/secrets/:key` | read / soft-delete |
 | GET | `/projects/:id/secrets/:key/versions` | version history |
 | POST | `/projects/:id/secrets/:key/rollback` | roll back to a version |
+| GET | `/projects/:id/change-requests?status=` | list change requests |
+| POST | `/projects/:id/change-requests/:rid/approve\|reject\|cancel` | decide |
+| PATCH | `/projects/:id/environments/:eid/policy` | require approvals / threshold |
 | GET | `/projects/:id/export?env=&format=dotenv\|json` | export |
 | GET/POST | `/projects/:id/identities` | machine identities |
 | POST | `/projects/:id/identities/:id/revoke` | revoke |
 | GET | `/audit?projectId=` | audit trail |
+
+## Approvals
+
+An owner or admin enables approvals per environment in the **Approvals** tab (for example
+`prod` with 2 approvals). From then on, `POST /secrets`, `DELETE /secrets/:key`, and
+rollbacks in that environment return `202` with a change request instead of changing
+anything.
+
+- A request is applied only when it collects `requiredApprovals` approvals from distinct
+  owners/admins.
+- Requesters cannot approve their own request; a rejection closes it immediately.
+- Pending requests can be cancelled by the requester or an admin.
+- Proposed values are encrypted with the project data key before being stored, so pending
+  changes get the same protection as saved secrets.
+
+The CLI prints "submitted for approval (…)" instead of the usual confirmation.
 
 ## Deployment (Kubernetes)
 
@@ -157,8 +178,8 @@ contain values. No SSO, approvals, dynamic secrets, PKI, or KMS yet.
 
 ## Roadmap
 
-v1: OIDC/SAML SSO, approval workflows, dynamic database credentials, secret scanning,
-secret references, key rotation, webhook/CI integrations.
+v1: OIDC/SAML SSO, dynamic database credentials, secret scanning, secret references, key
+rotation, webhook/CI integrations.
 
 ## License
 

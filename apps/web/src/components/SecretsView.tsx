@@ -72,7 +72,10 @@ export function SecretsView({ project, env }: Props) {
     setBusy(true);
     setError("");
     try {
-      await api.post(`/api/projects/${project.id}/secrets`, {
+      const result = await api.post<{
+        secret?: { version: number };
+        changeRequest?: { id: string; requiredApprovals: number };
+      }>(`/api/projects/${project.id}/secrets`, {
         key: editor.key.trim(),
         value: editor.value,
         env,
@@ -80,7 +83,11 @@ export function SecretsView({ project, env }: Props) {
         comment: editor.comment.trim() || undefined,
       });
       setEditor(null);
-      setNotice("secret saved");
+      setNotice(
+        result.changeRequest
+          ? `change submitted for approval (${result.changeRequest.id.slice(0, 8)})`
+          : "secret saved",
+      );
       await load();
     } catch (err) {
       setError(errorMessage(err));
@@ -93,8 +100,14 @@ export function SecretsView({ project, env }: Props) {
     if (!window.confirm(`Delete ${row.key} from ${env}? Version history is kept.`)) return;
     try {
       const params = new URLSearchParams({ env, path: row.path });
-      await api.del(`/api/projects/${project.id}/secrets/${encodeURIComponent(row.key)}?${params}`);
-      setNotice("secret deleted");
+      const result = await api.del<{ ok?: boolean; changeRequest?: { id: string } }>(
+        `/api/projects/${project.id}/secrets/${encodeURIComponent(row.key)}?${params}`,
+      );
+      setNotice(
+        result.changeRequest
+          ? `delete submitted for approval (${result.changeRequest.id.slice(0, 8)})`
+          : "secret deleted",
+      );
       await load();
     } catch (err) {
       setError(errorMessage(err));
@@ -116,13 +129,16 @@ export function SecretsView({ project, env }: Props) {
   async function rollback(version: number) {
     if (!history) return;
     try {
-      await api.post(`/api/projects/${project.id}/secrets/${encodeURIComponent(history.key)}/rollback`, {
-        version,
-        env,
-        path: history.path,
-      });
+      const result = await api.post<{ secret?: { version: number }; changeRequest?: { id: string } }>(
+        `/api/projects/${project.id}/secrets/${encodeURIComponent(history.key)}/rollback`,
+        { version, env, path: history.path },
+      );
       setHistory(null);
-      setNotice(`rolled back ${history.key} to v${version}`);
+      setNotice(
+        result.changeRequest
+          ? `rollback submitted for approval (${result.changeRequest.id.slice(0, 8)})`
+          : `rolled back ${history.key} to v${version}`,
+      );
       await load();
     } catch (err) {
       setError(errorMessage(err));
@@ -159,6 +175,14 @@ export function SecretsView({ project, env }: Props) {
           </button>
         </div>
       </div>
+
+      {project.environments.find((environment) => environment.slug === env)?.approvalRequired && (
+        <div className="banner info-banner">
+          Changes to <code>{env}</code> require{" "}
+          {project.environments.find((environment) => environment.slug === env)?.requiredApprovals}{" "}
+          approval(s) before they are applied.
+        </div>
+      )}
 
       {notice && (
         <div className="banner info-banner">

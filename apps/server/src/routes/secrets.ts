@@ -1,4 +1,4 @@
-import { and, desc, eq, isNotNull, isNull } from "drizzle-orm";
+import { and, desc, eq, isNull } from "drizzle-orm";
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { rollbackSchema, secretPathSchema, secretKeySchema, setSecretSchema, slugSchema } from "@opensiel/shared";
@@ -11,11 +11,17 @@ import {
   normalizePath,
   projectDek,
 } from "../access.js";
-import { decryptValue, encryptValue, fingerprint, secretAad } from "../crypto.js";
+import { decryptValue, secretAad } from "../crypto.js";
 import { notFound, parse } from "../errors.js";
 import { secretVersions, secrets } from "../db/schema.js";
 import type { ProjectRow, SecretRow, SecretVersionRow } from "../db/schema.js";
 import { writeAudit } from "../audit.js";
+import { createChangeRequest } from "../approvals-service.js";
+import {
+  applySecretDelete,
+  applySecretRollback,
+  applySecretWrite,
+} from "../secrets-service.js";
 import type { Actor, Deps } from "../types.js";
 
 const listQuerySchema = z.object({
@@ -206,74 +212,25 @@ export function registerSecretRoutes(app: FastifyInstance, deps: Deps): void {
     const key = parse(secretKeySchema, input.key);
     parse(secretPathSchema, path);
 
-    const active = await deps.db
-      .select()
-      .from(secrets)
-      .where(
-        and(
-          eq(secrets.projectId, project.id),
-          eq(secrets.environmentId, environment.id),
-          eq(secrets.path, path),
-          eq(secrets.key, key),
-          isNull(secrets.deletedAt),
-        ),
-      )
-      .limit(1);
-
-    let secret = active[0];
-    if (!secret) {
-      const deleted = await deps.db
-        .select()
-        .from(secrets)
-        .where(
-          and(
-            eq(secrets.projectId, project.id),
-            eq(secrets.environmentId, environment.id),
-            eq(secrets.path, path),
-            eq(secrets.key, key),
-            isNotNull(secrets.deletedAt),
-          ),
-        )
-        .orderBy(desc(secrets.deletedAt))
-        .limit(1);
-
-      if (deleted[0]) {
-        const revived = await deps.db
-          .update(secrets)
-          .set({ deletedAt: null, updatedAt: new Date() })
-          .where(eq(secrets.id, deleted[0].id))
-          .returning();
-        secret = revived[0];
-      } else {
-        const inserted = await deps.db
-          .insert(secrets)
-          .values({ projectId: project.id, environmentId: environment.id, path, key })
-          .returning();
-        secret = inserted[0];
-      }
+    if (environment.approvalRequired) {
+      const changeRequest = await createChangeRequest(
+        deps,
+        project,
+        environment,
+        { type: actor.type, id: actor.id, name: actor.name },
+        { action: "set", key, path, value: input.value, comment: input.comment ?? null },
+        request.ip,
+      );
+      return reply.code(202).send({ changeRequest });
     }
 
-    const version = secret.latestVersion + 1;
-    const dek = projectDek(deps, project);
-    const encrypted = encryptValue(dek, input.value, secretAad(secret.id, version));
-
-    await deps.db.transaction(async (tx) => {
-      await tx.insert(secretVersions).values({
-        secretId: secret!.id,
-        version,
-        ciphertext: encrypted.ciphertext,
-        iv: encrypted.iv,
-        tag: encrypted.tag,
-        fingerprint: fingerprint(input.value),
-        comment: input.comment ?? null,
-        createdByType: actor.type,
-        createdById: actor.id,
-      });
-      await tx
-        .update(secrets)
-        .set({ latestVersion: version, updatedAt: new Date() })
-        .where(eq(secrets.id, secret!.id));
-    });
+    const result = await applySecretWrite(
+      deps,
+      project,
+      environment,
+      { type: actor.type, id: actor.id, name: actor.name },
+      { key, value: input.value, path, comment: input.comment ?? null },
+    );
 
     await writeAudit(deps, {
       orgId: actor.orgId,
@@ -283,8 +240,8 @@ export function registerSecretRoutes(app: FastifyInstance, deps: Deps): void {
       actorName: actor.name,
       action: "secret.write",
       resourceType: "secret",
-      resourceId: secret.id,
-      metadata: { environment: environment.slug, path, key, version },
+      resourceId: result.secretId,
+      metadata: { environment: environment.slug, path, key, version: result.version },
       ip: request.ip,
     });
 
@@ -292,13 +249,13 @@ export function registerSecretRoutes(app: FastifyInstance, deps: Deps): void {
       secret: {
         key,
         path,
-        version,
+        version: result.version,
         updatedAt: new Date().toISOString(),
       },
     });
   });
 
-  app.delete("/api/projects/:projectId/secrets/:key", async (request) => {
+  app.delete("/api/projects/:projectId/secrets/:key", async (request, reply) => {
     const actor = await requireActor(deps, request);
     assertCanWrite(actor);
     const { projectId, key } = request.params as { projectId: string; key: string };
@@ -308,8 +265,21 @@ export function registerSecretRoutes(app: FastifyInstance, deps: Deps): void {
     if (actor.type === "machine") assertEnvScope(actor, environment.id);
 
     const path = normalizePath(query.path);
-    const secret = await findSecret(deps, project.id, environment.id, path, key);
-    await deps.db.update(secrets).set({ deletedAt: new Date() }).where(eq(secrets.id, secret.id));
+    await findSecret(deps, project.id, environment.id, path, key);
+
+    if (environment.approvalRequired) {
+      const changeRequest = await createChangeRequest(
+        deps,
+        project,
+        environment,
+        { type: actor.type, id: actor.id, name: actor.name },
+        { action: "delete", key, path, comment: null },
+        request.ip,
+      );
+      return reply.code(202).send({ changeRequest });
+    }
+
+    const result = await applySecretDelete(deps, project.id, environment.id, path, key);
 
     await writeAudit(deps, {
       orgId: actor.orgId,
@@ -319,7 +289,7 @@ export function registerSecretRoutes(app: FastifyInstance, deps: Deps): void {
       actorName: actor.name,
       action: "secret.delete",
       resourceType: "secret",
-      resourceId: secret.id,
+      resourceId: result.secretId,
       metadata: { environment: environment.slug, path, key },
       ip: request.ip,
     });
@@ -374,28 +344,25 @@ export function registerSecretRoutes(app: FastifyInstance, deps: Deps): void {
     const target = targetRows[0];
     if (!target) throw notFound("secret version not found");
 
-    const value = decryptRow(deps, project, secret, target);
-    const nextVersion = secret.latestVersion + 1;
-    const dek = projectDek(deps, project);
-    const encrypted = encryptValue(dek, value, secretAad(secret.id, nextVersion));
+    if (environment.approvalRequired) {
+      const changeRequest = await createChangeRequest(
+        deps,
+        project,
+        environment,
+        { type: actor.type, id: actor.id, name: actor.name },
+        { action: "rollback", key, path, targetVersion: target.version, comment: null },
+        request.ip,
+      );
+      return reply.code(202).send({ changeRequest });
+    }
 
-    await deps.db.transaction(async (tx) => {
-      await tx.insert(secretVersions).values({
-        secretId: secret.id,
-        version: nextVersion,
-        ciphertext: encrypted.ciphertext,
-        iv: encrypted.iv,
-        tag: encrypted.tag,
-        fingerprint: target.fingerprint,
-        comment: `rollback to v${target.version}`,
-        createdByType: actor.type,
-        createdById: actor.id,
-      });
-      await tx
-        .update(secrets)
-        .set({ latestVersion: nextVersion, updatedAt: new Date() })
-        .where(eq(secrets.id, secret.id));
-    });
+    const result = await applySecretRollback(
+      deps,
+      project,
+      environment,
+      { type: actor.type, id: actor.id, name: actor.name },
+      { key, path, targetVersion: target.version },
+    );
 
     await writeAudit(deps, {
       orgId: actor.orgId,
@@ -405,19 +372,19 @@ export function registerSecretRoutes(app: FastifyInstance, deps: Deps): void {
       actorName: actor.name,
       action: "secret.rollback",
       resourceType: "secret",
-      resourceId: secret.id,
+      resourceId: result.secretId,
       metadata: {
         environment: environment.slug,
         path,
         key,
-        from: target.version,
-        version: nextVersion,
+        from: result.from,
+        version: result.version,
       },
       ip: request.ip,
     });
 
     return reply.code(201).send({
-      secret: { key, path, version: nextVersion, updatedAt: new Date().toISOString() },
+      secret: { key, path, version: result.version, updatedAt: new Date().toISOString() },
     });
   });
 

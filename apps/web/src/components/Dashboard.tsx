@@ -3,10 +3,11 @@ import type { ProjectDto, UserDto } from "@opensiel/shared";
 import { api, errorMessage } from "../api";
 import { SecretsView } from "./SecretsView";
 import { MembersView } from "./MembersView";
+import { ApprovalsView } from "./ApprovalsView";
 import { IdentitiesView } from "./IdentitiesView";
 import { AuditView } from "./AuditView";
 
-type Tab = "secrets" | "members" | "identities" | "audit";
+type Tab = "secrets" | "approvals" | "members" | "identities" | "audit";
 
 export function Dashboard({ user, onSignedOut }: { user: UserDto; onSignedOut: () => void }) {
   const [projects, setProjects] = useState<ProjectDto[]>([]);
@@ -160,7 +161,7 @@ export function Dashboard({ user, onSignedOut }: { user: UserDto; onSignedOut: (
             </header>
 
             <div className="tabs">
-              {(["secrets", "members", "identities", "audit"] as Tab[]).map((candidate) => (
+              {(["secrets", "approvals", "members", "identities", "audit"] as Tab[]).map((candidate) => (
                 <button
                   key={candidate}
                   className={`tab ${tab === candidate ? "active" : ""}`}
@@ -172,6 +173,13 @@ export function Dashboard({ user, onSignedOut }: { user: UserDto; onSignedOut: (
             </div>
 
             {tab === "secrets" && <SecretsView project={project} env={env} />}
+            {tab === "approvals" && (
+              <ApprovalsView
+                project={project}
+                currentUserId={user.id}
+                canApprove={user.role === "owner" || user.role === "admin"}
+              />
+            )}
             {tab === "members" && <MembersView />}
             {tab === "identities" && <IdentitiesView project={project} />}
             {tab === "audit" && <AuditView project={project} />}

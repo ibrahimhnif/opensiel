@@ -115,6 +115,8 @@ export function toEnvironmentDto(environment: EnvironmentRow): EnvironmentDto {
     name: environment.name,
     slug: environment.slug,
     position: environment.position,
+    approvalRequired: environment.approvalRequired,
+    requiredApprovals: environment.requiredApprovals,
   };
 }
 

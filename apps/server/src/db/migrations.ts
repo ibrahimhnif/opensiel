@@ -167,4 +167,47 @@ create index org_invites_org_idx on org_invites (org_id);
 create unique index org_invites_pending_uq on org_invites (org_id, email) where accepted_at is null;
 `,
   },
+  {
+    name: "0003_approvals",
+    sql: `
+alter table environments add column approval_required boolean not null default false;
+
+alter table environments add column required_approvals integer not null default 1;
+
+create table change_requests (
+  id uuid primary key default gen_random_uuid(),
+  project_id uuid not null references projects(id) on delete cascade,
+  environment_id uuid not null references environments(id) on delete cascade,
+  action text not null,
+  secret_key text not null,
+  path text not null,
+  target_version integer,
+  payload_ciphertext text,
+  payload_iv text,
+  payload_tag text,
+  comment text,
+  status text not null default 'pending',
+  requested_by_type text not null,
+  requested_by_id text not null,
+  requested_by_name text not null,
+  requested_at timestamptz not null default now(),
+  decided_at timestamptz,
+  decided_by text,
+  decision_note text
+);
+
+create index change_requests_project_status_idx on change_requests (project_id, status, requested_at);
+
+create index change_requests_environment_idx on change_requests (environment_id, status);
+
+create table change_request_approvals (
+  request_id uuid not null references change_requests(id) on delete cascade,
+  user_id uuid not null references users(id) on delete cascade,
+  decision text not null,
+  note text,
+  created_at timestamptz not null default now(),
+  primary key (request_id, user_id)
+);
+`,
+  },
 ];

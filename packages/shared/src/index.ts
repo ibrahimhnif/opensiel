@@ -118,11 +118,54 @@ export interface InviteInfoDto {
   expiresAt: string;
 }
 
+export const environmentPolicySchema = z.object({
+  approvalRequired: z.boolean().optional(),
+  requiredApprovals: z.number().int().min(1).max(10).optional(),
+});
+export type EnvironmentPolicyInput = z.infer<typeof environmentPolicySchema>;
+
+export const changeRequestDecisionSchema = z.object({
+  note: z.string().max(500).optional(),
+});
+
+export type ChangeRequestAction = "set" | "delete" | "rollback";
+export type ChangeRequestStatus = "pending" | "approved" | "rejected" | "cancelled";
+
+export interface ChangeRequestDto {
+  id: string;
+  action: ChangeRequestAction;
+  key: string;
+  path: string;
+  comment: string | null;
+  targetVersion: number | null;
+  status: ChangeRequestStatus;
+  environmentId: string;
+  environmentSlug: string;
+  requestedByType: string;
+  requestedById: string;
+  requestedByName: string;
+  requestedAt: string;
+  approvals: number;
+  requiredApprovals: number;
+  approvedBy: string[];
+  decidedAt: string | null;
+  decisionNote: string | null;
+}
+
+export interface EnvironmentPolicyDto {
+  id: string;
+  slug: string;
+  approvalRequired: boolean;
+  requiredApprovals: number;
+}
+
 export interface EnvironmentDto {
   id: string;
   name: string;
   slug: string;
   position: number;
+  approvalRequired: boolean;
+  requiredApprovals: number;
 }
 
 export interface ProjectDto {

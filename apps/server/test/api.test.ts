@@ -62,6 +62,28 @@ if (!databaseUrl) {
     };
   }
 
+  async function inviteAndAccept(
+    ownerToken: string,
+    email: string,
+    role: "admin" | "member" | "viewer",
+  ): Promise<{ token: string }> {
+    const created = await app.inject({
+      method: "POST",
+      url: "/api/org/invites",
+      headers: { authorization: `Bearer ${ownerToken}` },
+      payload: { email, role },
+    });
+    expect(created.statusCode).toBe(201);
+    const inviteToken = created.json<{ token: string }>().token;
+    const accepted = await app.inject({
+      method: "POST",
+      url: "/api/auth/accept-invite",
+      payload: { token: inviteToken, name: role, password: "correct-horse-battery" },
+    });
+    expect(accepted.statusCode).toBe(201);
+    return { token: accepted.json<{ token: string }>().token };
+  }
+
   beforeAll(async () => {
     database = createDb(databaseUrl, { max: 5 });
     await database.sql.unsafe("drop schema if exists public cascade");
@@ -398,5 +420,164 @@ if (!databaseUrl) {
       url: "/api/auth/invite?token=not-a-real-token-value-at-all",
     });
     expect(bogus.statusCode).toBe(404);
+  });
+
+  it("routes sensitive environment writes through approvals", async () => {
+    const owner = await signup(`approvals-${Date.now()}@test.dev`);
+    const auth = { authorization: `Bearer ${owner.token}` };
+    const projectId = owner.projectId;
+    const secretsUrl = `/api/projects/${projectId}/secrets`;
+
+    const policy = await app.inject({
+      method: "PATCH",
+      url: `/api/projects/${projectId}/environments/${owner.prodId}/policy`,
+      headers: auth,
+      payload: { approvalRequired: true, requiredApprovals: 1 },
+    });
+    expect(policy.statusCode).toBe(200);
+
+    const submitted = await app.inject({
+      method: "POST",
+      url: secretsUrl,
+      headers: auth,
+      payload: { key: "PROD_DB", value: "prod-secret", env: "prod" },
+    });
+    expect(submitted.statusCode).toBe(202);
+    const requestId = submitted.json<{ changeRequest: { id: string } }>().changeRequest.id;
+
+    const hidden = await app.inject({
+      method: "GET",
+      url: `${secretsUrl}?env=prod`,
+      headers: auth,
+    });
+    expect(hidden.json<{ secrets: unknown[] }>().secrets).toHaveLength(0);
+
+    const selfApprove = await app.inject({
+      method: "POST",
+      url: `/api/projects/${projectId}/change-requests/${requestId}/approve`,
+      headers: auth,
+    });
+    expect(selfApprove.statusCode).toBe(403);
+
+    const admin = await inviteAndAccept(
+      owner.token,
+      `approver-${Date.now()}@test.dev`,
+      "admin",
+    );
+    const adminAuth = { authorization: `Bearer ${admin.token}` };
+
+    const pendingList = await app.inject({
+      method: "GET",
+      url: `/api/projects/${projectId}/change-requests?status=pending`,
+      headers: adminAuth,
+    });
+    expect(pendingList.json<{ changeRequests: { id: string }[] }>().changeRequests).toHaveLength(1);
+
+    const approved = await app.inject({
+      method: "POST",
+      url: `/api/projects/${projectId}/change-requests/${requestId}/approve`,
+      headers: adminAuth,
+    });
+    expect(approved.statusCode).toBe(200);
+    expect(approved.json<{ applied: boolean }>().applied).toBe(true);
+
+    const visible = await app.inject({
+      method: "GET",
+      url: `${secretsUrl}?env=prod`,
+      headers: adminAuth,
+    });
+    const rows = visible.json<{ secrets: { key: string; value: string }[] }>().secrets;
+    expect(rows.find((row) => row.key === "PROD_DB")?.value).toBe("prod-secret");
+
+    const rejectedRequest = await app.inject({
+      method: "POST",
+      url: secretsUrl,
+      headers: auth,
+      payload: { key: "PROD_DB2", value: "nope", env: "prod" },
+    });
+    const rejectId = rejectedRequest.json<{ changeRequest: { id: string } }>().changeRequest.id;
+    const rejected = await app.inject({
+      method: "POST",
+      url: `/api/projects/${projectId}/change-requests/${rejectId}/reject`,
+      headers: adminAuth,
+      payload: { note: "not now" },
+    });
+    expect(rejected.statusCode).toBe(200);
+    expect(rejected.json<{ applied: boolean }>().applied).toBe(false);
+
+    const afterReject = await app.inject({
+      method: "GET",
+      url: `${secretsUrl}?env=prod`,
+      headers: adminAuth,
+    });
+    expect(
+      afterReject
+        .json<{ secrets: { key: string }[] }>()
+        .secrets.find((row) => row.key === "PROD_DB2"),
+    ).toBeUndefined();
+  });
+
+  it("requires the configured number of distinct approvals", async () => {
+    const owner = await signup(`threshold-${Date.now()}@test.dev`);
+    const auth = { authorization: `Bearer ${owner.token}` };
+    const projectId = owner.projectId;
+
+    await app.inject({
+      method: "PATCH",
+      url: `/api/projects/${projectId}/environments/${owner.prodId}/policy`,
+      headers: auth,
+      payload: { approvalRequired: true, requiredApprovals: 2 },
+    });
+
+    const submitted = await app.inject({
+      method: "POST",
+      url: `/api/projects/${projectId}/secrets`,
+      headers: auth,
+      payload: { key: "TWO_MAN", value: "value", env: "prod" },
+    });
+    const requestId = submitted.json<{ changeRequest: { id: string } }>().changeRequest.id;
+
+    const first = await inviteAndAccept(owner.token, `first-${Date.now()}@test.dev`, "admin");
+    const second = await inviteAndAccept(owner.token, `second-${Date.now()}@test.dev`, "admin");
+    const viewer = await inviteAndAccept(owner.token, `viewer-${Date.now()}@test.dev`, "viewer");
+
+    const viewerAttempt = await app.inject({
+      method: "POST",
+      url: `/api/projects/${projectId}/change-requests/${requestId}/approve`,
+      headers: { authorization: `Bearer ${viewer.token}` },
+    });
+    expect(viewerAttempt.statusCode).toBe(403);
+
+    const firstApprove = await app.inject({
+      method: "POST",
+      url: `/api/projects/${projectId}/change-requests/${requestId}/approve`,
+      headers: { authorization: `Bearer ${first.token}` },
+    });
+    expect(firstApprove.statusCode).toBe(200);
+    expect(firstApprove.json<{ applied: boolean }>().applied).toBe(false);
+
+    const stillHidden = await app.inject({
+      method: "GET",
+      url: `/api/projects/${projectId}/secrets?env=prod`,
+      headers: auth,
+    });
+    expect(stillHidden.json<{ secrets: unknown[] }>().secrets).toHaveLength(0);
+
+    const secondApprove = await app.inject({
+      method: "POST",
+      url: `/api/projects/${projectId}/change-requests/${requestId}/approve`,
+      headers: { authorization: `Bearer ${second.token}` },
+    });
+    expect(secondApprove.statusCode).toBe(200);
+    expect(secondApprove.json<{ applied: boolean }>().applied).toBe(true);
+
+    const applied = await app.inject({
+      method: "GET",
+      url: `/api/projects/${projectId}/secrets?env=prod`,
+      headers: auth,
+    });
+    expect(
+      applied.json<{ secrets: { key: string; value: string }[] }>().secrets[0],
+    ).toMatchObject({ key: "TWO_MAN", value: "value" });
   });
 }
