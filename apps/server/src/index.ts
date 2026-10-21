@@ -3,8 +3,11 @@ import { createDb } from "./db/client.js";
 import { runMigrations } from "./db/migrate.js";
 import { revokeExpiredLeases } from "./dynamic.js";
 import { loadEnv } from "./env.js";
+import { resolveMasterKey } from "./kms.js";
 
 const env = loadEnv();
+env.masterKey = await resolveMasterKey(env);
+if (env.kms) console.log("master key decrypted with AWS KMS");
 const { db, sql } = createDb(env.databaseUrl);
 const deps = { env, db, sql };
 

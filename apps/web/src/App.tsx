@@ -12,6 +12,7 @@ interface BootstrapConfig {
   signupEnabled: boolean;
   version: string;
   oidc?: { enabled: boolean; name: string };
+  saml?: { enabled: boolean; name: string };
 }
 
 export function App() {

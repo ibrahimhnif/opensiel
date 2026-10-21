@@ -16,8 +16,9 @@ identities. MIT licensed, single service, Postgres-backed.
   imports, resolved at read time.
 - **Bulk import** — paste or upload a `.env` file (or JSON) instead of creating keys one by
   one; existing keys get a new version.
-- **SSO (OIDC)** — authorization code + PKCE against any OIDC provider, with invite-based
-  or automatic organization provisioning.
+- **SSO (OIDC + SAML)** — authorization code + PKCE for OIDC and signed assertions for SAML,
+  with invite-based or automatic organization provisioning.
+- **External KMS** — wrap the master key with AWS KMS and decrypt it once at startup.
 - **Secret scanning** — check pasted text or files for project secrets and common credential
   patterns; every UI surface is built with Tailwind CSS v4 and shadcn-style components.
 - **Dynamic database credentials** — issue short-lived PostgreSQL roles with a TTL, revoke
@@ -113,6 +114,9 @@ token from `POST /api/auth/login`, or machine token from `POST /api/auth/token`)
 | POST | `/auth/accept-invite` | join an org from an invite |
 | GET | `/auth/oidc/start` | begin OIDC login (redirect) |
 | GET | `/auth/oidc/callback` | OIDC callback |
+| GET | `/auth/saml/metadata` | service-provider metadata |
+| GET | `/auth/saml/start` | begin SAML login (redirect) |
+| POST | `/auth/saml/callback` | SAML assertion consumer |
 | POST | `/auth/token` | client-credentials token (15 min) |
 | GET | `/org` | organization + members |
 | POST | `/org/invites` | create an invite (owner/admin) |
@@ -195,7 +199,9 @@ dotenv (`#` comments, `export KEY=`, quoted values, escapes) or as a flat JSON o
 - Importing into an environment that requires approvals returns `409`; create one secret at
   a time there so each change can be approved.
 
-## SSO (OpenID Connect)
+## SSO (OIDC and SAML)
+
+### OIDC
 
 Set these on the instance and restart. When the three required values are present, the login
 screen shows a "Continue with …" button.
@@ -218,6 +224,43 @@ is disabled). Existing accounts keep their organization.
 
 Example for Google: add `https://your-host/api/auth/oidc/callback` as an authorized redirect
 URI and use `https://accounts.google.com` as the issuer.
+
+### SAML
+
+| Variable | Purpose |
+| --- | --- |
+| `OPENSIEL_SAML_ENTRY_POINT` | IdP SSO URL (HTTP-Redirect/POST entry point) |
+| `OPENSIEL_SAML_IDP_CERT` | IdP signing certificate (PEM, `\n` escapes allowed) |
+| `OPENSIEL_SAML_ISSUER` | SP entity id; defaults to `OPENSIEL_PUBLIC_URL` |
+| `OPENSIEL_SAML_CALLBACK_URL` | defaults to `<PUBLIC_URL>/api/auth/saml/callback` |
+| `OPENSIEL_SAML_AUDIENCE` | expected audience; defaults to the issuer |
+| `OPENSIEL_SAML_ALLOWED_DOMAINS` | optional comma-separated email domains |
+| `OPENSIEL_SAML_AUTO_CREATE` | defaults to `true`; `false` means invited emails only |
+
+Create the service provider in the IdP with the ACS URL above and the entity id as issuer
+(`GET /api/auth/saml/metadata` returns the metadata XML). Assertions must be signed; the email
+comes from the `email`, `mail`, or `NameID` attribute and the name from `name`, `displayName`,
+or `cn`. Provisioning matches OIDC: a pending invite is joined first, otherwise a new
+organization is created unless auto-create is off.
+
+## External KMS
+
+Instead of keeping the master key in an environment variable, wrap it with AWS KMS and let the
+server decrypt it once at startup:
+
+```bash
+openssl rand -out master.key 32
+WRAPPED=$(aws kms encrypt --key-id "$KEY_ID" --plaintext fileb://master.key \
+  --query CiphertextBlob --output text)
+```
+
+Set `OPENSIEL_KMS_KEY_ID`, `OPENSIEL_KMS_WRAPPED_MASTER_KEY=$WRAPPED`, and
+`OPENSIEL_KMS_REGION` (optional `OPENSIEL_KMS_ENDPOINT`, or explicit
+`OPENSIEL_KMS_ACCESS_KEY_ID` / `OPENSIEL_KMS_SECRET_ACCESS_KEY`). When KMS is configured,
+`OPENSIEL_MASTER_KEY` is not required; the plaintext key only exists in memory. IAM credentials
+can also come from the standard AWS environment, instance profile, or IRSA. Rotation still
+uses `OPENSIEL_MASTER_KEY_NEXT`: wrap the new key with KMS and update the variables after
+rewrapping projects.
 
 ## Secret scanning
 
@@ -340,7 +383,7 @@ KMS yet.
 
 ## Roadmap
 
-v1: SAML SSO and external KMS/HSM support.
+v1: MFA, PKI/SSH certificate issuance, SCIM, and provider plugins.
 
 ## License
 

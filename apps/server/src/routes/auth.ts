@@ -49,6 +49,9 @@ export function registerAuthRoutes(app: FastifyInstance, deps: Deps): void {
       oidc: deps.env.oidc
         ? { enabled: true, name: new URL(deps.env.oidc.issuer).host }
         : { enabled: false },
+      saml: deps.env.saml
+        ? { enabled: true, name: new URL(deps.env.saml.entryPoint).host }
+        : { enabled: false },
     };
   });
 

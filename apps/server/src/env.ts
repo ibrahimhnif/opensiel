@@ -6,10 +6,16 @@ const schema = z.object({
   PORT: z.coerce.number().int().positive().default(8787),
   HOST: z.string().default("0.0.0.0"),
   DATABASE_URL: z.string().min(1),
-  OPENSIEL_MASTER_KEY: z.string().min(1),
+  OPENSIEL_MASTER_KEY: z.string().optional(),
   OPENSIEL_MASTER_KEY_VERSION: z.coerce.number().int().min(1).default(1),
   OPENSIEL_MASTER_KEY_NEXT: z.string().optional(),
   OPENSIEL_MASTER_KEY_NEXT_VERSION: z.coerce.number().int().min(1).optional(),
+  OPENSIEL_KMS_KEY_ID: z.string().optional(),
+  OPENSIEL_KMS_WRAPPED_MASTER_KEY: z.string().optional(),
+  OPENSIEL_KMS_REGION: z.string().default("us-east-1"),
+  OPENSIEL_KMS_ENDPOINT: z.string().url().optional(),
+  OPENSIEL_KMS_ACCESS_KEY_ID: z.string().optional(),
+  OPENSIEL_KMS_SECRET_ACCESS_KEY: z.string().optional(),
   OPENSIEL_JWT_SECRET: z.string().min(32, "OPENSIEL_JWT_SECRET must be at least 32 characters"),
   OPENSIEL_PUBLIC_URL: z.string().url().optional(),
   OPENSIEL_WEB_DIR: z.string().optional(),
@@ -23,7 +29,33 @@ const schema = z.object({
   OPENSIEL_OIDC_SCOPES: z.string().default("openid email profile"),
   OPENSIEL_OIDC_ALLOWED_DOMAINS: z.string().optional(),
   OPENSIEL_OIDC_AUTO_CREATE: z.enum(["true", "false"]).default("true"),
+  OPENSIEL_SAML_ENTRY_POINT: z.string().url().optional(),
+  OPENSIEL_SAML_ISSUER: z.string().min(1).optional(),
+  OPENSIEL_SAML_IDP_CERT: z.string().optional(),
+  OPENSIEL_SAML_CALLBACK_URL: z.string().url().optional(),
+  OPENSIEL_SAML_AUDIENCE: z.string().optional(),
+  OPENSIEL_SAML_ALLOWED_DOMAINS: z.string().optional(),
+  OPENSIEL_SAML_AUTO_CREATE: z.enum(["true", "false"]).default("true"),
 });
+
+export interface KmsConfig {
+  keyId: string;
+  wrappedKey: string;
+  region: string;
+  endpoint?: string;
+  accessKeyId?: string;
+  secretAccessKey?: string;
+}
+
+export interface SamlConfig {
+  entryPoint: string;
+  issuer: string;
+  idpCert: string;
+  callbackUrl: string;
+  audience: string;
+  allowedDomains: string[];
+  autoCreate: boolean;
+}
 
 export interface OidcConfig {
   issuer: string;
@@ -41,6 +73,7 @@ export interface Env {
   host: string;
   databaseUrl: string;
   masterKey: Buffer;
+  kms?: KmsConfig;
   masterKeyVersion: number;
   nextMasterKey?: Buffer;
   nextMasterKeyVersion?: number;
@@ -53,19 +86,53 @@ export interface Env {
   isProd: boolean;
   secureCookies: boolean;
   oidc?: OidcConfig;
+  saml?: SamlConfig;
 }
 
 export function loadEnv(source: NodeJS.ProcessEnv = process.env): Env {
-  const parsed = schema.safeParse(source);
+  const cleaned = Object.fromEntries(
+    Object.entries(source).filter(([, value]) => value !== undefined && value !== ""),
+  );
+  const parsed = schema.safeParse(cleaned);
   if (!parsed.success) {
     const issues = parsed.error.issues.map((i) => `${i.path.join(".")}: ${i.message}`).join("; ");
     throw new Error(`invalid environment: ${issues}`);
   }
   const s = parsed.data;
-  const masterKey = Buffer.from(s.OPENSIEL_MASTER_KEY, "base64");
-  if (masterKey.length !== 32) {
-    throw new Error("OPENSIEL_MASTER_KEY must decode to exactly 32 bytes (openssl rand -base64 32)");
+  const kmsConfigured =
+    Boolean(s.OPENSIEL_KMS_KEY_ID) || Boolean(s.OPENSIEL_KMS_WRAPPED_MASTER_KEY);
+  if (
+    kmsConfigured &&
+    (!s.OPENSIEL_KMS_KEY_ID || !s.OPENSIEL_KMS_WRAPPED_MASTER_KEY)
+  ) {
+    throw new Error(
+      "OPENSIEL_KMS_KEY_ID and OPENSIEL_KMS_WRAPPED_MASTER_KEY must both be set",
+    );
   }
+  if (!s.OPENSIEL_MASTER_KEY && !kmsConfigured) {
+    throw new Error("set OPENSIEL_MASTER_KEY or configure AWS KMS");
+  }
+
+  let masterKey = Buffer.alloc(0);
+  if (s.OPENSIEL_MASTER_KEY) {
+    masterKey = Buffer.from(s.OPENSIEL_MASTER_KEY, "base64");
+    if (masterKey.length !== 32) {
+      throw new Error(
+        "OPENSIEL_MASTER_KEY must decode to exactly 32 bytes (openssl rand -base64 32)",
+      );
+    }
+  }
+
+  const kms: KmsConfig | undefined = kmsConfigured
+    ? {
+        keyId: s.OPENSIEL_KMS_KEY_ID!,
+        wrappedKey: s.OPENSIEL_KMS_WRAPPED_MASTER_KEY!,
+        region: s.OPENSIEL_KMS_REGION,
+        endpoint: s.OPENSIEL_KMS_ENDPOINT,
+        accessKeyId: s.OPENSIEL_KMS_ACCESS_KEY_ID,
+        secretAccessKey: s.OPENSIEL_KMS_SECRET_ACCESS_KEY,
+      }
+    : undefined;
   const nextMasterKeyRaw = s.OPENSIEL_MASTER_KEY_NEXT?.trim() || undefined;
   const nextMasterKey = nextMasterKeyRaw ? Buffer.from(nextMasterKeyRaw, "base64") : undefined;
   if (nextMasterKey && nextMasterKey.length !== 32) {
@@ -86,6 +153,32 @@ export function loadEnv(source: NodeJS.ProcessEnv = process.env): Env {
   }
 
   const publicUrl = s.OPENSIEL_PUBLIC_URL;
+  const samlConfigured = Boolean(s.OPENSIEL_SAML_ENTRY_POINT) || Boolean(s.OPENSIEL_SAML_IDP_CERT);
+  if (
+    samlConfigured &&
+    (!s.OPENSIEL_SAML_ENTRY_POINT || !s.OPENSIEL_SAML_IDP_CERT)
+  ) {
+    throw new Error("OPENSIEL_SAML_ENTRY_POINT and OPENSIEL_SAML_IDP_CERT must both be set");
+  }
+
+  let saml: SamlConfig | undefined;
+  if (s.OPENSIEL_SAML_ENTRY_POINT && s.OPENSIEL_SAML_IDP_CERT) {
+    const issuer = s.OPENSIEL_SAML_ISSUER ?? publicUrl ?? `http://localhost:${s.PORT}`;
+    saml = {
+      entryPoint: s.OPENSIEL_SAML_ENTRY_POINT,
+      issuer,
+      idpCert: s.OPENSIEL_SAML_IDP_CERT.replace(/\\n/g, "\n"),
+      callbackUrl:
+        s.OPENSIEL_SAML_CALLBACK_URL ??
+        `${(publicUrl ?? `http://localhost:${s.PORT}`).replace(/\/$/, "")}/api/auth/saml/callback`,
+      audience: s.OPENSIEL_SAML_AUDIENCE ?? issuer,
+      allowedDomains: (s.OPENSIEL_SAML_ALLOWED_DOMAINS ?? "")
+        .split(",")
+        .map((domain) => domain.trim().toLowerCase())
+        .filter(Boolean),
+      autoCreate: s.OPENSIEL_SAML_AUTO_CREATE === "true",
+    };
+  }
   const oidc: OidcConfig | undefined =
     oidcConfigured === 3
       ? {
@@ -110,6 +203,7 @@ export function loadEnv(source: NodeJS.ProcessEnv = process.env): Env {
     host: s.HOST,
     databaseUrl: s.DATABASE_URL,
     masterKey,
+    kms,
     masterKeyVersion: s.OPENSIEL_MASTER_KEY_VERSION,
     nextMasterKey,
     nextMasterKeyVersion,
@@ -122,5 +216,6 @@ export function loadEnv(source: NodeJS.ProcessEnv = process.env): Env {
     isProd,
     secureCookies: publicUrl ? publicUrl.startsWith("https://") : isProd,
     oidc,
+    saml,
   };
 }

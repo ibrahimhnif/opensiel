@@ -18,6 +18,7 @@ import { registerScanRoutes } from "./routes/scan.js";
 import { registerDynamicRoutes } from "./routes/dynamic.js";
 import { registerAdminRoutes } from "./routes/admin.js";
 import { registerWebhookRoutes } from "./routes/webhooks.js";
+import { registerSamlRoutes } from "./routes/saml.js";
 import type { Deps } from "./types.js";
 
 export async function buildApp(deps: Deps): Promise<FastifyInstance> {
@@ -42,6 +43,18 @@ export async function buildApp(deps: Deps): Promise<FastifyInstance> {
       allowList: [],
     });
   }
+
+  app.addContentTypeParser(
+    "application/x-www-form-urlencoded",
+    { parseAs: "string" },
+    (_request, body, done) => {
+      try {
+        done(null, Object.fromEntries(new URLSearchParams(body as string)));
+      } catch (error) {
+        done(error as Error);
+      }
+    },
+  );
 
   app.addHook("onSend", async (_request, reply) => {
     reply.header("x-content-type-options", "nosniff");
@@ -70,6 +83,7 @@ export async function buildApp(deps: Deps): Promise<FastifyInstance> {
   registerDynamicRoutes(app, deps);
   registerAdminRoutes(app, deps);
   registerWebhookRoutes(app, deps);
+  registerSamlRoutes(app, deps);
 
   app.setErrorHandler((error, request, reply) => {
     if (error instanceof AppError) {

@@ -4,6 +4,8 @@ import { createHmac } from "node:crypto";
 import { exportJWK, generateKeyPair, SignJWT } from "jose";
 import postgres from "postgres";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
+import { SignedXml } from "xml-crypto";
+import { SAML_CERT, SAML_KEY } from "./fixtures/saml.js";
 import { buildApp } from "../src/app.js";
 import { createDb } from "../src/db/client.js";
 import type { Database } from "../src/db/client.js";
@@ -117,6 +119,83 @@ if (!databaseUrl) {
     expect(response.statusCode).toBe(302);
     const session = cookieValue(response.headers["set-cookie"], "opensiel_session");
     if (!session) throw new Error(`SSO login failed: ${response.headers.location}`);
+
+    const me = await app.inject({
+      method: "GET",
+      url: "/api/auth/me",
+      headers: { authorization: `Bearer ${session}` },
+    });
+    expect(me.statusCode).toBe(200);
+    return {
+      token: session,
+      user: me.json<{ user: { id: string; email: string; role: string; orgId: string } }>().user,
+    };
+  }
+
+  function buildSamlResponse(email: string, name: string): string {
+    const now = new Date();
+    const notBefore = new Date(now.getTime() - 60_000).toISOString();
+    const notOnOrAfter = new Date(now.getTime() + 5 * 60_000).toISOString();
+    const issueInstant = now.toISOString();
+    const xml = `<samlp:Response xmlns:samlp="urn:oasis:names:tc:SAML:2.0:protocol" xmlns:saml="urn:oasis:names:tc:SAML:2.0:assertion" ID="_response" Version="2.0" IssueInstant="${issueInstant}" Destination="http://localhost:8787/api/auth/saml/callback">
+  <saml:Issuer>https://idp.test</saml:Issuer>
+  <samlp:Status><samlp:StatusCode Value="urn:oasis:names:tc:SAML:2.0:status:Success"/></samlp:Status>
+  <saml:Assertion ID="_assertion" Version="2.0" IssueInstant="${issueInstant}">
+    <saml:Issuer>https://idp.test</saml:Issuer>
+    <saml:Subject>
+      <saml:NameID Format="urn:oasis:names:tc:SAML:1.1:nameid-format:emailAddress">${email}</saml:NameID>
+      <saml:SubjectConfirmation Method="urn:oasis:names:tc:SAML:2.0:cm:bearer">
+        <saml:SubjectConfirmationData NotOnOrAfter="${notOnOrAfter}" Recipient="http://localhost:8787/api/auth/saml/callback"/>
+      </saml:SubjectConfirmation>
+    </saml:Subject>
+    <saml:Conditions NotBefore="${notBefore}" NotOnOrAfter="${notOnOrAfter}">
+      <saml:AudienceRestriction><saml:Audience>opensiel</saml:Audience></saml:AudienceRestriction>
+    </saml:Conditions>
+    <saml:AuthnStatement AuthnInstant="${issueInstant}" SessionIndex="_session"><saml:AuthnContext><saml:AuthnContextClassRef>urn:oasis:names:tc:SAML:2.0:ac:classes:PasswordProtectedTransport</saml:AuthnContextClassRef></saml:AuthnContext></saml:AuthnStatement>
+    <saml:AttributeStatement>
+      <saml:Attribute Name="email"><saml:AttributeValue>${email}</saml:AttributeValue></saml:Attribute>
+      <saml:Attribute Name="name"><saml:AttributeValue>${name}</saml:AttributeValue></saml:Attribute>
+    </saml:AttributeStatement>
+  </saml:Assertion>
+</samlp:Response>`;
+
+    const signer = new SignedXml({ privateKey: SAML_KEY, publicCert: SAML_CERT });
+    signer.addReference({
+      xpath: "/*[local-name()='Response']/*[local-name()='Assertion']",
+      digestAlgorithm: "http://www.w3.org/2001/04/xmlenc#sha256",
+      transforms: [
+        "http://www.w3.org/2000/09/xmldsig#enveloped-signature",
+        "http://www.w3.org/2001/10/xml-exc-c14n#",
+      ],
+    });
+    signer.canonicalizationAlgorithm = "http://www.w3.org/2001/10/xml-exc-c14n#";
+    signer.signatureAlgorithm = "http://www.w3.org/2001/04/xmldsig-more#rsa-sha256";
+    signer.computeSignature(xml, {
+      prefix: "ds",
+      location: {
+        reference:
+          "/*[local-name()='Response']/*[local-name()='Assertion']/*[local-name()='Issuer']",
+        action: "after",
+      },
+    });
+    return signer.getSignedXml();
+  }
+
+  async function samlLogin(email: string, name = "SAML User") {
+    const xml = buildSamlResponse(email, name);
+    const form = new URLSearchParams({
+      SAMLResponse: Buffer.from(xml).toString("base64"),
+    }).toString();
+
+    const response = await app.inject({
+      method: "POST",
+      url: "/api/auth/saml/callback",
+      headers: { "content-type": "application/x-www-form-urlencoded" },
+      payload: form,
+    });
+    expect(response.statusCode).toBe(302);
+    const session = cookieValue(response.headers["set-cookie"], "opensiel_session");
+    if (!session) throw new Error(`SAML login failed: ${response.headers.location}`);
 
     const me = await app.inject({
       method: "GET",
@@ -296,6 +375,15 @@ if (!databaseUrl) {
       clientSecret: "test-secret",
       redirectUri: "http://localhost:8787/api/auth/oidc/callback",
       scopes: "openid email profile",
+      allowedDomains: [],
+      autoCreate: true,
+    };
+    env.saml = {
+      entryPoint: "https://idp.test/sso",
+      issuer: "opensiel",
+      idpCert: SAML_CERT,
+      callbackUrl: "http://localhost:8787/api/auth/saml/callback",
+      audience: "opensiel",
       allowedDomains: [],
       autoCreate: true,
     };
@@ -1094,6 +1182,91 @@ if (!databaseUrl) {
     `;
     expect(rows[0]?.count).toBe(0);
     env.oidc!.autoCreate = true;
+  });
+
+  it("serves SAML service-provider metadata", async () => {
+    const response = await app.inject({ method: "GET", url: "/api/auth/saml/metadata" });
+    expect(response.statusCode).toBe(200);
+    expect(String(response.headers["content-type"])).toContain("xml");
+    expect(response.body).toContain("entityID");
+    expect(response.body).toContain("/api/auth/saml/callback");
+  });
+
+  it("signs in with a signed SAML assertion", async () => {
+    const email = `saml-${Date.now()}@test.dev`;
+    const first = await samlLogin(email, "Sam L");
+    expect(first.user.email).toBe(email);
+    expect(first.user.role).toBe("owner");
+
+    const projects = await app.inject({
+      method: "GET",
+      url: "/api/projects",
+      headers: { authorization: `Bearer ${first.token}` },
+    });
+    expect(projects.json<{ projects: unknown[] }>().projects).toHaveLength(1);
+
+    const second = await samlLogin(email, "Sam L");
+    expect(second.user.id).toBe(first.user.id);
+    expect(second.user.orgId).toBe(first.user.orgId);
+
+    const audit = await app.inject({
+      method: "GET",
+      url: "/api/audit",
+      headers: { authorization: `Bearer ${first.token}` },
+    });
+    expect(
+      audit
+        .json<{ logs: { action: string }[] }>()
+        .logs.some((log) => log.action === "auth.saml.login"),
+    ).toBe(true);
+  });
+
+  it("joins an organization through a SAML invite", async () => {
+    const owner = await signup(`saml-owner-${Date.now()}@test.dev`);
+    const auth = { authorization: `Bearer ${owner.token}` };
+    const org = await app.inject({ method: "GET", url: "/api/org", headers: auth });
+    const orgId = org.json<{ org: { id: string } }>().org.id;
+
+    const email = `saml-invited-${Date.now()}@test.dev`;
+    const invite = await app.inject({
+      method: "POST",
+      url: "/api/org/invites",
+      headers: auth,
+      payload: { email, role: "member" },
+    });
+    expect(invite.statusCode).toBe(201);
+
+    const login = await samlLogin(email, "Invited Sam");
+    expect(login.user.orgId).toBe(orgId);
+    expect(login.user.role).toBe("member");
+  });
+
+  it("rejects SAML domain restrictions and invalid assertions", async () => {
+    env.saml!.allowedDomains = ["allowed.dev"];
+
+    const blockedEmail = `blocked-${Date.now()}@test.dev`;
+    const blockedXml = buildSamlResponse(blockedEmail, "Blocked");
+    const blocked = await app.inject({
+      method: "POST",
+      url: "/api/auth/saml/callback",
+      headers: { "content-type": "application/x-www-form-urlencoded" },
+      payload: new URLSearchParams({
+        SAMLResponse: Buffer.from(blockedXml).toString("base64"),
+      }).toString(),
+    });
+    expect(blocked.statusCode).toBe(302);
+    expect(String(blocked.headers.location)).toContain("sso_error");
+    expect(cookieValue(blocked.headers["set-cookie"], "opensiel_session")).toBeNull();
+    env.saml!.allowedDomains = [];
+
+    const invalid = await app.inject({
+      method: "POST",
+      url: "/api/auth/saml/callback",
+      headers: { "content-type": "application/x-www-form-urlencoded" },
+      payload: "SAMLResponse=not-valid",
+    });
+    expect(invalid.statusCode).toBe(302);
+    expect(String(invalid.headers.location)).toContain("sso_error");
   });
 
   it("scans text for stored secrets and credential patterns", async () => {

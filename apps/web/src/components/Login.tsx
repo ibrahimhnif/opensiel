@@ -9,7 +9,12 @@ import { Label } from "./ui/label";
 import { Notice } from "./Notice";
 
 interface Props {
-  config: { initialized: boolean; signupEnabled: boolean; oidc?: { enabled: boolean; name: string } };
+  config: {
+    initialized: boolean;
+    signupEnabled: boolean;
+    oidc?: { enabled: boolean; name: string };
+    saml?: { enabled: boolean; name: string };
+  };
   onLogin: (user: UserDto) => void;
   initialError?: string;
 }
@@ -61,6 +66,19 @@ export function Login({ config, onLogin, initialError }: Props) {
               <>
                 <Button asChild className="w-full">
                   <a href="/api/auth/oidc/start">Continue with {config.oidc.name}</a>
+                </Button>
+                <div className="flex items-center gap-3 text-xs text-muted-foreground">
+                  <span className="h-px flex-1 bg-border" />
+                  <span>or use your password</span>
+                  <span className="h-px flex-1 bg-border" />
+                </div>
+              </>
+            )}
+
+            {config.saml?.enabled && (
+              <>
+                <Button asChild className="w-full">
+                  <a href="/api/auth/saml/start">Continue with SAML ({config.saml.name})</a>
                 </Button>
                 <div className="flex items-center gap-3 text-xs text-muted-foreground">
                   <span className="h-px flex-1 bg-border" />

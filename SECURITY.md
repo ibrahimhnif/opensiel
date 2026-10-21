@@ -31,11 +31,17 @@ maintainer instead of filing a public issue for vulnerabilities.
 | User | argon2id password hash | 32-byte session token, only SHA-256 stored, 7-day expiry, httpOnly cookie |
 | Machine identity | client id + client secret | secret stored as SHA-256, exchanged for a 15-minute JWT |
 | OIDC user | provider ID token (authorization code + PKCE) | session cookie as above |
+| SAML user | signed assertion validated against the IdP certificate | session cookie as above |
 
 OIDC logins verify the ID token signature against the provider JWKS, check issuer and
 audience, require a nonce match, and reject emails the provider marks as unverified.
-`OPENSIEL_OIDC_ALLOWED_DOMAINS` can restrict which email domains may sign in. With
-`OPENSIEL_OIDC_AUTO_CREATE=false`, only emails with a pending invite can sign in.
+SAML logins require a signed assertion, validate the audience, recipient, and timeframe, and
+extract the email from `email`, `mail`, or `NameID`.
+`OPENSIEL_OIDC_ALLOWED_DOMAINS` / `OPENSIEL_SAML_ALLOWED_DOMAINS` can restrict which email
+domains may sign in. With auto-create disabled, only emails with a pending invite can sign in.
+
+When AWS KMS is configured, the wrapped master key is decrypted once at startup and never
+written to disk or logs; IAM credentials come from the standard AWS chain.
 
 Machine tokens are stateless; revoking an identity blocks new token issuance, but an
 already-issued token stays valid until it expires (max 15 minutes).
@@ -56,7 +62,7 @@ metadata contains key names and paths, never values.
 
 ## Known limitations (v0)
 
-- No SAML, MFA, PKI, or external KMS/HSM.
+- No MFA, PKI, SCIM, or provider plugins yet.
 - TLS must be terminated in front of the app (reverse proxy, ingress, or tunnel). Do not
   serve the app directly over plain HTTP on the public internet.
 - The reference deployment uses a single Postgres instance and a single app replica; it is
