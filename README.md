@@ -35,6 +35,9 @@ identities, SSO — without an enterprise plan, and without handing secrets to a
 The core is MIT licensed. There is no license server, no phone-home gate, and no feature
 flag that unlocks a paid tier.
 
+> **Live demo:** <https://opensiel.liostech.id> — `demo@opensiel.dev` / `demo-password-123`
+> (read-only shared account).
+
 ## Features
 
 |                             |                                                                                                                                                         |

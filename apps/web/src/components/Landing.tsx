@@ -145,6 +145,10 @@ export function Landing({ authenticated }: { authenticated: boolean }) {
                   </a>
                 </Button>
               </div>
+              <p className="text-xs text-muted-foreground">
+                Demo login: <code>demo@opensiel.dev</code> · <code>demo-password-123</code>{" "}
+                (read-only)
+              </p>
               <div className="flex flex-wrap gap-x-6 gap-y-2 text-xs text-muted-foreground">
                 {["Approvals", "Versioning", "OIDC + SAML", "Dynamic credentials", "KMS"].map(
                   (item) => (
