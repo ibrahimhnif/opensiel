@@ -221,7 +221,7 @@ export function MembersView() {
               <TableHead>Name</TableHead>
               <TableHead>Email</TableHead>
               <TableHead>Role</TableHead>
-              <TableHead>Joined</TableHead>
+              <TableHead className="hidden sm:table-cell">Joined</TableHead>
               <TableHead className="text-right">Actions</TableHead>
             </TableRow>
           </TableHeader>
@@ -261,7 +261,7 @@ export function MembersView() {
                       <Badge>{member.role}</Badge>
                     )}
                   </TableCell>
-                  <TableCell className="text-xs text-muted-foreground">
+                  <TableCell className="hidden text-xs text-muted-foreground sm:table-cell">
                     {formatDate(member.createdAt)}
                   </TableCell>
                   <TableCell className="text-right">

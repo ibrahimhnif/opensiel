@@ -28,6 +28,7 @@ export function App() {
   const [config, setConfig] = useState<BootstrapConfig | null>(null);
   const [user, setUser] = useState<UserDto | null>(null);
   const [error, setError] = useState("");
+  const [booted, setBooted] = useState(false);
   const location = useLocation();
   const navigate = useNavigate();
 
@@ -35,17 +36,18 @@ export function App() {
     let cancelled = false;
     void (async () => {
       try {
-        const bootstrap = await api.get<BootstrapConfig>("/api/auth/config");
+        const [configResult, meResult] = await Promise.allSettled([
+          api.get<BootstrapConfig>("/api/auth/config"),
+          api.get<{ user: UserDto }>("/api/auth/me"),
+        ]);
         if (cancelled) return;
-        setConfig(bootstrap);
-        try {
-          const me = await api.get<{ user: UserDto }>("/api/auth/me");
-          if (!cancelled) setUser(me.user);
-        } catch {
-          /* not logged in */
-        }
+        if (configResult.status === "rejected") throw configResult.reason;
+        setConfig(configResult.value);
+        setUser(meResult.status === "fulfilled" ? meResult.value.user : null);
       } catch (err) {
         if (!cancelled) setError(errorMessage(err));
+      } finally {
+        if (!cancelled) setBooted(true);
       }
     })();
     return () => {
@@ -73,7 +75,7 @@ export function App() {
     );
   }
 
-  if (!config) {
+  if (!booted || !config) {
     return (
       <div className="grid min-h-full place-items-center p-6">
         <span className="flex items-center gap-2 text-sm text-muted-foreground">

@@ -288,7 +288,7 @@ export function DynamicView({ project }: { project: ProjectDto; canManage: boole
                 <TableHead>Name</TableHead>
                 <TableHead>Provider</TableHead>
                 <TableHead>TTL</TableHead>
-                <TableHead>Created</TableHead>
+                <TableHead className="hidden sm:table-cell">Created</TableHead>
                 <TableHead className="text-right">Actions</TableHead>
               </TableRow>
             </TableHeader>
@@ -306,7 +306,7 @@ export function DynamicView({ project }: { project: ProjectDto; canManage: boole
                   <TableCell className="text-xs text-muted-foreground">
                     {formatTtl(config.ttlSeconds)}
                   </TableCell>
-                  <TableCell className="text-xs text-muted-foreground">
+                  <TableCell className="hidden text-xs text-muted-foreground sm:table-cell">
                     {formatDate(config.createdAt)}
                   </TableCell>
                   <TableCell className="text-right">

@@ -339,8 +339,8 @@ export function SecretsView({ project, env }: Props) {
             <TableRow>
               <TableHead>Key</TableHead>
               <TableHead>Value</TableHead>
-              <TableHead>Version</TableHead>
-              <TableHead>Updated</TableHead>
+              <TableHead className="hidden sm:table-cell">Version</TableHead>
+              <TableHead className="hidden md:table-cell">Updated</TableHead>
               <TableHead className="text-right">Actions</TableHead>
             </TableRow>
           </TableHeader>
@@ -395,10 +395,10 @@ export function SecretsView({ project, env }: Props) {
                       </Button>
                     </div>
                   </TableCell>
-                  <TableCell>
+                  <TableCell className="hidden sm:table-cell">
                     <Badge variant="outline">v{row.version}</Badge>
                   </TableCell>
-                  <TableCell className="text-xs text-muted-foreground">
+                  <TableCell className="hidden text-xs text-muted-foreground md:table-cell">
                     {formatDate(row.updatedAt)}
                   </TableCell>
                   <TableCell className="text-right">

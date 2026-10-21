@@ -56,7 +56,7 @@ export function AuditView({ project }: { project: ProjectDto }) {
               <TableHead>Actor</TableHead>
               <TableHead>Action</TableHead>
               <TableHead>Resource</TableHead>
-              <TableHead>Details</TableHead>
+              <TableHead className="hidden lg:table-cell">Details</TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
@@ -75,7 +75,7 @@ export function AuditView({ project }: { project: ProjectDto }) {
                 <TableCell>
                   <Badge variant="outline">{log.resourceType}</Badge>
                 </TableCell>
-                <TableCell className="max-w-md truncate text-xs text-muted-foreground">
+                <TableCell className="hidden max-w-md truncate text-xs text-muted-foreground lg:table-cell">
                   {Object.entries(log.metadata)
                     .filter(([, value]) => typeof value !== "object")
                     .map(([key, value]) => `${key}=${String(value)}`)

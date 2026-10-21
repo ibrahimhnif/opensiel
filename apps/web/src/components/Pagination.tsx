@@ -40,7 +40,7 @@ export function Pagination({
       <span>
         {rangeStart}–{rangeEnd} of {total}
       </span>
-      <div className="flex items-center gap-2">
+      <div className="flex flex-wrap items-center gap-2">
         <Select value={String(pageSize)} onValueChange={(value) => onPageSizeChange(Number(value))}>
           <SelectTrigger className="h-8 w-[104px]">
             <SelectValue />

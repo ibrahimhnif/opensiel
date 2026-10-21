@@ -6,7 +6,16 @@ import { api, errorMessage } from "../api";
 import { cn } from "../lib/utils";
 import { Badge } from "./ui/badge";
 import { Button } from "./ui/button";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "./ui/dialog";
 import { Input } from "./ui/input";
+import { Label } from "./ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "./ui/select";
 import { Notice } from "./Notice";
 import { Logo } from "./Logo";
@@ -42,6 +51,7 @@ export function Dashboard({ user, onSignedOut }: { user: UserDto; onSignedOut: (
   const [creating, setCreating] = useState(false);
   const [newProjectName, setNewProjectName] = useState("");
   const [loading, setLoading] = useState(true);
+  const [mobileCreateOpen, setMobileCreateOpen] = useState(false);
 
   const loadProjects = useCallback(async () => {
     try {
@@ -103,9 +113,9 @@ export function Dashboard({ user, onSignedOut }: { user: UserDto; onSignedOut: (
     setSearchParams(next);
   }
 
-  async function createProject(event: React.FormEvent) {
+  async function createProject(event: React.FormEvent): Promise<boolean> {
     event.preventDefault();
-    if (!newProjectName.trim()) return;
+    if (!newProjectName.trim()) return false;
     try {
       const result = await api.post<{ project: ProjectDto }>("/api/projects", {
         name: newProjectName.trim(),
@@ -117,8 +127,10 @@ export function Dashboard({ user, onSignedOut }: { user: UserDto; onSignedOut: (
         project: result.project.id,
         env: result.project.environments[0]?.slug ?? "dev",
       });
+      return true;
     } catch (err) {
       setError(errorMessage(err));
+      return false;
     }
   }
 
@@ -212,13 +224,18 @@ export function Dashboard({ user, onSignedOut }: { user: UserDto; onSignedOut: (
         </div>
       </aside>
 
-      <main className="flex min-w-0 flex-col gap-6 p-6">
-        <div className="flex items-center justify-between gap-3 md:hidden">
-          <Logo />
+      <main className="flex min-w-0 flex-col gap-6 p-4 md:p-6">
+        <div className="space-y-3 md:hidden">
+          <div className="flex items-center justify-between">
+            <Logo />
+            <Button variant="ghost" size="icon" onClick={signOut} aria-label="sign out">
+              <LogOut className="size-4" />
+            </Button>
+          </div>
           <div className="flex items-center gap-2">
-            {projects.length > 0 && (
+            {projects.length > 0 ? (
               <Select value={projectId} onValueChange={selectProject}>
-                <SelectTrigger className="h-8 w-40">
+                <SelectTrigger className="h-9 flex-1">
                   <SelectValue placeholder="Project" />
                 </SelectTrigger>
                 <SelectContent>
@@ -229,9 +246,17 @@ export function Dashboard({ user, onSignedOut }: { user: UserDto; onSignedOut: (
                   ))}
                 </SelectContent>
               </Select>
+            ) : (
+              <span className="flex-1 text-sm text-muted-foreground">No projects yet</span>
             )}
-            <Button variant="ghost" size="icon" onClick={signOut} aria-label="sign out">
-              <LogOut className="size-4" />
+            <Button
+              variant="outline"
+              size="icon"
+              className="size-9 shrink-0"
+              onClick={() => setMobileCreateOpen(true)}
+              aria-label="new project"
+            >
+              <Plus className="size-4" />
             </Button>
           </div>
         </div>
@@ -242,7 +267,13 @@ export function Dashboard({ user, onSignedOut }: { user: UserDto; onSignedOut: (
           </Notice>
         )}
 
-        {!project ? (
+        {loading && projects.length === 0 ? (
+          <div className="grid flex-1 place-items-center py-16">
+            <span className="flex items-center gap-2 text-sm text-muted-foreground">
+              <Loader2 className="size-4 animate-spin" /> loading projects…
+            </span>
+          </div>
+        ) : !project ? (
           <div className="grid flex-1 place-items-center py-16">
             <div className="w-full max-w-md space-y-5 rounded-xl border bg-card p-6 text-center">
               <FolderPlus className="mx-auto size-10 text-primary" />
@@ -301,11 +332,11 @@ export function Dashboard({ user, onSignedOut }: { user: UserDto; onSignedOut: (
             </header>
 
             <Tabs value={tab} onValueChange={(value) => setTab(value as Tab)}>
-              <TabsList>
+              <TabsList className="w-full max-w-full justify-start overflow-x-auto md:w-fit">
                 {TABS.filter(
                   (entry) => (entry.value !== "dynamic" && entry.value !== "webhooks") || canManage,
                 ).map((entry) => (
-                  <TabsTrigger key={entry.value} value={entry.value}>
+                  <TabsTrigger key={entry.value} value={entry.value} className="shrink-0">
                     {entry.label}
                   </TabsTrigger>
                 ))}
@@ -339,6 +370,41 @@ export function Dashboard({ user, onSignedOut }: { user: UserDto; onSignedOut: (
           </>
         )}
       </main>
+
+      <Dialog open={mobileCreateOpen} onOpenChange={setMobileCreateOpen}>
+        <DialogContent className="max-w-sm">
+          <form
+            className="space-y-4"
+            onSubmit={async (event) => {
+              if (await createProject(event)) setMobileCreateOpen(false);
+            }}
+          >
+            <DialogHeader>
+              <DialogTitle>New project</DialogTitle>
+              <DialogDescription>Projects group secrets by environment.</DialogDescription>
+            </DialogHeader>
+            <div className="space-y-2">
+              <Label htmlFor="mobile-project-name">Name</Label>
+              <Input
+                id="mobile-project-name"
+                autoFocus
+                value={newProjectName}
+                onChange={(event) => setNewProjectName(event.target.value)}
+                placeholder="my-app"
+                required
+              />
+            </div>
+            <DialogFooter>
+              <Button type="button" variant="outline" onClick={() => setMobileCreateOpen(false)}>
+                cancel
+              </Button>
+              <Button type="submit">
+                <Plus className="size-4" /> create
+              </Button>
+            </DialogFooter>
+          </form>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
