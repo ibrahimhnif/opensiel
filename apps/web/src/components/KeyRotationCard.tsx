@@ -61,8 +61,8 @@ export function KeyRotationCard() {
       <h3 className="text-sm font-medium">Encryption key</h3>
       <p className="text-xs text-muted-foreground">
         To rotate, set <code>OPENSIEL_MASTER_KEY_NEXT</code> (and optionally{" "}
-        <code>OPENSIEL_MASTER_KEY_NEXT_VERSION</code>), restart, rewrap projects here, then
-        promote the next key to <code>OPENSIEL_MASTER_KEY</code> and remove the old one.
+        <code>OPENSIEL_MASTER_KEY_NEXT_VERSION</code>), restart, rewrap projects here, then promote
+        the next key to <code>OPENSIEL_MASTER_KEY</code> and remove the old one.
       </p>
       <Card className="space-y-3 p-4">
         {notice && (
@@ -104,7 +104,11 @@ export function KeyRotationCard() {
                 onClick={() => void rotate()}
                 disabled={busy || !status.nextConfigured}
               >
-                {busy ? <Loader2 className="size-4 animate-spin" /> : <KeyRound className="size-4" />}
+                {busy ? (
+                  <Loader2 className="size-4 animate-spin" />
+                ) : (
+                  <KeyRound className="size-4" />
+                )}
                 rotate keys
               </Button>
             </div>

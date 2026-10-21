@@ -105,7 +105,12 @@ export class OpensielClient {
     return this.request("/api/projects", { method: "POST", body: { name } });
   }
 
-  listSecrets(projectId: string, env: string, path = "/", recursive = false): Promise<{ secrets: Secret[] }> {
+  listSecrets(
+    projectId: string,
+    env: string,
+    path = "/",
+    recursive = false,
+  ): Promise<{ secrets: Secret[] }> {
     const query = new URLSearchParams({ env, path, recursive: String(recursive) });
     return this.request(`/api/projects/${projectId}/secrets?${query}`);
   }
@@ -174,7 +179,9 @@ export class OpensielClient {
     path = "/",
   ): Promise<{ versions: SecretVersion[] }> {
     const query = new URLSearchParams({ env, path });
-    return this.request(`/api/projects/${projectId}/secrets/${encodeURIComponent(key)}/versions?${query}`);
+    return this.request(
+      `/api/projects/${projectId}/secrets/${encodeURIComponent(key)}/versions?${query}`,
+    );
   }
 
   rollbackSecret(

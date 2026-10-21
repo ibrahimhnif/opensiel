@@ -1,11 +1,14 @@
 import { useCallback, useEffect, useState } from "react";
 import type { ProjectDto, UserDto } from "@opensiel/shared";
-import { Diamond, FolderPlus, Loader2, LogOut, Plus } from "lucide-react";
+import { FolderPlus, Loader2, LogOut, Plus } from "lucide-react";
 import { api, errorMessage } from "../api";
 import { cn } from "../lib/utils";
+import { Badge } from "./ui/badge";
 import { Button } from "./ui/button";
 import { Input } from "./ui/input";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "./ui/select";
 import { Notice } from "./Notice";
+import { Logo } from "./Logo";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "./ui/tabs";
 import { SecretsView } from "./SecretsView";
 import { ScanView } from "./ScanView";
@@ -17,14 +20,7 @@ import { DynamicView } from "./DynamicView";
 import { WebhooksView } from "./WebhooksView";
 
 type Tab =
-  | "secrets"
-  | "scan"
-  | "dynamic"
-  | "webhooks"
-  | "approvals"
-  | "members"
-  | "identities"
-  | "audit";
+  "secrets" | "scan" | "dynamic" | "webhooks" | "approvals" | "members" | "identities" | "audit";
 
 const TABS: { value: Tab; label: string }[] = [
   { value: "secrets", label: "Secrets" },
@@ -103,10 +99,12 @@ export function Dashboard({ user, onSignedOut }: { user: UserDto; onSignedOut: (
 
   return (
     <div className="grid min-h-full md:grid-cols-[264px_1fr]">
-      <aside className="flex flex-col gap-6 border-b bg-sidebar p-5 md:border-r md:border-b-0">
-        <div className="flex items-center gap-2 text-lg font-semibold tracking-tight">
-          <Diamond className="size-5 text-primary" />
-          opensiel
+      <aside className="hidden flex-col gap-6 border-r bg-sidebar p-5 md:flex">
+        <div className="flex items-center justify-between">
+          <Logo />
+          <Badge variant="outline" className="text-[10px]">
+            v0.1.0
+          </Badge>
         </div>
 
         <div className="flex-1 space-y-3">
@@ -182,6 +180,29 @@ export function Dashboard({ user, onSignedOut }: { user: UserDto; onSignedOut: (
       </aside>
 
       <main className="flex min-w-0 flex-col gap-6 p-6">
+        <div className="flex items-center justify-between gap-3 md:hidden">
+          <Logo />
+          <div className="flex items-center gap-2">
+            {projects.length > 0 && (
+              <Select value={projectId} onValueChange={setProjectId}>
+                <SelectTrigger className="h-8 w-40">
+                  <SelectValue placeholder="Project" />
+                </SelectTrigger>
+                <SelectContent>
+                  {projects.map((candidate) => (
+                    <SelectItem key={candidate.id} value={candidate.id}>
+                      {candidate.name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            )}
+            <Button variant="ghost" size="icon" onClick={signOut} aria-label="sign out">
+              <LogOut className="size-4" />
+            </Button>
+          </div>
+        </div>
+
         {error && (
           <Notice tone="error" onDismiss={() => setError("")}>
             {error}
@@ -189,13 +210,34 @@ export function Dashboard({ user, onSignedOut }: { user: UserDto; onSignedOut: (
         )}
 
         {!project ? (
-          <div className="grid flex-1 place-items-center py-20 text-center">
-            <div className="space-y-3">
-              <FolderPlus className="mx-auto size-10 text-muted-foreground" />
-              <h2 className="text-lg font-semibold">No project selected</h2>
-              <p className="text-sm text-muted-foreground">
-                Create a project to start storing secrets.
-              </p>
+          <div className="grid flex-1 place-items-center py-16">
+            <div className="w-full max-w-md space-y-5 rounded-xl border bg-card p-6 text-center">
+              <FolderPlus className="mx-auto size-10 text-primary" />
+              <div className="space-y-1">
+                <h2 className="text-lg font-semibold">Create your first project</h2>
+                <p className="text-sm text-muted-foreground">
+                  Projects group secrets by environment. You can add more later.
+                </p>
+              </div>
+              <form className="flex gap-2" onSubmit={createProject}>
+                <Input
+                  autoFocus
+                  placeholder="my-app"
+                  value={newProjectName}
+                  onChange={(event) => setNewProjectName(event.target.value)}
+                  required
+                />
+                <Button type="submit">
+                  <Plus className="size-4" /> create
+                </Button>
+              </form>
+              <div className="grid gap-2 text-left text-xs text-muted-foreground">
+                <p>1. Create a project and its environments.</p>
+                <p>2. Add secrets or import an existing .env file.</p>
+                <p>
+                  3. Run <code>opensiel run --env dev -- npm run dev</code>.
+                </p>
+              </div>
             </div>
           </div>
         ) : (
@@ -228,8 +270,7 @@ export function Dashboard({ user, onSignedOut }: { user: UserDto; onSignedOut: (
             <Tabs value={tab} onValueChange={(value) => setTab(value as Tab)}>
               <TabsList>
                 {TABS.filter(
-                  (entry) =>
-                    (entry.value !== "dynamic" && entry.value !== "webhooks") || canManage,
+                  (entry) => (entry.value !== "dynamic" && entry.value !== "webhooks") || canManage,
                 ).map((entry) => (
                   <TabsTrigger key={entry.value} value={entry.value}>
                     {entry.label}
@@ -250,11 +291,7 @@ export function Dashboard({ user, onSignedOut }: { user: UserDto; onSignedOut: (
                 <WebhooksView project={project} />
               </TabsContent>
               <TabsContent value="approvals">
-                <ApprovalsView
-                  project={project}
-                  currentUserId={user.id}
-                  canApprove={canManage}
-                />
+                <ApprovalsView project={project} currentUserId={user.id} canApprove={canManage} />
               </TabsContent>
               <TabsContent value="members">
                 <MembersView />

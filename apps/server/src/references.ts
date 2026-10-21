@@ -61,7 +61,11 @@ export function resolveReferences(secrets: ReferencableSecret[]): Map<string, st
       return resolveValue(referenced, [...stack, id]);
     });
 
-    return resolved.replace(/\u0000(\d+)\u0000/g, (_match, index: string) => escaped[Number(index)] ?? "");
+    return resolved.replace(
+      // eslint-disable-next-line no-control-regex
+      /\u0000(\d+)\u0000/g,
+      (_match, index: string) => escaped[Number(index)] ?? "",
+    );
   };
 
   for (const [id, value] of raw) {

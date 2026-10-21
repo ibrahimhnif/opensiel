@@ -9,10 +9,7 @@ import { environments, identities, identityScopes } from "../db/schema.js";
 import { writeAudit } from "../audit.js";
 import type { Deps } from "../types.js";
 
-function identityDto(
-  identity: typeof identities.$inferSelect,
-  environmentIds: string[],
-) {
+function identityDto(identity: typeof identities.$inferSelect, environmentIds: string[]) {
   return {
     id: identity.id,
     name: identity.name,
@@ -70,7 +67,9 @@ export function registerIdentityRoutes(app: FastifyInstance, deps: Deps): void {
     const envRows = await deps.db
       .select()
       .from(environments)
-      .where(and(eq(environments.projectId, project.id), inArray(environments.id, input.environmentIds)));
+      .where(
+        and(eq(environments.projectId, project.id), inArray(environments.id, input.environmentIds)),
+      );
     if (envRows.length !== new Set(input.environmentIds).size) {
       throw badRequest("one or more environments do not belong to this project");
     }

@@ -62,7 +62,10 @@ interface MachineTokenClaims {
   envIds: string[];
 }
 
-export async function signMachineToken(env: Deps["env"], claims: MachineTokenClaims): Promise<string> {
+export async function signMachineToken(
+  env: Deps["env"],
+  claims: MachineTokenClaims,
+): Promise<string> {
   const key = new TextEncoder().encode(env.jwtSecret);
   return new SignJWT({
     typ: "machine",
@@ -86,7 +89,8 @@ function requestToken(request: FastifyRequest): string | null {
     const value = header.slice(7).trim();
     if (value) return value;
   }
-  const cookies = (request as FastifyRequest & { cookies?: Record<string, string | undefined> }).cookies;
+  const cookies = (request as FastifyRequest & { cookies?: Record<string, string | undefined> })
+    .cookies;
   return cookies?.[SESSION_COOKIE] ?? null;
 }
 
@@ -97,7 +101,10 @@ export async function resolveActor(deps: Deps, request: FastifyRequest): Promise
   if (token.split(".").length === 3) {
     try {
       const key = new TextEncoder().encode(deps.env.jwtSecret);
-      const { payload } = await jwtVerify(token, key, { issuer: "opensiel", algorithms: ["HS256"] });
+      const { payload } = await jwtVerify(token, key, {
+        issuer: "opensiel",
+        algorithms: ["HS256"],
+      });
       if (payload.typ !== "machine") return null;
       return {
         type: "machine",

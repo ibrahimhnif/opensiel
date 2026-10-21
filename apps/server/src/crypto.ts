@@ -1,4 +1,10 @@
-import { createCipheriv, createDecipheriv, createHash, randomBytes, timingSafeEqual } from "node:crypto";
+import {
+  createCipheriv,
+  createDecipheriv,
+  createHash,
+  randomBytes,
+  timingSafeEqual,
+} from "node:crypto";
 
 const ALGORITHM = "aes-256-gcm";
 const DEK_AAD = Buffer.from("opensiel:dek:v1");
@@ -45,7 +51,10 @@ export function unwrapDek(kek: Buffer, key: WrappedKey): Buffer {
   const decipher = createDecipheriv(ALGORITHM, kek, Buffer.from(key.iv, "base64"));
   decipher.setAAD(DEK_AAD);
   decipher.setAuthTag(Buffer.from(key.tag, "base64"));
-  const dek = Buffer.concat([decipher.update(Buffer.from(key.wrapped, "base64")), decipher.final()]);
+  const dek = Buffer.concat([
+    decipher.update(Buffer.from(key.wrapped, "base64")),
+    decipher.final(),
+  ]);
   if (dek.length !== 32) throw new Error("invalid data key");
   return dek;
 }

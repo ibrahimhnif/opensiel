@@ -30,7 +30,10 @@ function unquote(value: string): string {
  */
 export function parseDotenv(text: string): ImportEntry[] {
   const entries = new Map<string, string>();
-  const lines = text.replace(/^\uFEFF/, "").replace(/\r\n/g, "\n").split("\n");
+  const lines = text
+    .replace(/^\uFEFF/, "")
+    .replace(/\r\n/g, "\n")
+    .split("\n");
 
   lines.forEach((rawLine, index) => {
     let line = rawLine.trim();

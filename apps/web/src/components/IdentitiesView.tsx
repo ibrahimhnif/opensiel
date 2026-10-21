@@ -257,9 +257,7 @@ export function IdentitiesView({ project }: { project: ProjectDto }) {
           <form className="space-y-4" onSubmit={create}>
             <DialogHeader>
               <DialogTitle>New machine identity</DialogTitle>
-              <DialogDescription>
-                The client secret is shown once after creation.
-              </DialogDescription>
+              <DialogDescription>The client secret is shown once after creation.</DialogDescription>
             </DialogHeader>
 
             <div className="space-y-2">
@@ -276,10 +274,7 @@ export function IdentitiesView({ project }: { project: ProjectDto }) {
 
             <div className="space-y-2">
               <Label>Role</Label>
-              <Select
-                value={role}
-                onValueChange={(value) => setRole(value as "viewer" | "member")}
-              >
+              <Select value={role} onValueChange={(value) => setRole(value as "viewer" | "member")}>
                 <SelectTrigger>
                   <SelectValue />
                 </SelectTrigger>

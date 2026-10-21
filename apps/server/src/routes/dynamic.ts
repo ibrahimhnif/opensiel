@@ -107,7 +107,11 @@ export function registerDynamicRoutes(app: FastifyInstance, deps: Deps): void {
 
       return reply.code(201).send({ configuration: configDto(config) });
     } catch (error) {
-      if (typeof error === "object" && error !== null && (error as { code?: string }).code === "23505") {
+      if (
+        typeof error === "object" &&
+        error !== null &&
+        (error as { code?: string }).code === "23505"
+      ) {
         throw conflict("a dynamic secret configuration with that name already exists");
       }
       throw error;
@@ -217,45 +221,39 @@ export function registerDynamicRoutes(app: FastifyInstance, deps: Deps): void {
     });
   });
 
-  app.post(
-    "/api/projects/:projectId/dynamic-secrets/leases/:leaseId/revoke",
-    async (request) => {
-      const actor = await requireActor(deps, request);
-      assertCanAdmin(actor);
-      const { projectId, leaseId } = request.params as { projectId: string; leaseId: string };
-      const project = await loadProject(deps, actor, projectId);
+  app.post("/api/projects/:projectId/dynamic-secrets/leases/:leaseId/revoke", async (request) => {
+    const actor = await requireActor(deps, request);
+    assertCanAdmin(actor);
+    const { projectId, leaseId } = request.params as { projectId: string; leaseId: string };
+    const project = await loadProject(deps, actor, projectId);
 
-      const rows = await deps.db
-        .select({ lease: dynamicSecretLeases, config: dynamicSecretConfigs })
-        .from(dynamicSecretLeases)
-        .innerJoin(dynamicSecretConfigs, eq(dynamicSecretConfigs.id, dynamicSecretLeases.configId))
-        .where(
-          and(
-            eq(dynamicSecretLeases.id, leaseId),
-            eq(dynamicSecretLeases.projectId, project.id),
-          ),
-        )
-        .limit(1);
-      const row = rows[0];
-      if (!row) throw notFound("lease not found");
-      if (row.lease.revokedAt) throw conflict("this lease is already revoked");
+    const rows = await deps.db
+      .select({ lease: dynamicSecretLeases, config: dynamicSecretConfigs })
+      .from(dynamicSecretLeases)
+      .innerJoin(dynamicSecretConfigs, eq(dynamicSecretConfigs.id, dynamicSecretLeases.configId))
+      .where(
+        and(eq(dynamicSecretLeases.id, leaseId), eq(dynamicSecretLeases.projectId, project.id)),
+      )
+      .limit(1);
+    const row = rows[0];
+    if (!row) throw notFound("lease not found");
+    if (row.lease.revokedAt) throw conflict("this lease is already revoked");
 
-      await revokeLease(deps, project, row.config, row.lease.id, row.lease.username);
+    await revokeLease(deps, project, row.config, row.lease.id, row.lease.username);
 
-      await writeAudit(deps, {
-        orgId: actor.orgId,
-        projectId: project.id,
-        actorType: actor.type,
-        actorId: actor.id,
-        actorName: actor.name,
-        action: "dynamic.lease.revoke",
-        resourceType: "dynamic_lease",
-        resourceId: row.lease.id,
-        metadata: { configuration: row.config.name, username: row.lease.username },
-        ip: request.ip,
-      });
+    await writeAudit(deps, {
+      orgId: actor.orgId,
+      projectId: project.id,
+      actorType: actor.type,
+      actorId: actor.id,
+      actorName: actor.name,
+      action: "dynamic.lease.revoke",
+      resourceType: "dynamic_lease",
+      resourceId: row.lease.id,
+      metadata: { configuration: row.config.name, username: row.lease.username },
+      ip: request.ip,
+    });
 
-      return { ok: true };
-    },
-  );
+    return { ok: true };
+  });
 }

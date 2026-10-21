@@ -58,7 +58,10 @@ if (!databaseUrl) {
     const queued = hookQueue.shift();
     if (queued) return Promise.resolve(queued);
     return new Promise((resolve, reject) => {
-      const timer = setTimeout(() => reject(new Error("timed out waiting for a webhook")), timeoutMs);
+      const timer = setTimeout(
+        () => reject(new Error("timed out waiting for a webhook")),
+        timeoutMs,
+      );
       hookWaiters.push((hook) => {
         clearTimeout(timer);
         resolve(hook);
@@ -66,10 +69,7 @@ if (!databaseUrl) {
     });
   }
 
-  function cookieValue(
-    header: string | string[] | undefined,
-    name: string,
-  ): string | null {
+  function cookieValue(header: string | string[] | undefined, name: string): string | null {
     const entries = Array.isArray(header) ? header : header ? [header] : [];
     for (const entry of entries) {
       const [pair] = entry.split(";");
@@ -449,7 +449,11 @@ if (!databaseUrl) {
     });
     expect(v2.json<{ secret: { version: number } }>().secret.version).toBe(2);
 
-    const latest = await app.inject({ method: "GET", url: `${base}/DATABASE_URL?env=dev`, headers: auth });
+    const latest = await app.inject({
+      method: "GET",
+      url: `${base}/DATABASE_URL?env=dev`,
+      headers: auth,
+    });
     expect(latest.json<{ secret: { value: string } }>().secret.value).toBe("v2");
 
     const versions = await app.inject({
@@ -468,7 +472,11 @@ if (!databaseUrl) {
     expect(rollback.statusCode).toBe(201);
     expect(rollback.json<{ secret: { version: number } }>().secret.version).toBe(3);
 
-    const after = await app.inject({ method: "GET", url: `${base}/DATABASE_URL?env=dev`, headers: auth });
+    const after = await app.inject({
+      method: "GET",
+      url: `${base}/DATABASE_URL?env=dev`,
+      headers: auth,
+    });
     expect(after.json<{ secret: { value: string } }>().secret.value).toBe("v1");
 
     const exported = await app.inject({
@@ -509,8 +517,9 @@ if (!databaseUrl) {
       payload: { name: "ci", role: "viewer", environmentIds: [session.devId] },
     });
     expect(created.statusCode).toBe(201);
-    const identity = created.json<{ identity: { id: string; clientId: string; clientSecret: string } }>()
-      .identity;
+    const identity = created.json<{
+      identity: { id: string; clientId: string; clientSecret: string };
+    }>().identity;
 
     const tokenResponse = await app.inject({
       method: "POST",
@@ -581,10 +590,9 @@ if (!databaseUrl) {
 
     const list = await app.inject({ method: "GET", url: `${url}?env=dev`, headers: auth });
     const values = Object.fromEntries(
-      list.json<{ secrets: { key: string; value: string }[] }>().secrets.map((row) => [
-        row.key,
-        row.value,
-      ]),
+      list
+        .json<{ secrets: { key: string; value: string }[] }>()
+        .secrets.map((row) => [row.key, row.value]),
     );
 
     expect(values.DB_URL).toBe("postgres://bar@host");
@@ -650,9 +658,9 @@ if (!databaseUrl) {
       headers: auth,
     });
     expect(importsList.statusCode).toBe(200);
-    expect(
-      importsList.json<{ imports: { targetEnvironmentId: string }[] }>().imports,
-    ).toHaveLength(1);
+    expect(importsList.json<{ imports: { targetEnvironmentId: string }[] }>().imports).toHaveLength(
+      1,
+    );
 
     const identity = await app.inject({
       method: "POST",
@@ -660,7 +668,8 @@ if (!databaseUrl) {
       headers: auth,
       payload: { name: "staging-reader", role: "viewer", environmentIds: [session.stagingId] },
     });
-    const created = identity.json<{ identity: { clientId: string; clientSecret: string } }>().identity;
+    const created = identity.json<{ identity: { clientId: string; clientSecret: string } }>()
+      .identity;
     const tokenResponse = await app.inject({
       method: "POST",
       url: "/api/auth/token",
@@ -683,12 +692,9 @@ if (!databaseUrl) {
     const auth = { authorization: `Bearer ${session.token}` };
     const url = `/api/projects/${session.projectId}/secrets`;
 
-    const contents = [
-      "# seeded",
-      "FOO=bar",
-      'export QUOTED="a b"',
-      'NEWLINE="line1\\nline2"',
-    ].join("\n");
+    const contents = ["# seeded", "FOO=bar", 'export QUOTED="a b"', 'NEWLINE="line1\\nline2"'].join(
+      "\n",
+    );
 
     const dryRun = await app.inject({
       method: "POST",
@@ -727,10 +733,9 @@ if (!databaseUrl) {
 
     const list = await app.inject({ method: "GET", url: `${url}?env=dev`, headers: auth });
     const values = Object.fromEntries(
-      list.json<{ secrets: { key: string; value: string }[] }>().secrets.map((row) => [
-        row.key,
-        row.value,
-      ]),
+      list
+        .json<{ secrets: { key: string; value: string }[] }>()
+        .secrets.map((row) => [row.key, row.value]),
     );
     expect(values.FOO).toBe("updated");
     expect(values.QUOTED).toBe("a b");
@@ -793,7 +798,8 @@ if (!databaseUrl) {
       headers: auth,
     });
     expect(audit.statusCode).toBe(200);
-    const logs = audit.json<{ logs: { action: string; metadata: Record<string, unknown> }[] }>().logs;
+    const logs = audit.json<{ logs: { action: string; metadata: Record<string, unknown> }[] }>()
+      .logs;
     expect(logs.some((log) => log.action === "secret.write")).toBe(true);
     expect(JSON.stringify(logs)).not.toContain("super-secret-value");
   });
@@ -985,11 +991,7 @@ if (!databaseUrl) {
     });
     expect(selfApprove.statusCode).toBe(403);
 
-    const admin = await inviteAndAccept(
-      owner.token,
-      `approver-${Date.now()}@test.dev`,
-      "admin",
-    );
+    const admin = await inviteAndAccept(owner.token, `approver-${Date.now()}@test.dev`, "admin");
     const adminAuth = { authorization: `Bearer ${admin.token}` };
 
     const pendingList = await app.inject({
@@ -1102,9 +1104,10 @@ if (!databaseUrl) {
       url: `/api/projects/${projectId}/secrets?env=prod`,
       headers: auth,
     });
-    expect(
-      applied.json<{ secrets: { key: string; value: string }[] }>().secrets[0],
-    ).toMatchObject({ key: "TWO_MAN", value: "value" });
+    expect(applied.json<{ secrets: { key: string; value: string }[] }>().secrets[0]).toMatchObject({
+      key: "TWO_MAN",
+      value: "value",
+    });
   });
 
   it("signs in with OIDC and provisions an organization", async () => {
@@ -1356,9 +1359,7 @@ if (!databaseUrl) {
       headers: auth,
     });
     expect(
-      audit
-        .json<{ logs: { action: string }[] }>()
-        .logs.some((log) => log.action === "secret.scan"),
+      audit.json<{ logs: { action: string }[] }>().logs.some((log) => log.action === "secret.scan"),
     ).toBe(true);
   });
 
@@ -1620,9 +1621,9 @@ if (!databaseUrl) {
       headers: auth,
     });
     expect(
-      readable.json<{ secrets: { key: string; value: string }[] }>().secrets.find(
-        (secret) => secret.key === "ROTATE_ME",
-      )?.value,
+      readable
+        .json<{ secrets: { key: string; value: string }[] }>()
+        .secrets.find((secret) => secret.key === "ROTATE_ME")?.value,
     ).toBe("rotate-value");
 
     const versions = await database.sql<{ kek_version: number }[]>`
@@ -1642,9 +1643,9 @@ if (!databaseUrl) {
       headers: auth,
     });
     expect(
-      afterRestart.json<{ secrets: { key: string; value: string }[] }>().secrets.find(
-        (secret) => secret.key === "ROTATE_ME",
-      )?.value,
+      afterRestart
+        .json<{ secrets: { key: string; value: string }[] }>()
+        .secrets.find((secret) => secret.key === "ROTATE_ME")?.value,
     ).toBe("rotate-value");
 
     const created = await app.inject({

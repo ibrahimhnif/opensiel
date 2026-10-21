@@ -172,10 +172,14 @@ export function SecretsView({ project, env }: Props) {
   async function rollback(version: number) {
     if (!history) return;
     try {
-      const result = await api.post<{ secret?: { version: number }; changeRequest?: { id: string } }>(
-        `/api/projects/${project.id}/secrets/${encodeURIComponent(history.key)}/rollback`,
-        { version, env, path: history.path },
-      );
+      const result = await api.post<{
+        secret?: { version: number };
+        changeRequest?: { id: string };
+      }>(`/api/projects/${project.id}/secrets/${encodeURIComponent(history.key)}/rollback`, {
+        version,
+        env,
+        path: history.path,
+      });
       setHistory(null);
       setNotice(
         result.changeRequest
@@ -338,9 +342,7 @@ export function SecretsView({ project, env }: Props) {
                   <TableCell className="whitespace-normal">
                     <div className="flex flex-wrap items-center gap-2">
                       <code className="bg-transparent p-0 text-sm">{row.key}</code>
-                      {row.importedFrom && (
-                        <Badge variant="outline">from {row.importedFrom}</Badge>
-                      )}
+                      {row.importedFrom && <Badge variant="outline">from {row.importedFrom}</Badge>}
                     </div>
                     {row.path !== "/" && (
                       <div className="text-xs text-muted-foreground">{row.path}</div>
@@ -365,7 +367,11 @@ export function SecretsView({ project, env }: Props) {
                           setRevealed((current) => ({ ...current, [id]: !current[id] }))
                         }
                       >
-                        {isRevealed ? <EyeOff className="size-3.5" /> : <Eye className="size-3.5" />}
+                        {isRevealed ? (
+                          <EyeOff className="size-3.5" />
+                        ) : (
+                          <Eye className="size-3.5" />
+                        )}
                       </Button>
                       <Button
                         variant="ghost"
@@ -481,8 +487,7 @@ export function SecretsView({ project, env }: Props) {
                 </div>
                 <div className="space-y-2">
                   <Label htmlFor="secret-comment">
-                    Comment{" "}
-                    <span className="font-normal text-muted-foreground">(optional)</span>
+                    Comment <span className="font-normal text-muted-foreground">(optional)</span>
                   </Label>
                   <Input
                     id="secret-comment"
@@ -594,7 +599,7 @@ export function SecretsView({ project, env }: Props) {
                 setImportPreview(null);
               }}
               placeholder={
-                "# comment\nDATABASE_URL=postgres://user:pass@host/db\nAPI_KEY=\"quoted value\"\nexport DEBUG=true"
+                '# comment\nDATABASE_URL=postgres://user:pass@host/db\nAPI_KEY="quoted value"\nexport DEBUG=true'
               }
             />
           </div>

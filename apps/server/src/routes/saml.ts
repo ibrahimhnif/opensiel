@@ -7,7 +7,7 @@ import { writeAudit } from "../audit.js";
 import type { Deps } from "../types.js";
 
 function fail(reply: FastifyReply, message: string) {
-  return reply.redirect(`/?sso_error=${encodeURIComponent(message)}`);
+  return reply.redirect(`/login?sso_error=${encodeURIComponent(message)}`);
 }
 
 function firstString(source: Record<string, unknown>, keys: string[]): string | undefined {
@@ -93,7 +93,7 @@ export function registerSamlRoutes(app: FastifyInstance, deps: Deps): void {
         ip: request.ip,
       });
 
-      return reply.redirect("/");
+      return reply.redirect("/app");
     },
   );
 }

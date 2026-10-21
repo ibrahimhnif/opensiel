@@ -34,9 +34,18 @@ export async function provisionUser(
       .where(eq(orgMembers.userId, user.id))
       .limit(1);
     if (membership[0]) {
-      const orgRows = await deps.db.select().from(orgs).where(eq(orgs.id, membership[0].orgId)).limit(1);
+      const orgRows = await deps.db
+        .select()
+        .from(orgs)
+        .where(eq(orgs.id, membership[0].orgId))
+        .limit(1);
       if (orgRows[0]) {
-        return { userId: user.id, userName: user.name, orgId: orgRows[0].id, orgName: orgRows[0].name };
+        return {
+          userId: user.id,
+          userName: user.name,
+          orgId: orgRows[0].id,
+          orgName: orgRows[0].name,
+        };
       }
     }
   }
@@ -69,7 +78,11 @@ export async function provisionUser(
         .returning();
       user = inserted[0];
     } catch (error) {
-      if (typeof error === "object" && error !== null && (error as { code?: string }).code === "23505") {
+      if (
+        typeof error === "object" &&
+        error !== null &&
+        (error as { code?: string }).code === "23505"
+      ) {
         const retry = await deps.db.select().from(users).where(eq(users.email, email)).limit(1);
         user = retry[0];
         if (!user) throw error;

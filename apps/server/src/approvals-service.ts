@@ -1,22 +1,20 @@
 import { randomUUID } from "node:crypto";
 import { and, count, desc, eq, inArray } from "drizzle-orm";
-import type {
-  ChangeRequestAction,
-  ChangeRequestDto,
-  ChangeRequestStatus,
-} from "@opensiel/shared";
+import type { ChangeRequestAction, ChangeRequestDto, ChangeRequestStatus } from "@opensiel/shared";
 import { decryptValue, encryptValue } from "./crypto.js";
 import { projectDek } from "./access.js";
 import { conflict, forbidden, notFound } from "./errors.js";
-import { changeRequestApprovals, changeRequests, environments, projects, users } from "./db/schema.js";
+import {
+  changeRequestApprovals,
+  changeRequests,
+  environments,
+  projects,
+  users,
+} from "./db/schema.js";
 import type { ChangeRequestRow, EnvironmentRow, ProjectRow } from "./db/schema.js";
 import { writeAudit } from "./audit.js";
 import { dispatchEvent } from "./webhooks.js";
-import {
-  applySecretDelete,
-  applySecretRollback,
-  applySecretWrite,
-} from "./secrets-service.js";
+import { applySecretDelete, applySecretRollback, applySecretWrite } from "./secrets-service.js";
 import type { ActorMeta } from "./secrets-service.js";
 import type { Actor, Deps, UserActor } from "./types.js";
 
@@ -107,7 +105,8 @@ export async function listChangeRequests(
 ): Promise<ChangeRequestDto[]> {
   const conditions = [eq(changeRequests.projectId, projectId)];
   if (options.status) conditions.push(eq(changeRequests.status, options.status));
-  if (options.requestedById) conditions.push(eq(changeRequests.requestedById, options.requestedById));
+  if (options.requestedById)
+    conditions.push(eq(changeRequests.requestedById, options.requestedById));
 
   const rows = await deps.db
     .select()
@@ -180,7 +179,11 @@ export async function decideChangeRequest(
   const environment = envRows[0];
   if (!environment) throw notFound("environment not found");
 
-  const projectRows = await deps.db.select().from(projects).where(eq(projects.id, projectId)).limit(1);
+  const projectRows = await deps.db
+    .select()
+    .from(projects)
+    .where(eq(projects.id, projectId))
+    .limit(1);
   const project = projectRows[0];
   if (!project) throw notFound("project not found");
 
@@ -192,7 +195,11 @@ export async function decideChangeRequest(
       note: params.note ?? null,
     });
   } catch (error) {
-    if (typeof error === "object" && error !== null && (error as { code?: string }).code === "23505") {
+    if (
+      typeof error === "object" &&
+      error !== null &&
+      (error as { code?: string }).code === "23505"
+    ) {
       throw conflict("you have already decided on this request");
     }
     throw error;
@@ -201,7 +208,12 @@ export async function decideChangeRequest(
   if (params.decision === "reject") {
     await deps.db
       .update(changeRequests)
-      .set({ status: "rejected", decidedAt: new Date(), decidedBy: actor.name, decisionNote: params.note ?? null })
+      .set({
+        status: "rejected",
+        decidedAt: new Date(),
+        decidedBy: actor.name,
+        decisionNote: params.note ?? null,
+      })
       .where(eq(changeRequests.id, request.id));
 
     await writeAudit(deps, {
@@ -213,7 +225,11 @@ export async function decideChangeRequest(
       action: "change_request.reject",
       resourceType: "change_request",
       resourceId: request.id,
-      metadata: { key: request.secretKey, environment: environment.slug, note: params.note ?? null },
+      metadata: {
+        key: request.secretKey,
+        environment: environment.slug,
+        note: params.note ?? null,
+      },
       ip: params.ip,
     });
 
@@ -283,7 +299,12 @@ export async function decideChangeRequest(
 
   const claimed = await deps.db
     .update(changeRequests)
-    .set({ status: "approved", decidedAt: new Date(), decidedBy: actor.name, decisionNote: params.note ?? null })
+    .set({
+      status: "approved",
+      decidedAt: new Date(),
+      decidedBy: actor.name,
+      decisionNote: params.note ?? null,
+    })
     .where(and(eq(changeRequests.id, request.id), eq(changeRequests.status, "pending")))
     .returning();
   if (claimed.length === 0) {
@@ -327,11 +348,22 @@ export async function decideChangeRequest(
         action: "change_request.apply",
         resourceType: "secret",
         resourceId: result.secretId,
-        metadata: { requestId: request.id, key: request.secretKey, version: result.version, environment: environment.slug },
+        metadata: {
+          requestId: request.id,
+          key: request.secretKey,
+          version: result.version,
+          environment: environment.slug,
+        },
         ip: params.ip,
       });
     } else if (request.action === "delete") {
-      const result = await applySecretDelete(deps, project.id, environment.id, request.path, request.secretKey);
+      const result = await applySecretDelete(
+        deps,
+        project.id,
+        environment.id,
+        request.path,
+        request.secretKey,
+      );
       await writeAudit(deps, {
         orgId: project.orgId,
         projectId,
@@ -341,7 +373,12 @@ export async function decideChangeRequest(
         action: "change_request.apply",
         resourceType: "secret",
         resourceId: result.secretId,
-        metadata: { requestId: request.id, key: request.secretKey, action: "delete", environment: environment.slug },
+        metadata: {
+          requestId: request.id,
+          key: request.secretKey,
+          action: "delete",
+          environment: environment.slug,
+        },
         ip: params.ip,
       });
     } else {
@@ -420,7 +457,8 @@ export async function cancelChangeRequest(
 
   const isRequester = request.requestedByType === actor.type && request.requestedById === actor.id;
   const isAdmin = actor.type === "user" && (actor.role === "owner" || actor.role === "admin");
-  if (!isRequester && !isAdmin) throw forbidden("only the requester or an admin can cancel this request");
+  if (!isRequester && !isAdmin)
+    throw forbidden("only the requester or an admin can cancel this request");
 
   await deps.db
     .update(changeRequests)
@@ -458,7 +496,12 @@ async function approvalNames(deps: Deps, requestId: string): Promise<string[]> {
     .select({ user: users, approval: changeRequestApprovals })
     .from(changeRequestApprovals)
     .innerJoin(users, eq(users.id, changeRequestApprovals.userId))
-    .where(and(eq(changeRequestApprovals.requestId, requestId), eq(changeRequestApprovals.decision, "approve")));
+    .where(
+      and(
+        eq(changeRequestApprovals.requestId, requestId),
+        eq(changeRequestApprovals.decision, "approve"),
+      ),
+    );
   return rows.map((row) => row.user.name);
 }
 

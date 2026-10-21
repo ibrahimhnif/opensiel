@@ -31,11 +31,7 @@ export function encryptWebhookSecret(
   return encryptValue(projectDek(deps, project), secret, aad(webhookId));
 }
 
-export function decryptWebhookSecret(
-  deps: Deps,
-  project: ProjectRow,
-  webhook: WebhookRow,
-): string {
+export function decryptWebhookSecret(deps: Deps, project: ProjectRow, webhook: WebhookRow): string {
   return decryptValue(
     projectDek(deps, project),
     {

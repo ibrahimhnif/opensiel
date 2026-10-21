@@ -8,11 +8,7 @@ import { assertCanAdmin, loadProject } from "../access.js";
 import { notFound, parse } from "../errors.js";
 import { webhooks } from "../db/schema.js";
 import type { WebhookRow } from "../db/schema.js";
-import {
-  deliverToWebhook,
-  encryptWebhookSecret,
-  generateWebhookSecret,
-} from "../webhooks.js";
+import { deliverToWebhook, encryptWebhookSecret, generateWebhookSecret } from "../webhooks.js";
 import { writeAudit } from "../audit.js";
 import type { Deps } from "../types.js";
 

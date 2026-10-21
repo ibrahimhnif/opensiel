@@ -1,9 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import type {
-  DynamicConfigDto,
-  DynamicLeaseDto,
-  ProjectDto,
-} from "@opensiel/shared";
+import type { DynamicConfigDto, DynamicLeaseDto, ProjectDto } from "@opensiel/shared";
 import { Copy, Database, KeyRound, Loader2, Plus, RefreshCw, Trash2, X } from "lucide-react";
 import { api, errorMessage } from "../api";
 import { Badge } from "./ui/badge";
@@ -25,7 +21,7 @@ import { Notice } from "./Notice";
 
 const DEFAULT_CREATION =
   "CREATE ROLE \"{{username}}\" WITH LOGIN PASSWORD '{{password}}' VALID UNTIL '{{expires}}'";
-const DEFAULT_REVOCATION = "DROP ROLE IF EXISTS \"{{username}}\"";
+const DEFAULT_REVOCATION = 'DROP ROLE IF EXISTS "{{username}}"';
 
 interface Credentials {
   configName: string;
@@ -134,9 +130,7 @@ export function DynamicView({ project }: { project: ProjectDto; canManage: boole
   async function revoke(lease: DynamicLeaseDto) {
     if (!window.confirm(`Revoke ${lease.username}? The database role is dropped.`)) return;
     try {
-      await api.post(
-        `/api/projects/${project.id}/dynamic-secrets/leases/${lease.id}/revoke`,
-      );
+      await api.post(`/api/projects/${project.id}/dynamic-secrets/leases/${lease.id}/revoke`);
       setNotice(`lease for ${lease.username} revoked`);
       await load();
     } catch (err) {
@@ -175,8 +169,8 @@ export function DynamicView({ project }: { project: ProjectDto; canManage: boole
         <div>
           <h2 className="text-lg font-semibold">Dynamic secrets</h2>
           <p className="text-sm text-muted-foreground">
-            Issue short-lived PostgreSQL roles from an admin connection string. Roles are dropped
-            on revoke or when the lease expires.
+            Issue short-lived PostgreSQL roles from an admin connection string. Roles are dropped on
+            revoke or when the lease expires.
           </p>
         </div>
         <div className="flex items-center gap-2">
@@ -413,8 +407,8 @@ export function DynamicView({ project }: { project: ProjectDto; canManage: boole
             <DialogHeader>
               <DialogTitle>New dynamic secret configuration</DialogTitle>
               <DialogDescription>
-                The admin connection string is encrypted with the project key and never returned
-                by the API.
+                The admin connection string is encrypted with the project key and never returned by
+                the API.
               </DialogDescription>
             </DialogHeader>
 

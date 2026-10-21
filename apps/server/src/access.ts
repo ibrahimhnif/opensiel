@@ -54,7 +54,11 @@ export async function uniqueOrgSlug(db: Db, base: string): Promise<string> {
   throw badRequest("could not allocate an organization slug");
 }
 
-export async function loadProject(deps: Deps, actor: Actor, projectId: string): Promise<ProjectRow> {
+export async function loadProject(
+  deps: Deps,
+  actor: Actor,
+  projectId: string,
+): Promise<ProjectRow> {
   const rows = await deps.db.select().from(projects).where(eq(projects.id, projectId)).limit(1);
   const project = rows[0];
   if (!project) throw notFound("project not found");

@@ -25,11 +25,7 @@ import { createChangeRequest } from "../approvals-service.js";
 import { loadEnvironmentSecrets } from "../secret-read.js";
 import { parseImportContents } from "../dotenv.js";
 import { dispatchEvent } from "../webhooks.js";
-import {
-  applySecretDelete,
-  applySecretRollback,
-  applySecretWrite,
-} from "../secrets-service.js";
+import { applySecretDelete, applySecretRollback, applySecretWrite } from "../secrets-service.js";
 import type { Actor, Deps } from "../types.js";
 
 const listQuerySchema = z.object({
@@ -523,9 +519,7 @@ export function registerSecretRoutes(app: FastifyInstance, deps: Deps): void {
       return reply.send(Object.fromEntries(entries.map((entry) => [entry.key, entry.value])));
     }
 
-    const body = entries
-      .map((entry) => `${entry.key}=${dotenvValue(entry.value)}`)
-      .join("\n");
+    const body = entries.map((entry) => `${entry.key}=${dotenvValue(entry.value)}`).join("\n");
     return reply.type("text/plain; charset=utf-8").send(`${body}\n`);
   });
 }

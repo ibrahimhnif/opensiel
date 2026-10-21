@@ -2,18 +2,11 @@
   "extends": "../../tsconfig.base.json",
   "compilerOptions": {
     "outDir": "dist",
-    "types": [
-      "node"
-    ],
+    "types": ["node"],
     "baseUrl": ".",
     "paths": {
-      "@opensiel/shared": [
-        "../../packages/shared/src/index.ts"
-      ]
+      "@opensiel/shared": ["../../packages/shared/src/index.ts"]
     }
   },
-  "include": [
-    "src",
-    "test"
-  ]
+  "include": ["src", "test"]
 }

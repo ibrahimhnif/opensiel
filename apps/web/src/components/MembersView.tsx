@@ -121,9 +121,7 @@ export function MembersView() {
     <section className="space-y-4">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
-          <h2 className="text-lg font-semibold">
-            {data ? `${data.org.name} members` : "Members"}
-          </h2>
+          <h2 className="text-lg font-semibold">{data ? `${data.org.name} members` : "Members"}</h2>
           <p className="text-sm text-muted-foreground">
             {data
               ? `${data.members.length} member${data.members.length === 1 ? "" : "s"} · ${data.org.slug}`

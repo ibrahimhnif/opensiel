@@ -7,7 +7,10 @@ export const identityRoleSchema = z.enum(["member", "viewer"]);
 export type IdentityRole = z.infer<typeof identityRoleSchema>;
 
 export const emailSchema = z.string().trim().toLowerCase().email().max(254);
-export const passwordSchema = z.string().min(12, "password must be at least 12 characters").max(200);
+export const passwordSchema = z
+  .string()
+  .min(12, "password must be at least 12 characters")
+  .max(200);
 export const nameSchema = z.string().trim().min(1).max(100);
 
 export const slugSchema = z

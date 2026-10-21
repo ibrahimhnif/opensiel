@@ -82,7 +82,12 @@ export async function applySecretWrite(
     } else {
       const inserted = await deps.db
         .insert(secrets)
-        .values({ projectId: project.id, environmentId: environment.id, path: input.path, key: input.key })
+        .values({
+          projectId: project.id,
+          environmentId: environment.id,
+          path: input.path,
+          key: input.key,
+        })
         .returning();
       secret = inserted[0];
     }
@@ -139,7 +144,9 @@ export async function applySecretRollback(
   const targetRows = await deps.db
     .select()
     .from(secretVersions)
-    .where(and(eq(secretVersions.secretId, secret.id), eq(secretVersions.version, input.targetVersion)))
+    .where(
+      and(eq(secretVersions.secretId, secret.id), eq(secretVersions.version, input.targetVersion)),
+    )
     .limit(1);
   const target = targetRows[0];
   if (!target) throw notFound("secret version not found");
@@ -175,14 +182,13 @@ export async function applySecretRollback(
   return { secretId: secret.id, version, from: target.version };
 }
 
-export async function latestVersionRow(
-  deps: Deps,
-  secret: SecretRow,
-): Promise<SecretVersionRow> {
+export async function latestVersionRow(deps: Deps, secret: SecretRow): Promise<SecretVersionRow> {
   const rows = await deps.db
     .select()
     .from(secretVersions)
-    .where(and(eq(secretVersions.secretId, secret.id), eq(secretVersions.version, secret.latestVersion)))
+    .where(
+      and(eq(secretVersions.secretId, secret.id), eq(secretVersions.version, secret.latestVersion)),
+    )
     .limit(1);
   const version = rows[0];
   if (!version) throw notFound("secret version not found");

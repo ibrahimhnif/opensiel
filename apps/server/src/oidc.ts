@@ -123,7 +123,8 @@ export async function exchangeCode(
   if (payload.nonce !== expectedNonce) throw badRequest("nonce mismatch");
 
   const email = typeof payload.email === "string" ? payload.email.trim().toLowerCase() : "";
-  if (!email || !email.includes("@")) throw badRequest("the provider did not return an email address");
+  if (!email || !email.includes("@"))
+    throw badRequest("the provider did not return an email address");
   if (payload.email_verified === false) {
     throw badRequest("the provider reports this email as unverified");
   }

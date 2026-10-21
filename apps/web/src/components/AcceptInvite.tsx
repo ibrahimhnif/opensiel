@@ -132,8 +132,8 @@ export function AcceptInvite({ token, onDone, onCancel }: Props) {
               </div>
 
               <p className="text-xs text-muted-foreground">
-                Already have an account with this email? Enter your existing password and leave
-                the name blank.
+                Already have an account with this email? Enter your existing password and leave the
+                name blank.
               </p>
 
               {error && <Notice tone="error">{error}</Notice>}
@@ -142,7 +142,12 @@ export function AcceptInvite({ token, onDone, onCancel }: Props) {
                 {busy && <Loader2 className="size-4 animate-spin" />}
                 {busy ? "joining…" : "Accept invite"}
               </Button>
-              <Button type="button" variant="link" className="h-auto p-0 text-xs" onClick={onCancel}>
+              <Button
+                type="button"
+                variant="link"
+                className="h-auto p-0 text-xs"
+                onClick={onCancel}
+              >
                 cancel
               </Button>
             </form>

@@ -101,13 +101,8 @@ export function loadEnv(source: NodeJS.ProcessEnv = process.env): Env {
   const s = parsed.data;
   const kmsConfigured =
     Boolean(s.OPENSIEL_KMS_KEY_ID) || Boolean(s.OPENSIEL_KMS_WRAPPED_MASTER_KEY);
-  if (
-    kmsConfigured &&
-    (!s.OPENSIEL_KMS_KEY_ID || !s.OPENSIEL_KMS_WRAPPED_MASTER_KEY)
-  ) {
-    throw new Error(
-      "OPENSIEL_KMS_KEY_ID and OPENSIEL_KMS_WRAPPED_MASTER_KEY must both be set",
-    );
+  if (kmsConfigured && (!s.OPENSIEL_KMS_KEY_ID || !s.OPENSIEL_KMS_WRAPPED_MASTER_KEY)) {
+    throw new Error("OPENSIEL_KMS_KEY_ID and OPENSIEL_KMS_WRAPPED_MASTER_KEY must both be set");
   }
   if (!s.OPENSIEL_MASTER_KEY && !kmsConfigured) {
     throw new Error("set OPENSIEL_MASTER_KEY or configure AWS KMS");
@@ -139,12 +134,23 @@ export function loadEnv(source: NodeJS.ProcessEnv = process.env): Env {
     throw new Error("OPENSIEL_MASTER_KEY_NEXT must decode to exactly 32 bytes");
   }
   const nextMasterKeyVersion =
-    s.OPENSIEL_MASTER_KEY_NEXT_VERSION ?? (nextMasterKey ? s.OPENSIEL_MASTER_KEY_VERSION + 1 : undefined);
-  if (nextMasterKey && nextMasterKeyVersion !== undefined && nextMasterKeyVersion <= s.OPENSIEL_MASTER_KEY_VERSION) {
-    throw new Error("OPENSIEL_MASTER_KEY_NEXT_VERSION must be greater than OPENSIEL_MASTER_KEY_VERSION");
+    s.OPENSIEL_MASTER_KEY_NEXT_VERSION ??
+    (nextMasterKey ? s.OPENSIEL_MASTER_KEY_VERSION + 1 : undefined);
+  if (
+    nextMasterKey &&
+    nextMasterKeyVersion !== undefined &&
+    nextMasterKeyVersion <= s.OPENSIEL_MASTER_KEY_VERSION
+  ) {
+    throw new Error(
+      "OPENSIEL_MASTER_KEY_NEXT_VERSION must be greater than OPENSIEL_MASTER_KEY_VERSION",
+    );
   }
   const isProd = s.NODE_ENV === "production";
-  const oidcValues = [s.OPENSIEL_OIDC_ISSUER, s.OPENSIEL_OIDC_CLIENT_ID, s.OPENSIEL_OIDC_CLIENT_SECRET];
+  const oidcValues = [
+    s.OPENSIEL_OIDC_ISSUER,
+    s.OPENSIEL_OIDC_CLIENT_ID,
+    s.OPENSIEL_OIDC_CLIENT_SECRET,
+  ];
   const oidcConfigured = oidcValues.filter(Boolean).length;
   if (oidcConfigured > 0 && oidcConfigured < 3) {
     throw new Error(
@@ -154,10 +160,7 @@ export function loadEnv(source: NodeJS.ProcessEnv = process.env): Env {
 
   const publicUrl = s.OPENSIEL_PUBLIC_URL;
   const samlConfigured = Boolean(s.OPENSIEL_SAML_ENTRY_POINT) || Boolean(s.OPENSIEL_SAML_IDP_CERT);
-  if (
-    samlConfigured &&
-    (!s.OPENSIEL_SAML_ENTRY_POINT || !s.OPENSIEL_SAML_IDP_CERT)
-  ) {
+  if (samlConfigured && (!s.OPENSIEL_SAML_ENTRY_POINT || !s.OPENSIEL_SAML_IDP_CERT)) {
     throw new Error("OPENSIEL_SAML_ENTRY_POINT and OPENSIEL_SAML_IDP_CERT must both be set");
   }
 

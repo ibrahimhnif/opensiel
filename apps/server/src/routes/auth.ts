@@ -1,6 +1,11 @@
 import { count, eq } from "drizzle-orm";
 import type { FastifyInstance, FastifyRequest } from "fastify";
-import { acceptInviteSchema, loginSchema, signupSchema, tokenRequestSchema } from "@opensiel/shared";
+import {
+  acceptInviteSchema,
+  loginSchema,
+  signupSchema,
+  tokenRequestSchema,
+} from "@opensiel/shared";
 import {
   clearSessionCookie,
   createSession,
@@ -17,7 +22,15 @@ import {
 } from "../auth.js";
 import { sha256 } from "../crypto.js";
 import { AppError, badRequest, conflict, notFound, parse, unauthorized } from "../errors.js";
-import { orgInvites, orgMembers, orgs, users, identities, identityScopes, projects } from "../db/schema.js";
+import {
+  orgInvites,
+  orgMembers,
+  orgs,
+  users,
+  identities,
+  identityScopes,
+  projects,
+} from "../db/schema.js";
 import { createProject, DEFAULT_ENVIRONMENTS } from "../projects-service.js";
 import { slugify, uniqueOrgSlug } from "../access.js";
 import { writeAudit } from "../audit.js";
@@ -35,7 +48,9 @@ function userDto(actor: Extract<Actor, { type: "user" }>) {
 }
 
 function isUniqueViolation(error: unknown): boolean {
-  return typeof error === "object" && error !== null && (error as { code?: string }).code === "23505";
+  return (
+    typeof error === "object" && error !== null && (error as { code?: string }).code === "23505"
+  );
 }
 
 export function registerAuthRoutes(app: FastifyInstance, deps: Deps): void {
@@ -63,7 +78,11 @@ export function registerAuthRoutes(app: FastifyInstance, deps: Deps): void {
       const rows = await deps.db.select({ total: count() }).from(users);
       const initialized = Number(rows[0]?.total ?? 0) > 0;
       if (initialized && !deps.env.allowSignup) {
-        throw new AppError(403, "this instance is invite-only; ask an owner for an invite link", "signup_disabled");
+        throw new AppError(
+          403,
+          "this instance is invite-only; ask an owner for an invite link",
+          "signup_disabled",
+        );
       }
 
       const passwordHash = await hashPassword(input.password);
@@ -142,7 +161,8 @@ export function registerAuthRoutes(app: FastifyInstance, deps: Deps): void {
   );
 
   app.post("/api/auth/logout", async (request, reply) => {
-    const cookies = (request as FastifyRequest & { cookies?: Record<string, string | undefined> }).cookies;
+    const cookies = (request as FastifyRequest & { cookies?: Record<string, string | undefined> })
+      .cookies;
     const token = cookies?.[SESSION_COOKIE];
     if (token) await revokeSession(deps.db, token);
     clearSessionCookie(reply, deps.env.secureCookies);
@@ -221,7 +241,8 @@ export function registerAuthRoutes(app: FastifyInstance, deps: Deps): void {
           .from(orgMembers)
           .where(eq(orgMembers.userId, existing.id))
           .limit(1);
-        if (membership.length > 0) throw conflict("this account already belongs to an organization");
+        if (membership.length > 0)
+          throw conflict("this account already belongs to an organization");
         user = existing;
       } else {
         if (!input.name || !input.password) throw badRequest("name and password are required");
@@ -290,7 +311,11 @@ export function registerAuthRoutes(app: FastifyInstance, deps: Deps): void {
         .where(eq(identities.clientId, input.clientId))
         .limit(1);
       const identity = rows[0];
-      if (!identity || identity.revokedAt || !verifyMachineSecret(identity.secretHash, input.clientSecret)) {
+      if (
+        !identity ||
+        identity.revokedAt ||
+        !verifyMachineSecret(identity.secretHash, input.clientSecret)
+      ) {
         throw unauthorized("invalid client credentials");
       }
 

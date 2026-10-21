@@ -1,4 +1,4 @@
-import { and, eq, inArray, isNull } from "drizzle-orm";
+import { and, eq, inArray } from "drizzle-orm";
 import type { FastifyInstance } from "fastify";
 import {
   createEnvironmentSchema,
@@ -17,7 +17,7 @@ import {
   slugify,
 } from "../access.js";
 import { parse, conflict, notFound } from "../errors.js";
-import { environments, projects, secrets } from "../db/schema.js";
+import { environments, projects } from "../db/schema.js";
 import { createProject } from "../projects-service.js";
 import { writeAudit } from "../audit.js";
 import type { Actor, Deps } from "../types.js";
@@ -33,7 +33,14 @@ async function projectDtoFor(deps: Deps, projectId: string) {
   return toProjectDto(project, envs);
 }
 
-function audit(deps: Deps, actor: Actor, action: string, projectId: string, resourceId: string, ip: string) {
+function audit(
+  deps: Deps,
+  actor: Actor,
+  action: string,
+  projectId: string,
+  resourceId: string,
+  ip: string,
+) {
   return writeAudit(deps, {
     orgId: actor.orgId,
     projectId,
@@ -137,9 +144,7 @@ export function registerProjectRoutes(app: FastifyInstance, deps: Deps): void {
       .from(environments)
       .where(eq(environments.projectId, project.id));
     return {
-      environments: rows
-        .slice()
-        .sort((a, b) => a.position - b.position),
+      environments: rows.slice().sort((a, b) => a.position - b.position),
     };
   });
 

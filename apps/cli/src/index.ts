@@ -138,7 +138,10 @@ function printTable(headers: string[], rows: string[][]): void {
     Math.max(header.length, ...rows.map((row) => (row[index] ?? "").length)),
   );
   const line = (cells: string[]) =>
-    cells.map((cell, index) => cell.padEnd(widths[index])).join("  ").trimEnd();
+    cells
+      .map((cell, index) => cell.padEnd(widths[index]))
+      .join("  ")
+      .trimEnd();
   console.log(line(headers));
   console.log(widths.map((width) => "-".repeat(width)).join("  "));
   for (const row of rows) console.log(line(row));
@@ -498,9 +501,9 @@ program
   .description("show the current session")
   .action(async () => {
     const config = requireConfigWithToken();
-    const me = await apiRequest<{ user: { email: string; name: string; role: string; orgName: string } }>(
-      "/api/auth/me",
-    );
+    const me = await apiRequest<{
+      user: { email: string; name: string; role: string; orgName: string };
+    }>("/api/auth/me");
     console.log(`${me.user.name} <${me.user.email}> role=${me.user.role} org=${me.user.orgName}`);
     console.log(`api: ${config.apiUrl}`);
   });

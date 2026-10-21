@@ -1,16 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import type { ProjectDto, WebhookDto, WebhookEvent } from "@opensiel/shared";
 import { webhookEvents } from "@opensiel/shared";
-import {
-  Copy,
-  Loader2,
-  Plus,
-  RefreshCw,
-  Send,
-  Trash2,
-  Webhook,
-  X,
-} from "lucide-react";
+import { Copy, Loader2, Plus, RefreshCw, Send, Trash2, Webhook, X } from "lucide-react";
 import { api, errorMessage } from "../api";
 import { Badge } from "./ui/badge";
 import { Button } from "./ui/button";
@@ -100,9 +91,11 @@ export function WebhooksView({ project }: { project: ProjectDto }) {
 
   async function test(webhook: WebhookDto) {
     try {
-      const result = await api.post<{ delivered: boolean; status: number | null; error: string | null }>(
-        `/api/projects/${project.id}/webhooks/${webhook.id}/test`,
-      );
+      const result = await api.post<{
+        delivered: boolean;
+        status: number | null;
+        error: string | null;
+      }>(`/api/projects/${project.id}/webhooks/${webhook.id}/test`);
       setNotice(
         result.delivered
           ? `test delivered (HTTP ${result.status})`
@@ -140,8 +133,7 @@ export function WebhooksView({ project }: { project: ProjectDto }) {
         <div>
           <h2 className="text-lg font-semibold">Webhooks</h2>
           <p className="text-sm text-muted-foreground">
-            Send signed event payloads to an HTTPS endpoint. Payloads never include secret
-            values.
+            Send signed event payloads to an HTTPS endpoint. Payloads never include secret values.
           </p>
         </div>
         <div className="flex items-center gap-2">

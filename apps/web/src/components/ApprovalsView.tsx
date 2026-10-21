@@ -6,7 +6,7 @@ import type {
   EnvironmentImportDto,
   ProjectDto,
 } from "@opensiel/shared";
-import { Check, Loader2, RefreshCw, X } from "lucide-react";
+import { Check, RefreshCw, X } from "lucide-react";
 import { api, errorMessage } from "../api";
 import { cn } from "../lib/utils";
 import { Badge } from "./ui/badge";
@@ -311,9 +311,7 @@ export function ApprovalsView({ project, currentUserId, canApprove }: Props) {
                     </TableCell>
                     <TableCell>
                       {request.requestedByName}
-                      <div className="text-xs text-muted-foreground">
-                        {request.requestedByType}
-                      </div>
+                      <div className="text-xs text-muted-foreground">{request.requestedByType}</div>
                     </TableCell>
                     <TableCell>
                       <Badge variant="outline">
@@ -416,9 +414,7 @@ function PolicyRow({
           disabled={!required}
           className="h-8 w-20"
           value={count}
-          onChange={(event) =>
-            setCount(Math.max(1, Math.min(10, Number(event.target.value) || 1)))
-          }
+          onChange={(event) => setCount(Math.max(1, Math.min(10, Number(event.target.value) || 1)))}
         />
       </TableCell>
       <TableCell className="text-right">

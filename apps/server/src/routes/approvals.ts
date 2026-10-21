@@ -1,7 +1,11 @@
 import { and, eq } from "drizzle-orm";
 import type { FastifyInstance } from "fastify";
 import type { ChangeRequestStatus } from "@opensiel/shared";
-import { changeRequestDecisionSchema, environmentImportSchema, environmentPolicySchema } from "@opensiel/shared";
+import {
+  changeRequestDecisionSchema,
+  environmentImportSchema,
+  environmentPolicySchema,
+} from "@opensiel/shared";
 import { requireActor, requireUser } from "../auth.js";
 import { assertCanAdmin, loadProject } from "../access.js";
 import { badRequest, forbidden, notFound, parse } from "../errors.js";
@@ -102,133 +106,127 @@ export function registerApprovalRoutes(app: FastifyInstance, deps: Deps): void {
     return { imports: rows };
   });
 
-  app.put(
-    "/api/projects/:projectId/environments/:environmentId/imports",
-    async (request) => {
-      const actor = await requireActor(deps, request);
-      assertCanAdmin(actor);
-      const { projectId, environmentId } = request.params as {
-        projectId: string;
-        environmentId: string;
-      };
-      const project = await loadProject(deps, actor, projectId);
-      const input = parse(environmentImportSchema, request.body);
+  app.put("/api/projects/:projectId/environments/:environmentId/imports", async (request) => {
+    const actor = await requireActor(deps, request);
+    assertCanAdmin(actor);
+    const { projectId, environmentId } = request.params as {
+      projectId: string;
+      environmentId: string;
+    };
+    const project = await loadProject(deps, actor, projectId);
+    const input = parse(environmentImportSchema, request.body);
 
-      const targetRows = await deps.db
-        .select()
-        .from(environments)
-        .where(and(eq(environments.id, environmentId), eq(environments.projectId, project.id)))
-        .limit(1);
-      const target = targetRows[0];
-      if (!target) throw notFound("environment not found");
+    const targetRows = await deps.db
+      .select()
+      .from(environments)
+      .where(and(eq(environments.id, environmentId), eq(environments.projectId, project.id)))
+      .limit(1);
+    const target = targetRows[0];
+    if (!target) throw notFound("environment not found");
 
-      if (input.sourceEnvironmentId === null) {
-        await deps.db
-          .delete(environmentImports)
-          .where(eq(environmentImports.targetEnvironmentId, target.id));
-      } else {
-        if (input.sourceEnvironmentId === target.id) {
-          throw badRequest("an environment cannot import from itself");
-        }
-        const sourceRows = await deps.db
-          .select()
-          .from(environments)
-          .where(
-            and(
-              eq(environments.id, input.sourceEnvironmentId),
-              eq(environments.projectId, project.id),
-            ),
-          )
-          .limit(1);
-        if (!sourceRows[0]) throw badRequest("source environment does not belong to this project");
-
-        await deps.db
-          .insert(environmentImports)
-          .values({
-            targetEnvironmentId: target.id,
-            sourceEnvironmentId: input.sourceEnvironmentId,
-          })
-          .onConflictDoUpdate({
-            target: environmentImports.targetEnvironmentId,
-            set: { sourceEnvironmentId: input.sourceEnvironmentId },
-          });
+    if (input.sourceEnvironmentId === null) {
+      await deps.db
+        .delete(environmentImports)
+        .where(eq(environmentImports.targetEnvironmentId, target.id));
+    } else {
+      if (input.sourceEnvironmentId === target.id) {
+        throw badRequest("an environment cannot import from itself");
       }
-
-      await writeAudit(deps, {
-        orgId: actor.orgId,
-        projectId: project.id,
-        actorType: actor.type,
-        actorId: actor.id,
-        actorName: actor.name,
-        action: "environment.import",
-        resourceType: "environment",
-        resourceId: target.id,
-        metadata: {
-          environment: target.slug,
-          sourceEnvironmentId: input.sourceEnvironmentId,
-        },
-        ip: request.ip,
-      });
-
-      return { ok: true };
-    },
-  );
-
-  app.patch(
-    "/api/projects/:projectId/environments/:environmentId/policy",
-    async (request) => {
-      const actor = await requireActor(deps, request);
-      assertCanAdmin(actor);
-      const { projectId, environmentId } = request.params as {
-        projectId: string;
-        environmentId: string;
-      };
-      const project = await loadProject(deps, actor, projectId);
-      const input = parse(environmentPolicySchema, request.body);
-
-      const rows = await deps.db
+      const sourceRows = await deps.db
         .select()
         .from(environments)
-        .where(and(eq(environments.id, environmentId), eq(environments.projectId, project.id)))
+        .where(
+          and(
+            eq(environments.id, input.sourceEnvironmentId),
+            eq(environments.projectId, project.id),
+          ),
+        )
         .limit(1);
-      const environment = rows[0];
-      if (!environment) throw notFound("environment not found");
+      if (!sourceRows[0]) throw badRequest("source environment does not belong to this project");
 
-      const updated = await deps.db
-        .update(environments)
-        .set({
-          approvalRequired: input.approvalRequired ?? environment.approvalRequired,
-          requiredApprovals: input.requiredApprovals ?? environment.requiredApprovals,
+      await deps.db
+        .insert(environmentImports)
+        .values({
+          targetEnvironmentId: target.id,
+          sourceEnvironmentId: input.sourceEnvironmentId,
         })
-        .where(eq(environments.id, environment.id))
-        .returning();
-      const next = updated[0];
+        .onConflictDoUpdate({
+          target: environmentImports.targetEnvironmentId,
+          set: { sourceEnvironmentId: input.sourceEnvironmentId },
+        });
+    }
 
-      await writeAudit(deps, {
-        orgId: actor.orgId,
-        projectId: project.id,
-        actorType: actor.type,
-        actorId: actor.id,
-        actorName: actor.name,
-        action: "environment.policy",
-        resourceType: "environment",
-        resourceId: environment.id,
-        metadata: {
-          environment: environment.slug,
-          approvalRequired: next.approvalRequired,
-          requiredApprovals: next.requiredApprovals,
-        },
-        ip: request.ip,
-      });
+    await writeAudit(deps, {
+      orgId: actor.orgId,
+      projectId: project.id,
+      actorType: actor.type,
+      actorId: actor.id,
+      actorName: actor.name,
+      action: "environment.import",
+      resourceType: "environment",
+      resourceId: target.id,
+      metadata: {
+        environment: target.slug,
+        sourceEnvironmentId: input.sourceEnvironmentId,
+      },
+      ip: request.ip,
+    });
 
-      return {
-        environment: {
-          id: next.id,
-          slug: next.slug,
-          approvalRequired: next.approvalRequired,
-          requiredApprovals: next.requiredApprovals,
-        },
-      };
-    },
-  );
+    return { ok: true };
+  });
+
+  app.patch("/api/projects/:projectId/environments/:environmentId/policy", async (request) => {
+    const actor = await requireActor(deps, request);
+    assertCanAdmin(actor);
+    const { projectId, environmentId } = request.params as {
+      projectId: string;
+      environmentId: string;
+    };
+    const project = await loadProject(deps, actor, projectId);
+    const input = parse(environmentPolicySchema, request.body);
+
+    const rows = await deps.db
+      .select()
+      .from(environments)
+      .where(and(eq(environments.id, environmentId), eq(environments.projectId, project.id)))
+      .limit(1);
+    const environment = rows[0];
+    if (!environment) throw notFound("environment not found");
+
+    const updated = await deps.db
+      .update(environments)
+      .set({
+        approvalRequired: input.approvalRequired ?? environment.approvalRequired,
+        requiredApprovals: input.requiredApprovals ?? environment.requiredApprovals,
+      })
+      .where(eq(environments.id, environment.id))
+      .returning();
+    const next = updated[0];
+
+    await writeAudit(deps, {
+      orgId: actor.orgId,
+      projectId: project.id,
+      actorType: actor.type,
+      actorId: actor.id,
+      actorName: actor.name,
+      action: "environment.policy",
+      resourceType: "environment",
+      resourceId: environment.id,
+      metadata: {
+        environment: environment.slug,
+        approvalRequired: next.approvalRequired,
+        requiredApprovals: next.requiredApprovals,
+      },
+      ip: request.ip,
+    });
+
+    return {
+      environment: {
+        id: next.id,
+        slug: next.slug,
+        approvalRequired: next.approvalRequired,
+        requiredApprovals: next.requiredApprovals,
+      },
+    };
+  });
 }

@@ -7,7 +7,9 @@ export default defineConfig({
   plugins: [react(), tailwindcss()],
   resolve: {
     alias: {
-      "@opensiel/shared": fileURLToPath(new URL("../../packages/shared/src/index.ts", import.meta.url)),
+      "@opensiel/shared": fileURLToPath(
+        new URL("../../packages/shared/src/index.ts", import.meta.url),
+      ),
     },
   },
   server: {

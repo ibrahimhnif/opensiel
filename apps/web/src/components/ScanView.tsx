@@ -96,7 +96,9 @@ export function ScanView({ project }: { project: ProjectDto }) {
               setContents(event.target.value);
               setResult(null);
             }}
-            placeholder={"Paste a .env, a source file, a log line…\n\nDATABASE_URL=postgres://user:pass@host/db\nAWS_ACCESS_KEY_ID=AKIA…"}
+            placeholder={
+              "Paste a .env, a source file, a log line…\n\nDATABASE_URL=postgres://user:pass@host/db\nAWS_ACCESS_KEY_ID=AKIA…"
+            }
           />
         </div>
 

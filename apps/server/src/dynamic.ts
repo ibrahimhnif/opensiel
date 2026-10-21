@@ -10,7 +10,7 @@ import type { Deps } from "./types.js";
 
 export const DEFAULT_CREATION_STATEMENT =
   "CREATE ROLE \"{{username}}\" WITH LOGIN PASSWORD '{{password}}' VALID UNTIL '{{expires}}'";
-export const DEFAULT_REVOCATION_STATEMENT = "DROP ROLE IF EXISTS \"{{username}}\"";
+export const DEFAULT_REVOCATION_STATEMENT = 'DROP ROLE IF EXISTS "{{username}}"';
 
 function configAad(id: string): string {
   return `dynamic:${id}`;
@@ -92,10 +92,7 @@ export async function createLease(
   actor: ActorMeta,
 ): Promise<{ leaseId: string; expiresAt: Date; credentials: LeaseCredentials }> {
   const adminUrl = decryptAdminUrl(deps, project, config);
-  const username = `opensiel_${randomToken(9)
-    .replace(/[-_]/g, "")
-    .slice(0, 12)
-    .toLowerCase()}`;
+  const username = `opensiel_${randomToken(9).replace(/[-_]/g, "").slice(0, 12).toLowerCase()}`;
   const password = randomToken(24);
   const expiresAt = new Date(Date.now() + config.ttlSeconds * 1000);
 
@@ -146,10 +143,7 @@ export async function revokeLease(
 ): Promise<void> {
   const adminUrl = decryptAdminUrl(deps, project, config);
   try {
-    await runStatements(
-      adminUrl,
-      render(config.revocationStatement, { username }),
-    );
+    await runStatements(adminUrl, render(config.revocationStatement, { username }));
   } catch {
     throw new AppError(
       502,
@@ -175,10 +169,7 @@ export async function revokeExpiredLeases(deps: Deps): Promise<number> {
     .innerJoin(dynamicSecretConfigs, eq(dynamicSecretConfigs.id, dynamicSecretLeases.configId))
     .innerJoin(projects, eq(projects.id, dynamicSecretLeases.projectId))
     .where(
-      and(
-        isNull(dynamicSecretLeases.revokedAt),
-        lte(dynamicSecretLeases.expiresAt, new Date()),
-      ),
+      and(isNull(dynamicSecretLeases.revokedAt), lte(dynamicSecretLeases.expiresAt, new Date())),
     )
     .limit(50);
 

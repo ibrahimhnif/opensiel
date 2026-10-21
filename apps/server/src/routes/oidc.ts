@@ -11,7 +11,7 @@ import type { Deps } from "../types.js";
 export const OIDC_COOKIE = "opensiel_oidc";
 
 function fail(reply: FastifyReply, message: string) {
-  return reply.redirect(`/?sso_error=${encodeURIComponent(message)}`);
+  return reply.redirect(`/login?sso_error=${encodeURIComponent(message)}`);
 }
 
 export function registerOidcRoutes(app: FastifyInstance, deps: Deps): void {
@@ -67,7 +67,8 @@ export function registerOidcRoutes(app: FastifyInstance, deps: Deps): void {
     if (query.error) return fail(reply, query.error_description ?? query.error);
     if (!query.code || !query.state) return fail(reply, "missing code or state");
 
-    const cookies = (request as typeof request & { cookies?: Record<string, string | undefined> }).cookies;
+    const cookies = (request as typeof request & { cookies?: Record<string, string | undefined> })
+      .cookies;
     const cookie = cookies?.[OIDC_COOKIE];
     if (!cookie) return fail(reply, "SSO session expired; try again");
 
@@ -131,6 +132,6 @@ export function registerOidcRoutes(app: FastifyInstance, deps: Deps): void {
       ip: request.ip,
     });
 
-    return reply.redirect("/");
+    return reply.redirect("/app");
   });
 }

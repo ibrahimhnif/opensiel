@@ -91,7 +91,10 @@ export async function loadEnvironmentSecrets(
       .where(eq(environmentImports.targetEnvironmentId, environmentId));
 
     for (const entry of imports) {
-      if (options.allowedEnvironmentIds && !options.allowedEnvironmentIds.includes(entry.sourceEnvironmentId)) {
+      if (
+        options.allowedEnvironmentIds &&
+        !options.allowedEnvironmentIds.includes(entry.sourceEnvironmentId)
+      ) {
         continue;
       }
       await collect(entry.sourceEnvironmentId, false);

@@ -123,10 +123,17 @@ export function registerOrgRoutes(app: FastifyInstance, deps: Deps): void {
       .returning();
     const invite = inserted[0];
 
-    await auditMember(deps, actor, "org.invite.create", invite.id, {
-      email: invite.email,
-      role: invite.role,
-    }, request.ip);
+    await auditMember(
+      deps,
+      actor,
+      "org.invite.create",
+      invite.id,
+      {
+        email: invite.email,
+        role: invite.role,
+      },
+      request.ip,
+    );
 
     return reply.code(201).send({
       invite: {
@@ -138,7 +145,7 @@ export function registerOrgRoutes(app: FastifyInstance, deps: Deps): void {
         createdAt: invite.createdAt.toISOString(),
       },
       token,
-      acceptPath: `/?invite=${token}`,
+      acceptPath: `/invite?token=${token}`,
     });
   });
 
@@ -181,7 +188,14 @@ export function registerOrgRoutes(app: FastifyInstance, deps: Deps): void {
     if (!invite) throw notFound("invite not found");
 
     await deps.db.delete(orgInvites).where(eq(orgInvites.id, invite.id));
-    await auditMember(deps, actor, "org.invite.revoke", invite.id, { email: invite.email }, request.ip);
+    await auditMember(
+      deps,
+      actor,
+      "org.invite.revoke",
+      invite.id,
+      { email: invite.email },
+      request.ip,
+    );
     return { ok: true };
   });
 
@@ -211,10 +225,17 @@ export function registerOrgRoutes(app: FastifyInstance, deps: Deps): void {
       .set({ role: input.role })
       .where(and(eq(orgMembers.orgId, actor.orgId), eq(orgMembers.userId, userId)));
 
-    await auditMember(deps, actor, "org.member.role", userId, {
-      from: target.role,
-      to: input.role,
-    }, request.ip);
+    await auditMember(
+      deps,
+      actor,
+      "org.member.role",
+      userId,
+      {
+        from: target.role,
+        to: input.role,
+      },
+      request.ip,
+    );
 
     return { ok: true };
   });

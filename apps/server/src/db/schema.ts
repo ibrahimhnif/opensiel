@@ -11,7 +11,12 @@ import {
   uniqueIndex,
   uuid,
 } from "drizzle-orm/pg-core";
-import type { ChangeRequestAction, ChangeRequestStatus, IdentityRole, Role } from "@opensiel/shared";
+import type {
+  ChangeRequestAction,
+  ChangeRequestStatus,
+  IdentityRole,
+  Role,
+} from "@opensiel/shared";
 
 export const users = pgTable(
   "users",
@@ -248,7 +253,11 @@ export const changeRequests = pgTable(
     decisionNote: text("decision_note"),
   },
   (table) => [
-    index("change_requests_project_status_idx").on(table.projectId, table.status, table.requestedAt),
+    index("change_requests_project_status_idx").on(
+      table.projectId,
+      table.status,
+      table.requestedAt,
+    ),
     index("change_requests_environment_idx").on(table.environmentId, table.status),
   ],
 );
@@ -286,7 +295,9 @@ export const dynamicSecretConfigs = pgTable(
     ttlSeconds: integer("ttl_seconds").notNull().default(3600),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   },
-  (table) => [uniqueIndex("dynamic_secret_configs_project_name_uq").on(table.projectId, table.name)],
+  (table) => [
+    uniqueIndex("dynamic_secret_configs_project_name_uq").on(table.projectId, table.name),
+  ],
 );
 
 export const dynamicSecretLeases = pgTable(
