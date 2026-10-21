@@ -23,6 +23,7 @@
   <a href="#screenshots">Screenshots</a> ·
   <a href="#architecture">Architecture</a> ·
   <a href="#configuration">Configuration</a> ·
+  <a href="docs/README.md">Docs</a> ·
   <a href="https://opensiel.liostech.id">Live demo</a>
 </p>
 
@@ -37,6 +38,20 @@ flag that unlocks a paid tier.
 
 > **Live demo:** <https://opensiel.liostech.id> — `demo@opensiel.dev` / `demo-password-123`
 > (read-only shared account).
+
+## Documentation
+
+| Guide                                                           | What it covers                                     |
+| --------------------------------------------------------------- | -------------------------------------------------- |
+| [Getting started](docs/getting-started.md)                      | Docker Compose, owner account, invites, CLI.       |
+| [Local development](docs/local-development.md)                  | Monorepo setup, dev servers, tests, seeding.       |
+| [Configuration](docs/configuration.md)                          | Every env var, OIDC/SAML, AWS KMS, rotation.       |
+| [CLI](docs/cli.md) · [SDK](docs/sdk.md)                         | Inject secrets and integrate apps.                 |
+| [Use cases](docs/use-cases.md)                                  | CI/CD, Kubernetes, dynamic credentials, approvals. |
+| [CI/CD](docs/ci-cd.md)                                          | GitHub Actions and GitLab recipes.                 |
+| [Kubernetes](docs/kubernetes.md)                                | Deploy, TLS, pod injection, scaling.               |
+| [Operations](docs/operations.md)                                | Backups, restore, rotation, monitoring.            |
+| [Troubleshooting](docs/troubleshooting.md) · [FAQ](docs/faq.md) | Common errors and answers.                         |
 
 ## Features
 

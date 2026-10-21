@@ -92,6 +92,12 @@ export function Landing({ authenticated }: { authenticated: boolean }) {
               Self-host
             </a>
             <a
+              className="transition-colors hover:text-foreground"
+              href={`${GITHUB_URL}/tree/main/docs`}
+            >
+              Docs
+            </a>
+            <a
               className="inline-flex items-center gap-1 transition-colors hover:text-foreground"
               href={GITHUB_URL}
             >
