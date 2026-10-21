@@ -1,0 +1,141 @@
+# Fallback deployment used while the GHCR package is private.
+# It builds the app inside the cluster from the private repo using a token,
+# then runs the server from the shared PVC. No registry and no host root needed.
+#
+# Requires:
+#   kubectl -n opensiel create secret generic opensiel-git --from-literal=GIT_TOKEN=<token with repo scope>
+#
+# Replace this with app.yaml once ghcr.io/ibrahimhnif/opensiel is public
+# (or a ghcr-creds pull secret exists).
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: opensiel-build
+  namespace: opensiel
+spec:
+  accessModes: ["ReadWriteOnce"]
+  storageClassName: local-path
+  resources:
+    requests:
+      storage: 2Gi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: opensiel
+  namespace: opensiel
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: opensiel
+  template:
+    metadata:
+      labels:
+        app: opensiel
+    spec:
+      automountServiceAccountToken: false
+      containers:
+        - name: opensiel
+          image: node:24-bookworm-slim
+          workingDir: /work/app
+          command: ["node", "apps/server/dist/index.js"]
+          ports:
+            - name: http
+              containerPort: 8787
+          env:
+            - name: NODE_ENV
+              value: production
+            - name: PORT
+              value: "8787"
+            - name: HOST
+              value: 0.0.0.0
+            - name: OPENSIEL_WEB_DIR
+              value: apps/web/dist
+          envFrom:
+            - secretRef:
+                name: opensiel-secrets
+          securityContext:
+            runAsUser: 1000
+            runAsGroup: 1000
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              memory: 768Mi
+          readinessProbe:
+            httpGet:
+              path: /api/health
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /api/health
+              port: http
+            initialDelaySeconds: 60
+            periodSeconds: 20
+          volumeMounts:
+            - name: build
+              mountPath: /work
+      initContainers:
+        - name: build
+          image: node:24-bookworm-slim
+          command: ["sh", "-c"]
+          args:
+            - |
+              set -eu
+              if [ -f /work/app/apps/server/dist/index.js ] && [ -f /work/app/apps/web/dist/index.html ]; then
+                echo "build already present, skipping"
+                exit 0
+              fi
+              apt-get update -qq
+              apt-get install -y -qq git ca-certificates >/dev/null
+              export COREPACK_ENABLE_DOWNLOAD_PROMPT=0
+              corepack enable
+              corepack prepare pnpm@10.33.0 --activate
+              rm -rf /work/app
+              git clone --depth 1 "https://x-access-token:${GIT_TOKEN}@github.com/ibrahimhnif/opensiel.git" /work/app
+              cd /work/app
+              git remote set-url origin https://github.com/ibrahimhnif/opensiel.git
+              pnpm install --frozen-lockfile
+              pnpm build
+              echo "build finished"
+          env:
+            - name: GIT_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: opensiel-git
+                  key: GIT_TOKEN
+          resources:
+            requests:
+              cpu: 300m
+              memory: 512Mi
+            limits:
+              memory: 2Gi
+          volumeMounts:
+            - name: build
+              mountPath: /work
+      volumes:
+        - name: build
+          persistentVolumeClaim:
+            claimName: opensiel-build
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: opensiel
+  namespace: opensiel
+spec:
+  selector:
+    app: opensiel
+  ports:
+    - name: http
+      port: 8787
+      targetPort: http

@@ -120,6 +120,23 @@ kubectl apply -f deploy/k8s/app.yaml -f deploy/k8s/ingress.yaml
 
 The image is published to `ghcr.io/ibrahimhnif/opensiel` by the CI workflow on `main`.
 
+### Lab instance
+
+The reference instance runs at **https://opensiel.liostech.id** (namespace `opensiel`, exposed
+through the existing Cloudflare Tunnel). While the GHCR package is private, it uses
+`deploy/k8s/app-sourcebuild.yaml`, which clones this repo inside the cluster with the
+`opensiel-git` secret, builds it once into a 2Gi PVC, and then runs the server. Delete the
+`opensiel-build` PVC to force a rebuild; switch to `app.yaml` once the package is public (or
+create a `ghcr-creds` image pull secret).
+
+After the first account is created, disable open signup:
+
+```bash
+kubectl -n opensiel patch secret opensiel-secrets --type merge \
+  -p '{"stringData":{"OPENSIEL_ALLOW_SIGNUP":"false"}}'
+kubectl -n opensiel rollout restart deploy/opensiel
+```
+
 ## Security
 
 See [SECURITY.md](./SECURITY.md). Short version: AES-256-GCM envelope encryption with a
