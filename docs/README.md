@@ -3,6 +3,9 @@
 Guides for self-hosting, developing, and integrating opensiel. If you are new here, start with
 [Getting started](getting-started.md).
 
+Hosted docs: <https://opensiel.liostech.id/docs/>. These pages are built with VitePress and shipped
+with the app.
+
 ## Guides
 
 | Guide                                     | What it covers                                                                                      |
@@ -22,9 +25,9 @@ Guides for self-hosting, developing, and integrating opensiel. If you are new he
 ## Reference
 
 - [Architecture](architecture.md) — components, data model, crypto, auth flows, threat model.
-- [Security policy](../SECURITY.md) — supported versions and private reporting.
-- [Contributing](../CONTRIBUTING.md) — development workflow and code style.
-- [Changelog](../CHANGELOG.md).
+- [Security policy](https://github.com/ibrahimhnif/opensiel/blob/main/SECURITY.md) — supported versions and private reporting.
+- [Contributing](https://github.com/ibrahimhnif/opensiel/blob/main/CONTRIBUTING.md) — development workflow and code style.
+- [Changelog](https://github.com/ibrahimhnif/opensiel/blob/main/CHANGELOG.md).
 
 ## Live demo
 

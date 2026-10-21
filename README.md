@@ -41,6 +41,8 @@ flag that unlocks a paid tier.
 
 ## Documentation
 
+Hosted docs: <https://opensiel.liostech.id/docs/> (the same pages are in [`docs/`](docs/)).
+
 | Guide                                                           | What it covers                                     |
 | --------------------------------------------------------------- | -------------------------------------------------- |
 | [Getting started](docs/getting-started.md)                      | Docker Compose, owner account, invites, CLI.       |

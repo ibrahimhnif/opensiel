@@ -1,0 +1,5 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" fill="none" role="img" aria-label="opensiel">
+  <path d="M16 3 27.3 9.5v13L16 29 4.7 22.5v-13L16 3Z" stroke="#c6f24e" stroke-width="2.5" stroke-linejoin="round" />
+  <circle cx="16" cy="13.8" r="3.1" stroke="#c6f24e" stroke-width="2.4" />
+  <path d="M16 16.9v5.2" stroke="#c6f24e" stroke-width="2.4" stroke-linecap="round" />
+</svg>

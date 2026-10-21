@@ -90,6 +90,19 @@ pnpm dev                              # migrations run automatically
 
 The volume name may differ if you changed the Compose project name.
 
+## Docs site
+
+The documentation is a VitePress site under `docs/`.
+
+```bash
+pnpm docs:dev      # http://localhost:5174/docs/
+pnpm docs:build    # static build in docs/.vitepress/dist
+pnpm docs:preview  # preview the production build
+```
+
+`pnpm build` builds the docs and copies them to `apps/web/dist/docs`, so the API serves them at
+`/docs/` in the same deployment. Set `DOCS_BASE` if you host the site under a different path.
+
 ## Run the production build locally
 
 ```bash

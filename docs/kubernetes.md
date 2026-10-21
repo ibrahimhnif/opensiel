@@ -1,6 +1,6 @@
 # Kubernetes
 
-The manifests in [`deploy/k8s`](../deploy/k8s) run the API and a single PostgreSQL instance.
+The manifests in [`deploy/k8s`](https://github.com/ibrahimhnif/opensiel/tree/main/deploy/k8s) run the API and a single PostgreSQL instance.
 The API serves both `/api/*` and the web UI.
 
 ## Deploy

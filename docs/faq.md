@@ -76,7 +76,7 @@ container with the CLI or the SDK. See [Kubernetes](kubernetes.md).
 
 It is a small, tested single-service deployment. Before exposing it: use HTTPS, close open
 signup, back up the master key and database, create scoped machine identities, and review the
-limitations in [SECURITY.md](../SECURITY.md).
+limitations in [SECURITY.md](https://github.com/ibrahimhnif/opensiel/blob/main/SECURITY.md).
 
 ### What about the demo account?
 
@@ -92,9 +92,9 @@ the selected project and environment in the URL (`?project=…&env=…`).
 ### What is on the roadmap?
 
 MFA, PKI/SSH certificate issuance, SCIM, and provider plugins. See the
-[changelog](../CHANGELOG.md) for what shipped.
+[changelog](https://github.com/ibrahimhnif/opensiel/blob/main/CHANGELOG.md) for what shipped.
 
 ### How can I contribute?
 
-Read [CONTRIBUTING.md](../CONTRIBUTING.md). Bug reports and feature requests use the GitHub
+Read [CONTRIBUTING.md](https://github.com/ibrahimhnif/opensiel/blob/main/CONTRIBUTING.md). Bug reports and feature requests use the GitHub
 templates; security issues go through a private advisory.

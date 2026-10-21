@@ -7,3 +7,5 @@ apps/web/public/og.png
 apps/web/public/screenshots
 .env
 .env.*
+docs/.vitepress/dist
+docs/.vitepress/cache
