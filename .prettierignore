@@ -1,0 +1,9 @@
+node_modules
+**/dist
+pnpm-lock.yaml
+docs/screenshots
+docs/og.png
+apps/web/public/og.png
+apps/web/public/screenshots
+.env
+.env.*
