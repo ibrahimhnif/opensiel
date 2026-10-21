@@ -1,6 +1,7 @@
 import Fastify from "fastify";
 import type { FastifyInstance } from "fastify";
 import { exportJWK, generateKeyPair, SignJWT } from "jose";
+import postgres from "postgres";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { buildApp } from "../src/app.js";
 import { createDb } from "../src/db/client.js";
@@ -1141,5 +1142,109 @@ if (!databaseUrl) {
         .json<{ logs: { action: string }[] }>()
         .logs.some((log) => log.action === "secret.scan"),
     ).toBe(true);
+  });
+
+  it("issues and revokes dynamic postgres credentials", async () => {
+    const session = await signup(`dynamic-${Date.now()}@test.dev`);
+    const auth = { authorization: `Bearer ${session.token}` };
+    const projectId = session.projectId;
+    const base = `/api/projects/${projectId}/dynamic-secrets`;
+
+    const configResponse = await app.inject({
+      method: "POST",
+      url: base,
+      headers: auth,
+      payload: { name: "pg", adminUrl: databaseUrl, ttlSeconds: 300 },
+    });
+    expect(configResponse.statusCode).toBe(201);
+    const config = configResponse.json<{
+      configuration: { id: string; name: string; ttlSeconds: number };
+    }>().configuration;
+    expect(config.ttlSeconds).toBe(300);
+    expect(JSON.stringify(configResponse.json())).not.toContain("postgres://");
+
+    const viewer = await inviteAndAccept(
+      session.token,
+      `dynamic-viewer-${Date.now()}@test.dev`,
+      "viewer",
+    );
+    const forbidden = await app.inject({
+      method: "POST",
+      url: base,
+      headers: { authorization: `Bearer ${viewer.token}` },
+      payload: { name: "nope", adminUrl: databaseUrl },
+    });
+    expect(forbidden.statusCode).toBe(403);
+
+    const leaseResponse = await app.inject({
+      method: "POST",
+      url: `${base}/${config.id}/leases`,
+      headers: auth,
+    });
+    expect(leaseResponse.statusCode).toBe(201);
+    const leaseBody = leaseResponse.json<{
+      lease: { id: string; username: string; status: string };
+      username: string;
+      password: string;
+      host: string;
+      database: string;
+    }>();
+    expect(leaseBody.lease.status).toBe("active");
+    expect(leaseBody.username).toMatch(/^opensiel_[a-z0-9]+$/);
+    expect(leaseBody.host).toBeTruthy();
+
+    const target = new URL(databaseUrl!);
+    target.username = leaseBody.username;
+    target.password = leaseBody.password;
+
+    const client = postgres(target.toString(), {
+      max: 1,
+      connect_timeout: 5,
+      onnotice: () => {},
+    });
+    try {
+      const rows = await client<{ current_user: string }[]>`select current_user`;
+      expect(rows[0]?.current_user).toBe(leaseBody.username);
+    } finally {
+      await client.end({ timeout: 5 });
+    }
+
+    const leases = await app.inject({ method: "GET", url: `${base}/leases`, headers: auth });
+    expect(
+      leases
+        .json<{ leases: { id: string; username: string }[] }>()
+        .leases.some((lease) => lease.id === leaseBody.lease.id),
+    ).toBe(true);
+
+    const revoked = await app.inject({
+      method: "POST",
+      url: `${base}/leases/${leaseBody.lease.id}/revoke`,
+      headers: auth,
+    });
+    expect(revoked.statusCode).toBe(200);
+
+    let connectionFailed = false;
+    const closed = postgres(target.toString(), {
+      max: 1,
+      connect_timeout: 5,
+      onnotice: () => {},
+    });
+    try {
+      await closed`select 1`;
+    } catch {
+      connectionFailed = true;
+    } finally {
+      await closed.end({ timeout: 5 });
+    }
+    expect(connectionFailed).toBe(true);
+
+    const audit = await app.inject({
+      method: "GET",
+      url: `/api/audit?projectId=${projectId}`,
+      headers: auth,
+    });
+    const actions = audit.json<{ logs: { action: string }[] }>().logs.map((log) => log.action);
+    expect(actions).toContain("dynamic.lease.create");
+    expect(actions).toContain("dynamic.lease.revoke");
   });
 }

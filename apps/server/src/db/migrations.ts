@@ -221,4 +221,39 @@ create table environment_imports (
 );
 `,
   },
+  {
+    name: "0005_dynamic_secrets",
+    sql: `
+create table dynamic_secret_configs (
+  id uuid primary key default gen_random_uuid(),
+  project_id uuid not null references projects(id) on delete cascade,
+  name text not null,
+  provider text not null default 'postgres',
+  admin_url_ciphertext text not null,
+  admin_url_iv text not null,
+  admin_url_tag text not null,
+  creation_statement text not null,
+  revocation_statement text not null,
+  ttl_seconds integer not null default 3600,
+  created_at timestamptz not null default now()
+);
+
+create unique index dynamic_secret_configs_project_name_uq on dynamic_secret_configs (project_id, name);
+
+create table dynamic_secret_leases (
+  id uuid primary key default gen_random_uuid(),
+  config_id uuid not null references dynamic_secret_configs(id) on delete cascade,
+  project_id uuid not null references projects(id) on delete cascade,
+  username text not null,
+  expires_at timestamptz not null,
+  revoked_at timestamptz,
+  created_by_type text not null,
+  created_by_id text not null,
+  created_by_name text not null,
+  created_at timestamptz not null default now()
+);
+
+create index dynamic_secret_leases_config_idx on dynamic_secret_leases (config_id, expires_at);
+`,
+  },
 ];

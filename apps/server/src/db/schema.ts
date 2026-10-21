@@ -268,6 +268,47 @@ export const changeRequestApprovals = pgTable(
   (table) => [primaryKey({ columns: [table.requestId, table.userId] })],
 );
 
+export const dynamicSecretConfigs = pgTable(
+  "dynamic_secret_configs",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    projectId: uuid("project_id")
+      .notNull()
+      .references(() => projects.id, { onDelete: "cascade" }),
+    name: text("name").notNull(),
+    provider: text("provider").notNull().default("postgres"),
+    adminUrlCiphertext: text("admin_url_ciphertext").notNull(),
+    adminUrlIv: text("admin_url_iv").notNull(),
+    adminUrlTag: text("admin_url_tag").notNull(),
+    creationStatement: text("creation_statement").notNull(),
+    revocationStatement: text("revocation_statement").notNull(),
+    ttlSeconds: integer("ttl_seconds").notNull().default(3600),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [uniqueIndex("dynamic_secret_configs_project_name_uq").on(table.projectId, table.name)],
+);
+
+export const dynamicSecretLeases = pgTable(
+  "dynamic_secret_leases",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    configId: uuid("config_id")
+      .notNull()
+      .references(() => dynamicSecretConfigs.id, { onDelete: "cascade" }),
+    projectId: uuid("project_id")
+      .notNull()
+      .references(() => projects.id, { onDelete: "cascade" }),
+    username: text("username").notNull(),
+    expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+    revokedAt: timestamp("revoked_at", { withTimezone: true }),
+    createdByType: text("created_by_type").notNull(),
+    createdById: text("created_by_id").notNull(),
+    createdByName: text("created_by_name").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [index("dynamic_secret_leases_config_idx").on(table.configId, table.expiresAt)],
+);
+
 export const auditLogs = pgTable(
   "audit_logs",
   {
@@ -300,3 +341,5 @@ export type SecretRow = typeof secrets.$inferSelect;
 export type SecretVersionRow = typeof secretVersions.$inferSelect;
 export type IdentityRow = typeof identities.$inferSelect;
 export type ChangeRequestRow = typeof changeRequests.$inferSelect;
+export type DynamicSecretConfigRow = typeof dynamicSecretConfigs.$inferSelect;
+export type DynamicSecretLeaseRow = typeof dynamicSecretLeases.$inferSelect;

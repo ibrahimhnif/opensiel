@@ -104,6 +104,50 @@ export interface ScanResult {
   scannedSecrets: number;
 }
 
+export const createDynamicConfigSchema = z.object({
+  name: nameSchema,
+  adminUrl: z
+    .string()
+    .trim()
+    .min(1)
+    .max(2000)
+    .refine((value) => /^postgres(ql)?:\/\//.test(value), "must be a postgres:// URL"),
+  creationStatement: z.string().min(1).max(4000).optional(),
+  revocationStatement: z.string().min(1).max(4000).optional(),
+  ttlSeconds: z.number().int().min(60).max(86_400).optional(),
+});
+export type CreateDynamicConfigInput = z.infer<typeof createDynamicConfigSchema>;
+
+export interface DynamicConfigDto {
+  id: string;
+  name: string;
+  provider: string;
+  ttlSeconds: number;
+  createdAt: string;
+}
+
+export type DynamicLeaseStatus = "active" | "expired" | "revoked";
+
+export interface DynamicLeaseDto {
+  id: string;
+  configId: string;
+  configName: string;
+  username: string;
+  expiresAt: string;
+  revokedAt: string | null;
+  createdAt: string;
+  createdByName: string;
+  status: DynamicLeaseStatus;
+}
+
+export interface CreatedLeaseDto {
+  lease: DynamicLeaseDto;
+  username: string;
+  password: string;
+  host: string;
+  database: string;
+}
+
 export const createIdentitySchema = z.object({
   name: nameSchema,
   role: identityRoleSchema.default("viewer"),

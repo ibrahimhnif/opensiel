@@ -13,12 +13,14 @@ import { MembersView } from "./MembersView";
 import { ApprovalsView } from "./ApprovalsView";
 import { IdentitiesView } from "./IdentitiesView";
 import { AuditView } from "./AuditView";
+import { DynamicView } from "./DynamicView";
 
-type Tab = "secrets" | "scan" | "approvals" | "members" | "identities" | "audit";
+type Tab = "secrets" | "scan" | "dynamic" | "approvals" | "members" | "identities" | "audit";
 
 const TABS: { value: Tab; label: string }[] = [
   { value: "secrets", label: "Secrets" },
   { value: "scan", label: "Scan" },
+  { value: "dynamic", label: "Dynamic" },
   { value: "approvals", label: "Approvals" },
   { value: "members", label: "Members" },
   { value: "identities", label: "Identities" },
@@ -56,6 +58,7 @@ export function Dashboard({ user, onSignedOut }: { user: UserDto; onSignedOut: (
   }, [loadProjects]);
 
   const project = projects.find((candidate) => candidate.id === projectId);
+  const canManage = user.role === "owner" || user.role === "admin";
 
   useEffect(() => {
     if (!project) return;
@@ -214,7 +217,7 @@ export function Dashboard({ user, onSignedOut }: { user: UserDto; onSignedOut: (
 
             <Tabs value={tab} onValueChange={(value) => setTab(value as Tab)}>
               <TabsList>
-                {TABS.map((entry) => (
+                {TABS.filter((entry) => entry.value !== "dynamic" || canManage).map((entry) => (
                   <TabsTrigger key={entry.value} value={entry.value}>
                     {entry.label}
                   </TabsTrigger>
@@ -227,11 +230,14 @@ export function Dashboard({ user, onSignedOut }: { user: UserDto; onSignedOut: (
               <TabsContent value="scan">
                 <ScanView project={project} />
               </TabsContent>
+              <TabsContent value="dynamic">
+                <DynamicView project={project} canManage={canManage} />
+              </TabsContent>
               <TabsContent value="approvals">
                 <ApprovalsView
                   project={project}
                   currentUserId={user.id}
-                  canApprove={user.role === "owner" || user.role === "admin"}
+                  canApprove={canManage}
                 />
               </TabsContent>
               <TabsContent value="members">

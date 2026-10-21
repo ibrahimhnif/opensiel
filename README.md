@@ -20,6 +20,8 @@ identities. MIT licensed, single service, Postgres-backed.
   or automatic organization provisioning.
 - **Secret scanning** — check pasted text or files for project secrets and common credential
   patterns; every UI surface is built with Tailwind CSS v4 and shadcn-style components.
+- **Dynamic database credentials** — issue short-lived PostgreSQL roles with a TTL, revoke
+  them manually, and let the background sweep drop expired roles.
 - **Machine identities** — client credentials, 15-minute tokens, environment scopes,
   `viewer` / `member` roles.
 - **Audit** — all mutations and secret reads are recorded, values never included.
@@ -118,6 +120,11 @@ token from `POST /api/auth/login`, or machine token from `POST /api/auth/token`)
 | GET/POST | `/projects/:id/secrets` | list (decrypted) / write new version |
 | POST | `/projects/:id/secrets/import` | bulk import .env or JSON |
 | POST | `/projects/:id/scan` | scan text for leaked secrets |
+| GET/POST | `/projects/:id/dynamic-secrets` | list / create dynamic DB configs |
+| DELETE | `/projects/:id/dynamic-secrets/:configId` | delete a config |
+| GET | `/projects/:id/dynamic-secrets/leases` | list leases |
+| POST | `/projects/:id/dynamic-secrets/:configId/leases` | issue credentials |
+| POST | `/projects/:id/dynamic-secrets/leases/:leaseId/revoke` | revoke a lease |
 | GET/DELETE | `/projects/:id/secrets/:key` | read / soft-delete |
 | GET | `/projects/:id/secrets/:key/versions` | version history |
 | POST | `/projects/:id/secrets/:key/rollback` | roll back to a version |
@@ -216,6 +223,22 @@ Matches are masked in the response, and neither the submitted text nor the secre
 stored or written to the audit log. Scans run as a user session (machine identities cannot
 scan), cover every environment in the project, and resolve imports and references first.
 
+## Dynamic database credentials
+
+An owner or admin configures a PostgreSQL admin connection string per project (the password
+in that URL needs `CREATEROLE`). Creating a lease:
+
+- generates an `opensiel_<random>` role with a random password and a `VALID UNTIL` expiry,
+- runs the configurable creation statement (placeholders `{{username}}`, `{{password}}`,
+  `{{expires}}`; defaults to `CREATE ROLE … WITH LOGIN …`),
+- returns the credentials once and records the lease with the configured TTL,
+- drops the role when the lease is revoked; a background sweep revokes expired leases every
+  minute using the configured revocation statement (default `DROP ROLE IF EXISTS …`).
+
+The admin connection string is encrypted with the project data key and never returned by the
+API. Deleting a configuration does not drop roles created by its earlier leases. Only
+PostgreSQL is supported in v0.
+
 ## Deployment (Kubernetes)
 
 ```bash
@@ -265,7 +288,7 @@ KMS yet.
 
 ## Roadmap
 
-v1: SAML SSO, dynamic database credentials, key rotation, webhook/CI integrations.
+v1: SAML SSO, key rotation, webhook/CI integrations.
 
 ## License
 
