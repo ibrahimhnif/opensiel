@@ -14,8 +14,6 @@ spec:
         app: opensiel
     spec:
       automountServiceAccountToken: false
-      imagePullSecrets:
-        - name: ghcr-creds
       securityContext:
         runAsNonRoot: true
         runAsUser: 1001
@@ -24,7 +22,8 @@ spec:
           type: RuntimeDefault
       containers:
         - name: opensiel
-          image: ghcr.io/ibrahimhnif/opensiel:latest
+          # Replace OWNER with the GitHub user or organization that published the image.
+          image: ghcr.io/OWNER/opensiel:latest
           imagePullPolicy: Always
           ports:
             - name: http

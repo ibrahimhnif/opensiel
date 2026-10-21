@@ -1,9 +1,21 @@
 # Security
 
+## Supported versions
+
+| Version | Supported |
+| ------- | --------- |
+| 0.1.x   | yes       |
+
 ## Reporting
 
-This is a lab project. Please open a private security advisory or contact the
-maintainer instead of filing a public issue for vulnerabilities.
+Please report vulnerabilities privately through GitHub security advisories:
+<https://github.com/ibrahimhnif/opensiel/security/advisories/new>. Do not open a public issue
+for a vulnerability. Include reproduction steps and the affected version or commit.
+
+## Test fixtures
+
+`apps/server/test/fixtures/saml.ts` contains a self-signed key pair used only by the test
+suite. It is not used at runtime and must not be trusted anywhere else.
 
 ## Design
 
@@ -26,12 +38,12 @@ maintainer instead of filing a public issue for vulnerabilities.
 
 ### Authentication
 
-| Principal | Mechanism | Storage |
-| --- | --- | --- |
-| User | argon2id password hash | 32-byte session token, only SHA-256 stored, 7-day expiry, httpOnly cookie |
-| Machine identity | client id + client secret | secret stored as SHA-256, exchanged for a 15-minute JWT |
-| OIDC user | provider ID token (authorization code + PKCE) | session cookie as above |
-| SAML user | signed assertion validated against the IdP certificate | session cookie as above |
+| Principal        | Mechanism                                              | Storage                                                                   |
+| ---------------- | ------------------------------------------------------ | ------------------------------------------------------------------------- |
+| User             | argon2id password hash                                 | 32-byte session token, only SHA-256 stored, 7-day expiry, httpOnly cookie |
+| Machine identity | client id + client secret                              | secret stored as SHA-256, exchanged for a 15-minute JWT                   |
+| OIDC user        | provider ID token (authorization code + PKCE)          | session cookie as above                                                   |
+| SAML user        | signed assertion validated against the IdP certificate | session cookie as above                                                   |
 
 OIDC logins verify the ID token signature against the provider JWKS, check issuer and
 audience, require a nonce match, and reject emails the provider marks as unverified.

@@ -3,6 +3,25 @@
   "version": "0.1.0",
   "private": true,
   "license": "MIT",
+  "description": "Self-hosted, MIT-licensed secrets manager with approvals, versioning, SSO, dynamic credentials, webhooks, and audit logs.",
+  "author": "opensiel contributors",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/ibrahimhnif/opensiel.git"
+  },
+  "homepage": "https://opensiel.liostech.id",
+  "bugs": {
+    "url": "https://github.com/ibrahimhnif/opensiel/issues"
+  },
+  "keywords": [
+    "secrets-management",
+    "secrets-manager",
+    "self-hosted",
+    "vault-alternative",
+    "infisical-alternative",
+    "typescript",
+    "kubernetes"
+  ],
   "packageManager": "pnpm@10.33.0",
   "engines": {
     "node": ">=20"
@@ -12,10 +31,25 @@
     "build": "pnpm -r build",
     "test": "pnpm -r test",
     "typecheck": "pnpm -r typecheck",
+    "lint": "eslint .",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
     "db:up": "docker compose -f deploy/docker-compose.yml up -d db",
     "db:down": "docker compose -f deploy/docker-compose.yml down"
   },
   "pnpm": {
-    "onlyBuiltDependencies": ["esbuild"]
-  }
+    "onlyBuiltDependencies": [
+      "esbuild"
+    ]
+  },
+  "devDependencies": {
+    "@eslint/js": "^10.0.1",
+    "eslint": "^10.13.0",
+    "eslint-plugin-react-hooks": "^7.1.1",
+    "eslint-plugin-react-refresh": "^0.5.7",
+    "globals": "^17.13.0",
+    "prettier": "^3.9.10",
+    "typescript-eslint": "^8.72.0"
+  },
+  "type": "module"
 }

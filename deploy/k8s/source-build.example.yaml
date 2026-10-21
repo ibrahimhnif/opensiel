@@ -1,11 +1,13 @@
-# Fallback deployment used while the GHCR package is private.
+# Optional: build from a Git repository inside the cluster.
+# Replace <owner>/<repo> and create the opensiel-git secret with a read-only token.
+# For private forks only; the published image is the default deployment.
 # It builds the app inside the cluster from the private repo using a token,
 # then runs the server from the shared PVC. No registry and no host root needed.
 #
 # Requires:
 #   kubectl -n opensiel create secret generic opensiel-git --from-literal=GIT_TOKEN=<token with repo scope>
 #
-# Replace this with app.yaml once ghcr.io/ibrahimhnif/opensiel is public
+# Replace this with app.yaml once ghcr.io/OWNER/opensiel is public
 # (or a ghcr-creds pull secret exists).
 apiVersion: v1
 kind: PersistentVolumeClaim
@@ -103,9 +105,9 @@ spec:
               corepack enable
               corepack prepare pnpm@10.33.0 --activate
               rm -rf /work/app
-              git clone --depth 1 "https://x-access-token:${GIT_TOKEN}@github.com/ibrahimhnif/opensiel.git" /work/app
+              git clone --depth 1 "https://x-access-token:${GIT_TOKEN}@github.com/<owner>/<repo>.git" /work/app
               cd /work/app
-              git remote set-url origin https://github.com/ibrahimhnif/opensiel.git
+              git remote set-url origin https://github.com/<owner>/<repo>.git
               pnpm install --frozen-lockfile
               pnpm build
               echo "${SOURCE_REV}" > /work/.source-rev
