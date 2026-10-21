@@ -1564,6 +1564,82 @@ if (!databaseUrl) {
     expect(actions).toContain("webhook.test");
   });
 
+  it("supports custom environments such as UAT", async () => {
+    const session = await signup(`envs-${Date.now()}@test.dev`);
+    const auth = { authorization: `Bearer ${session.token}` };
+    const projectId = session.projectId;
+
+    const created = await app.inject({
+      method: "POST",
+      url: `/api/projects/${projectId}/environments`,
+      headers: auth,
+      payload: { name: "UAT" },
+    });
+    expect(created.statusCode).toBe(201);
+    const environment = created.json<{
+      environment: { id: string; slug: string; position: number };
+    }>().environment;
+    expect(environment.slug).toBe("uat");
+    expect(environment.position).toBe(3);
+
+    const list = await app.inject({
+      method: "GET",
+      url: `/api/projects/${projectId}/environments`,
+      headers: auth,
+    });
+    expect(list.json<{ environments: unknown[] }>().environments).toHaveLength(4);
+
+    const set = await app.inject({
+      method: "POST",
+      url: `/api/projects/${projectId}/secrets`,
+      headers: auth,
+      payload: { env: "uat", key: "UAT_API_KEY", value: "uat-value" },
+    });
+    expect(set.statusCode).toBe(201);
+    const read = await app.inject({
+      method: "GET",
+      url: `/api/projects/${projectId}/secrets?env=uat`,
+      headers: auth,
+    });
+    expect(
+      read
+        .json<{ secrets: { key: string; value: string }[] }>()
+        .secrets.find((secret) => secret.key === "UAT_API_KEY")?.value,
+    ).toBe("uat-value");
+
+    const blocked = await app.inject({
+      method: "DELETE",
+      url: `/api/projects/${projectId}/environments/${environment.id}`,
+      headers: auth,
+    });
+    expect(blocked.statusCode).toBe(409);
+
+    const viewer = await inviteAndAccept(
+      session.token,
+      `env-viewer-${Date.now()}@test.dev`,
+      "viewer",
+    );
+    const forbidden = await app.inject({
+      method: "POST",
+      url: `/api/projects/${projectId}/environments`,
+      headers: { authorization: `Bearer ${viewer.token}` },
+      payload: { name: "QA" },
+    });
+    expect(forbidden.statusCode).toBe(403);
+
+    await app.inject({
+      method: "DELETE",
+      url: `/api/projects/${projectId}/secrets/UAT_API_KEY?env=uat`,
+      headers: auth,
+    });
+    const deleted = await app.inject({
+      method: "DELETE",
+      url: `/api/projects/${projectId}/environments/${environment.id}`,
+      headers: auth,
+    });
+    expect(deleted.statusCode).toBe(200);
+  });
+
   it("rotates project data keys to the next master key", async () => {
     const owner = await signup(`rotate-${Date.now()}@test.dev`);
     const auth = { authorization: `Bearer ${owner.token}` };

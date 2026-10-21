@@ -6,7 +6,7 @@ import type {
   EnvironmentImportDto,
   ProjectDto,
 } from "@opensiel/shared";
-import { Check, RefreshCw, X } from "lucide-react";
+import { Check, Loader2, Plus, RefreshCw, X } from "lucide-react";
 import { api, errorMessage } from "../api";
 import { cn } from "../lib/utils";
 import { Badge } from "./ui/badge";
@@ -14,6 +14,7 @@ import { Button } from "./ui/button";
 import { Card } from "./ui/card";
 import { Checkbox } from "./ui/checkbox";
 import { Input } from "./ui/input";
+import { Label } from "./ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "./ui/select";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "./ui/table";
 import { Pagination } from "./Pagination";
@@ -24,6 +25,7 @@ interface Props {
   project: ProjectDto;
   currentUserId: string;
   canApprove: boolean;
+  onRefresh: () => Promise<void>;
 }
 
 const STATUS_FILTERS: (ChangeRequestStatus | "all")[] = [
@@ -41,7 +43,7 @@ function statusVariant(status: ChangeRequestStatus) {
   return "secondary" as const;
 }
 
-export function ApprovalsView({ project, currentUserId, canApprove }: Props) {
+export function ApprovalsView({ project, currentUserId, canApprove, onRefresh }: Props) {
   const [requests, setRequests] = useState<ChangeRequestDto[]>([]);
   const [filter, setFilter] = useState<ChangeRequestStatus | "all">("pending");
   const [envs, setEnvs] = useState<EnvironmentDto[]>(project.environments);
@@ -49,6 +51,9 @@ export function ApprovalsView({ project, currentUserId, canApprove }: Props) {
   const [notice, setNotice] = useState("");
   const [busy, setBusy] = useState(false);
   const [imports, setImports] = useState<Record<string, string>>({});
+  const [newEnvName, setNewEnvName] = useState("");
+  const [newEnvSlug, setNewEnvSlug] = useState("");
+  const [envBusy, setEnvBusy] = useState(false);
 
   useEffect(() => {
     setEnvs(project.environments);
@@ -171,6 +176,40 @@ export function ApprovalsView({ project, currentUserId, canApprove }: Props) {
     }
   }
 
+  async function createEnvironment(event: React.FormEvent) {
+    event.preventDefault();
+    if (!newEnvName.trim()) return;
+    setEnvBusy(true);
+    setError("");
+    try {
+      const result = await api.post<{ environment: EnvironmentDto }>(
+        `/api/projects/${project.id}/environments`,
+        { name: newEnvName.trim(), slug: newEnvSlug.trim() || undefined },
+      );
+      setEnvs((current) => [...current, result.environment]);
+      setNewEnvName("");
+      setNewEnvSlug("");
+      setNotice(`environment ${result.environment.slug} created`);
+      await onRefresh();
+    } catch (err) {
+      setError(errorMessage(err));
+    } finally {
+      setEnvBusy(false);
+    }
+  }
+
+  async function deleteEnvironment(environment: EnvironmentDto) {
+    if (!window.confirm(`Delete environment ${environment.slug}? It must have no secrets.`)) return;
+    try {
+      await api.del(`/api/projects/${project.id}/environments/${environment.id}`);
+      setEnvs((current) => current.filter((entry) => entry.id !== environment.id));
+      setNotice(`environment ${environment.slug} deleted`);
+      await onRefresh();
+    } catch (err) {
+      setError(errorMessage(err));
+    }
+  }
+
   return (
     <section className="space-y-4">
       <div className="flex flex-wrap items-center justify-between gap-3">
@@ -216,6 +255,78 @@ export function ApprovalsView({ project, currentUserId, canApprove }: Props) {
 
       {canApprove && (
         <>
+          <div className="space-y-2">
+            <h3 className="text-sm font-medium">Environments</h3>
+            <p className="text-xs text-muted-foreground">
+              Add environments beyond the default dev, staging, and prod, for example QA or UAT. An
+              environment must have no secrets before it can be deleted.
+            </p>
+            <Card className="overflow-hidden py-0">
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Environment</TableHead>
+                    <TableHead>Name</TableHead>
+                    <TableHead className="text-right">Actions</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {envs.map((environment) => (
+                    <TableRow key={environment.id}>
+                      <TableCell>
+                        <Badge variant="outline">{environment.slug}</Badge>
+                      </TableCell>
+                      <TableCell>{environment.name}</TableCell>
+                      <TableCell className="text-right">
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          className="text-destructive hover:text-destructive"
+                          disabled={envs.length <= 1}
+                          onClick={() => void deleteEnvironment(environment)}
+                        >
+                          delete
+                        </Button>
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            </Card>
+            <form
+              className="flex flex-col gap-3 sm:flex-row sm:items-end"
+              onSubmit={createEnvironment}
+            >
+              <div className="flex-1 space-y-2">
+                <Label htmlFor="new-env-name">New environment</Label>
+                <Input
+                  id="new-env-name"
+                  placeholder="UAT"
+                  value={newEnvName}
+                  onChange={(event) => setNewEnvName(event.target.value)}
+                  required
+                />
+              </div>
+              <div className="w-full space-y-2 sm:w-40">
+                <Label htmlFor="new-env-slug">Slug (optional)</Label>
+                <Input
+                  id="new-env-slug"
+                  placeholder="uat"
+                  value={newEnvSlug}
+                  onChange={(event) => setNewEnvSlug(event.target.value)}
+                />
+              </div>
+              <Button type="submit" disabled={envBusy}>
+                {envBusy ? (
+                  <Loader2 className="size-4 animate-spin" />
+                ) : (
+                  <Plus className="size-4" />
+                )}
+                add environment
+              </Button>
+            </form>
+          </div>
+
           <div className="space-y-2">
             <h3 className="text-sm font-medium">Environment policies</h3>
             <p className="text-xs text-muted-foreground">

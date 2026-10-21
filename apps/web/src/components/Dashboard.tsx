@@ -355,7 +355,12 @@ export function Dashboard({ user, onSignedOut }: { user: UserDto; onSignedOut: (
                 <WebhooksView project={project} />
               </TabsContent>
               <TabsContent value="approvals">
-                <ApprovalsView project={project} currentUserId={user.id} canApprove={canManage} />
+                <ApprovalsView
+                  project={project}
+                  currentUserId={user.id}
+                  canApprove={canManage}
+                  onRefresh={loadProjects}
+                />
               </TabsContent>
               <TabsContent value="members">
                 <MembersView />
