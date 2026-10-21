@@ -1,8 +1,10 @@
+import { existsSync } from "node:fs";
 import { defineConfig } from "vitepress";
 
 const GITHUB_URL = "https://github.com/ibrahimhnif/opensiel";
 const DEMO_URL = "https://opensiel.liostech.id";
 const base = process.env.DOCS_BASE ?? "/docs/";
+const hasGit = existsSync(".git");
 
 export default defineConfig({
   base,
@@ -13,7 +15,7 @@ export default defineConfig({
   lang: "en-US",
   appearance: false,
   cleanUrls: true,
-  lastUpdated: true,
+  lastUpdated: hasGit,
   ignoreDeadLinks: [/^http:\/\/localhost/, /^http:\/\/127\.0\.0\.1/],
   srcExclude: ["README.md"],
   head: [
