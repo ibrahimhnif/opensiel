@@ -16,6 +16,8 @@ identities. MIT licensed, single service, Postgres-backed.
   imports, resolved at read time.
 - **Bulk import** — paste or upload a `.env` file (or JSON) instead of creating keys one by
   one; existing keys get a new version.
+- **SSO (OIDC)** — authorization code + PKCE against any OIDC provider, with invite-based
+  or automatic organization provisioning.
 - **Machine identities** — client credentials, 15-minute tokens, environment scopes,
   `viewer` / `member` roles.
 - **Audit** — all mutations and secret reads are recorded, values never included.
@@ -101,6 +103,8 @@ token from `POST /api/auth/login`, or machine token from `POST /api/auth/token`)
 | GET | `/auth/me`, `/auth/config` | current user / bootstrap info |
 | GET | `/auth/invite?token=` | public invite info |
 | POST | `/auth/accept-invite` | join an org from an invite |
+| GET | `/auth/oidc/start` | begin OIDC login (redirect) |
+| GET | `/auth/oidc/callback` | OIDC callback |
 | POST | `/auth/token` | client-credentials token (15 min) |
 | GET | `/org` | organization + members |
 | POST | `/org/invites` | create an invite (owner/admin) |
@@ -172,6 +176,30 @@ dotenv (`#` comments, `export KEY=`, quoted values, escapes) or as a flat JSON o
 - Importing into an environment that requires approvals returns `409`; create one secret at
   a time there so each change can be approved.
 
+## SSO (OpenID Connect)
+
+Set these on the instance and restart. When the three required values are present, the login
+screen shows a "Continue with …" button.
+
+| Variable | Purpose |
+| --- | --- |
+| `OPENSIEL_OIDC_ISSUER` | issuer URL, e.g. `https://accounts.google.com` |
+| `OPENSIEL_OIDC_CLIENT_ID` | OAuth client id |
+| `OPENSIEL_OIDC_CLIENT_SECRET` | OAuth client secret |
+| `OPENSIEL_OIDC_REDIRECT_URI` | defaults to `<OPENSIEL_PUBLIC_URL>/api/auth/oidc/callback` |
+| `OPENSIEL_OIDC_SCOPES` | defaults to `openid email profile` |
+| `OPENSIEL_OIDC_ALLOWED_DOMAINS` | optional comma-separated email domains |
+| `OPENSIEL_OIDC_AUTO_CREATE` | defaults to `true`; `false` means invited emails only |
+
+The flow uses the authorization code grant with PKCE, state, and nonce. ID tokens are
+verified against the provider JWKS with issuer and audience checks, and the email must be
+present and not reported as unverified. On first login the user joins a matching pending
+invite; otherwise a new organization is provisioned with them as owner (unless auto-create
+is disabled). Existing accounts keep their organization.
+
+Example for Google: add `https://your-host/api/auth/oidc/callback` as an authorized redirect
+URI and use `https://accounts.google.com` as the issuer.
+
 ## Deployment (Kubernetes)
 
 ```bash
@@ -216,12 +244,13 @@ kubectl -n opensiel rollout restart deploy/opensiel
 See [SECURITY.md](./SECURITY.md). Short version: AES-256-GCM envelope encryption with a
 per-project data key wrapped by `OPENSIEL_MASTER_KEY`, argon2id passwords, hashed
 session/machine secrets, scoped short-lived machine tokens, and audit logs that never
-contain values. No SSO, approvals, dynamic secrets, PKI, or KMS yet.
+contain values. No SAML, approvals outside the built-in workflow, dynamic secrets, PKI, or
+KMS yet.
 
 ## Roadmap
 
-v1: OIDC/SAML SSO, dynamic database credentials, secret scanning, key rotation,
-webhook/CI integrations.
+v1: SAML SSO, dynamic database credentials, secret scanning, key rotation, webhook/CI
+integrations.
 
 ## License
 

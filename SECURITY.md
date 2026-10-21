@@ -30,6 +30,12 @@ maintainer instead of filing a public issue for vulnerabilities.
 | --- | --- | --- |
 | User | argon2id password hash | 32-byte session token, only SHA-256 stored, 7-day expiry, httpOnly cookie |
 | Machine identity | client id + client secret | secret stored as SHA-256, exchanged for a 15-minute JWT |
+| OIDC user | provider ID token (authorization code + PKCE) | session cookie as above |
+
+OIDC logins verify the ID token signature against the provider JWKS, check issuer and
+audience, require a nonce match, and reject emails the provider marks as unverified.
+`OPENSIEL_OIDC_ALLOWED_DOMAINS` can restrict which email domains may sign in. With
+`OPENSIEL_OIDC_AUTO_CREATE=false`, only emails with a pending invite can sign in.
 
 Machine tokens are stateless; revoking an identity blocks new token issuance, but an
 already-issued token stays valid until it expires (max 15 minutes).
@@ -50,10 +56,7 @@ metadata contains key names and paths, never values.
 
 ## Known limitations (v0)
 
-- No SSO/SAML, MFA, approval workflows, or invite flow. Set `OPENSIEL_ALLOW_SIGNUP=false`
-  on any public instance and create the first account immediately.
-- No rate limiting across multiple instances (in-process only, via `@fastify/rate-limit`).
-- No secret scanning, dynamic credentials, PKI, or external KMS/HSM.
+- No SAML, MFA, secret scanning, dynamic credentials, PKI, or external KMS/HSM.
 - No key rotation tooling yet. Rotating `OPENSIEL_MASTER_KEY` requires rewrapping DEKs.
 - TLS must be terminated in front of the app (reverse proxy, ingress, or tunnel). Do not
   serve the app directly over plain HTTP on the public internet.

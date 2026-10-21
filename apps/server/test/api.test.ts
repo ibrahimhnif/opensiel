@@ -1,4 +1,6 @@
+import Fastify from "fastify";
 import type { FastifyInstance } from "fastify";
+import { exportJWK, generateKeyPair, SignJWT } from "jose";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { buildApp } from "../src/app.js";
 import { createDb } from "../src/db/client.js";
@@ -30,6 +32,79 @@ if (!databaseUrl) {
 
   let app: FastifyInstance;
   let database: Database;
+  let idp: FastifyInstance;
+  let idpIssuer = "";
+  let idpEmail = "";
+  let idpName = "";
+  let idpPrivateKey: Awaited<ReturnType<typeof generateKeyPair>>["privateKey"];
+  let idpJwk: Record<string, unknown>;
+  const idpCodes = new Map<string, { nonce: string; email: string; name: string }>();
+
+  function cookieValue(
+    header: string | string[] | undefined,
+    name: string,
+  ): string | null {
+    const entries = Array.isArray(header) ? header : header ? [header] : [];
+    for (const entry of entries) {
+      const [pair] = entry.split(";");
+      const separator = pair.indexOf("=");
+      if (separator === -1) continue;
+      if (pair.slice(0, separator).trim() === name) {
+        return decodeURIComponent(pair.slice(separator + 1));
+      }
+    }
+    return null;
+  }
+
+  async function startSso(
+    email: string,
+    name = "SSO User",
+  ): Promise<{ callbackPath: string; cookie: string }> {
+    idpEmail = email;
+    idpName = name;
+
+    const start = await app.inject({ method: "GET", url: "/api/auth/oidc/start" });
+    expect(start.statusCode).toBe(302);
+    const location = start.headers.location as string;
+    expect(location).toBeTruthy();
+
+    const cookie = cookieValue(start.headers["set-cookie"], "opensiel_oidc");
+    expect(cookie).toBeTruthy();
+
+    const authorize = await fetch(location, { redirect: "manual" });
+    const redirect = authorize.headers.get("location");
+    expect(redirect).toBeTruthy();
+    const callback = new URL(redirect!);
+
+    return { callbackPath: `${callback.pathname}${callback.search}`, cookie: cookie! };
+  }
+
+  function finishSso(callbackPath: string, cookie: string) {
+    return app.inject({
+      method: "GET",
+      url: callbackPath,
+      headers: { cookie: `opensiel_oidc=${encodeURIComponent(cookie)}` },
+    });
+  }
+
+  async function ssoLogin(email: string, name = "SSO User") {
+    const { callbackPath, cookie } = await startSso(email, name);
+    const response = await finishSso(callbackPath, cookie);
+    expect(response.statusCode).toBe(302);
+    const session = cookieValue(response.headers["set-cookie"], "opensiel_session");
+    if (!session) throw new Error(`SSO login failed: ${response.headers.location}`);
+
+    const me = await app.inject({
+      method: "GET",
+      url: "/api/auth/me",
+      headers: { authorization: `Bearer ${session}` },
+    });
+    expect(me.statusCode).toBe(200);
+    return {
+      token: session,
+      user: me.json<{ user: { id: string; email: string; role: string; orgId: string } }>().user,
+    };
+  }
 
   interface Session {
     token: string;
@@ -87,6 +162,99 @@ if (!databaseUrl) {
   }
 
   beforeAll(async () => {
+    const keys = await generateKeyPair("RS256");
+    idpPrivateKey = keys.privateKey;
+    idpJwk = {
+      ...(await exportJWK(keys.publicKey)),
+      kid: "test-key",
+      alg: "RS256",
+      use: "sig",
+    };
+
+    idp = Fastify();
+    idp.addContentTypeParser(
+      "application/x-www-form-urlencoded",
+      { parseAs: "string" },
+      (_request, body, done) => {
+        try {
+          done(null, Object.fromEntries(new URLSearchParams(body as string)));
+        } catch (error) {
+          done(error as Error);
+        }
+      },
+    );
+    idp.get("/.well-known/openid-configuration", async () => ({
+      issuer: idpIssuer,
+      authorization_endpoint: `${idpIssuer}/authorize`,
+      token_endpoint: `${idpIssuer}/token`,
+      jwks_uri: `${idpIssuer}/jwks`,
+      response_types_supported: ["code"],
+      subject_types_supported: ["public"],
+      id_token_signing_alg_values_supported: ["RS256"],
+    }));
+    idp.get("/authorize", async (request, reply) => {
+      const query = request.query as Record<string, string>;
+      if (
+        query.client_id !== "test-client" ||
+        query.code_challenge_method !== "S256" ||
+        !query.code_challenge
+      ) {
+        return reply.code(400).send({ error: "invalid_request" });
+      }
+      const code = `code-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+      idpCodes.set(code, { nonce: query.nonce, email: idpEmail, name: idpName });
+      const url = new URL(query.redirect_uri);
+      url.searchParams.set("code", code);
+      url.searchParams.set("state", query.state);
+      return reply.redirect(url.toString());
+    });
+    idp.get("/jwks", async () => ({ keys: [idpJwk] }));
+    idp.post("/token", async (request, reply) => {
+      const body = request.body as Record<string, string>;
+      if (body.client_id !== "test-client" || body.client_secret !== "test-secret") {
+        return reply.code(401).send({ error: "invalid_client" });
+      }
+      const entry = idpCodes.get(body.code);
+      if (!entry) return reply.code(400).send({ error: "invalid_grant" });
+      idpCodes.delete(body.code);
+
+      const idToken = await new SignJWT({
+        email: entry.email,
+        email_verified: true,
+        name: entry.name,
+        nonce: entry.nonce,
+      })
+        .setProtectedHeader({ alg: "RS256", kid: "test-key" })
+        .setIssuer(idpIssuer)
+        .setAudience("test-client")
+        .setSubject(`sub-${entry.email}`)
+        .setIssuedAt()
+        .setExpirationTime("5m")
+        .sign(idpPrivateKey);
+
+      return {
+        id_token: idToken,
+        token_type: "Bearer",
+        access_token: "test-access-token",
+        expires_in: 300,
+      };
+    });
+
+    await idp.listen({ port: 0, host: "127.0.0.1" });
+    const address = idp.server.address();
+    const idpPort = typeof address === "object" && address ? address.port : 0;
+    idpIssuer = `http://127.0.0.1:${idpPort}`;
+
+    env.oidc = {
+      issuer: idpIssuer,
+      clientId: "test-client",
+      clientSecret: "test-secret",
+      redirectUri: "http://localhost:8787/api/auth/oidc/callback",
+      scopes: "openid email profile",
+      allowedDomains: [],
+      autoCreate: true,
+    };
+
     database = createDb(databaseUrl, { max: 5 });
     await database.sql.unsafe("drop schema if exists public cascade");
     await database.sql.unsafe("create schema public");
@@ -96,6 +264,7 @@ if (!databaseUrl) {
 
   afterAll(async () => {
     await app.close();
+    await idp.close();
     await database.sql.end({ timeout: 5 });
   });
 
@@ -802,5 +971,82 @@ if (!databaseUrl) {
     expect(
       applied.json<{ secrets: { key: string; value: string }[] }>().secrets[0],
     ).toMatchObject({ key: "TWO_MAN", value: "value" });
+  });
+
+  it("signs in with OIDC and provisions an organization", async () => {
+    const email = `oidc-${Date.now()}@test.dev`;
+    const first = await ssoLogin(email, "OIDC User");
+    expect(first.user.email).toBe(email);
+    expect(first.user.role).toBe("owner");
+
+    const projects = await app.inject({
+      method: "GET",
+      url: "/api/projects",
+      headers: { authorization: `Bearer ${first.token}` },
+    });
+    expect(projects.json<{ projects: unknown[] }>().projects).toHaveLength(1);
+
+    const second = await ssoLogin(email, "OIDC User");
+    expect(second.user.id).toBe(first.user.id);
+    expect(second.user.orgId).toBe(first.user.orgId);
+
+    const audit = await app.inject({
+      method: "GET",
+      url: "/api/audit",
+      headers: { authorization: `Bearer ${first.token}` },
+    });
+    const logs = audit.json<{ logs: { action: string }[] }>().logs;
+    expect(logs.some((log) => log.action === "auth.oidc.login")).toBe(true);
+  });
+
+  it("joins an organization through a pending invite with OIDC", async () => {
+    const owner = await signup(`oidc-invite-owner-${Date.now()}@test.dev`);
+    const auth = { authorization: `Bearer ${owner.token}` };
+    const org = await app.inject({ method: "GET", url: "/api/org", headers: auth });
+    const orgId = org.json<{ org: { id: string } }>().org.id;
+
+    const email = `oidc-invited-${Date.now()}@test.dev`;
+    const invite = await app.inject({
+      method: "POST",
+      url: "/api/org/invites",
+      headers: auth,
+      payload: { email, role: "member" },
+    });
+    expect(invite.statusCode).toBe(201);
+
+    const login = await ssoLogin(email, "Invited User");
+    expect(login.user.orgId).toBe(orgId);
+    expect(login.user.role).toBe("member");
+
+    const projects = await app.inject({
+      method: "GET",
+      url: "/api/projects",
+      headers: { authorization: `Bearer ${login.token}` },
+    });
+    expect(projects.json<{ projects: unknown[] }>().projects).toHaveLength(1);
+  });
+
+  it("enforces SSO domain and auto-create policies", async () => {
+    env.oidc!.allowedDomains = ["allowed.dev"];
+    const blockedEmail = `blocked-${Date.now()}@test.dev`;
+    const blockedStart = await startSso(blockedEmail, "Blocked");
+    const blocked = await finishSso(blockedStart.callbackPath, blockedStart.cookie);
+    expect(blocked.statusCode).toBe(302);
+    expect(String(blocked.headers.location)).toContain("sso_error");
+    expect(cookieValue(blocked.headers["set-cookie"], "opensiel_session")).toBeNull();
+    env.oidc!.allowedDomains = [];
+
+    env.oidc!.autoCreate = false;
+    const unknownEmail = `unknown-${Date.now()}@test.dev`;
+    const unknownStart = await startSso(unknownEmail, "Unknown");
+    const unknown = await finishSso(unknownStart.callbackPath, unknownStart.cookie);
+    expect(unknown.statusCode).toBe(302);
+    expect(String(unknown.headers.location)).toContain("sso_error");
+
+    const rows = await database.sql<{ count: number }[]>`
+      select count(*)::int as count from users where email = ${unknownEmail}
+    `;
+    expect(rows[0]?.count).toBe(0);
+    env.oidc!.autoCreate = true;
   });
 }

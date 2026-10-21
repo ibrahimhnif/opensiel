@@ -75,6 +75,39 @@ a { color: var(--accent); }
 
 .brand-mark { color: var(--accent); }
 
+.sso-button {
+  display: block;
+  text-align: center;
+  padding: 10px 14px;
+  border: 1px solid var(--accent-2);
+  border-radius: 8px;
+  background: rgb(47 111 224 / 15%);
+  color: var(--text);
+  text-decoration: none;
+  font-weight: 500;
+  font-size: 13px;
+}
+
+.sso-button:hover {
+  border-color: var(--accent);
+  background: rgb(47 111 224 / 25%);
+}
+
+.divider {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.divider::before,
+.divider::after {
+  content: "";
+  flex: 1;
+  border-top: 1px solid var(--border);
+}
+
 label {
   display: flex;
   flex-direction: column;

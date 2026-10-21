@@ -46,6 +46,9 @@ export function registerAuthRoutes(app: FastifyInstance, deps: Deps): void {
       initialized,
       signupEnabled: deps.env.allowSignup || !initialized,
       version: "0.1.0",
+      oidc: deps.env.oidc
+        ? { enabled: true, name: new URL(deps.env.oidc.issuer).host }
+        : { enabled: false },
     };
   });
 

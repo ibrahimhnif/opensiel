@@ -9,6 +9,7 @@ interface BootstrapConfig {
   initialized: boolean;
   signupEnabled: boolean;
   version: string;
+  oidc?: { enabled: boolean; name: string };
 }
 
 export function App() {
@@ -17,6 +18,9 @@ export function App() {
   const [error, setError] = useState("");
   const [inviteToken, setInviteToken] = useState<string | null>(() =>
     new URLSearchParams(window.location.search).get("invite"),
+  );
+  const [ssoError] = useState<string | null>(() =>
+    new URLSearchParams(window.location.search).get("sso_error"),
   );
 
   function clearInvite() {
@@ -74,7 +78,7 @@ export function App() {
   if (!config) return <div className="center muted">loading…</div>;
 
   if (!user) {
-    return <Login config={config} onLogin={setUser} />;
+    return <Login config={config} onLogin={setUser} initialError={ssoError ?? undefined} />;
   }
 
   return <Dashboard user={user} onSignedOut={() => setUser(null)} />;

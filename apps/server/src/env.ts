@@ -13,7 +13,24 @@ const schema = z.object({
   OPENSIEL_ALLOW_SIGNUP: z.enum(["true", "false"]).default("false"),
   OPENSIEL_AUTO_MIGRATE: z.enum(["true", "false"]).default("true"),
   OPENSIEL_RATE_LIMIT: z.enum(["true", "false"]).default("true"),
+  OPENSIEL_OIDC_ISSUER: z.string().url().optional(),
+  OPENSIEL_OIDC_CLIENT_ID: z.string().min(1).optional(),
+  OPENSIEL_OIDC_CLIENT_SECRET: z.string().min(1).optional(),
+  OPENSIEL_OIDC_REDIRECT_URI: z.string().url().optional(),
+  OPENSIEL_OIDC_SCOPES: z.string().default("openid email profile"),
+  OPENSIEL_OIDC_ALLOWED_DOMAINS: z.string().optional(),
+  OPENSIEL_OIDC_AUTO_CREATE: z.enum(["true", "false"]).default("true"),
 });
+
+export interface OidcConfig {
+  issuer: string;
+  clientId: string;
+  clientSecret: string;
+  redirectUri: string;
+  scopes: string;
+  allowedDomains: string[];
+  autoCreate: boolean;
+}
 
 export interface Env {
   nodeEnv: "development" | "production" | "test";
@@ -29,6 +46,7 @@ export interface Env {
   rateLimit: boolean;
   isProd: boolean;
   secureCookies: boolean;
+  oidc?: OidcConfig;
 }
 
 export function loadEnv(source: NodeJS.ProcessEnv = process.env): Env {
@@ -43,6 +61,33 @@ export function loadEnv(source: NodeJS.ProcessEnv = process.env): Env {
     throw new Error("OPENSIEL_MASTER_KEY must decode to exactly 32 bytes (openssl rand -base64 32)");
   }
   const isProd = s.NODE_ENV === "production";
+  const oidcValues = [s.OPENSIEL_OIDC_ISSUER, s.OPENSIEL_OIDC_CLIENT_ID, s.OPENSIEL_OIDC_CLIENT_SECRET];
+  const oidcConfigured = oidcValues.filter(Boolean).length;
+  if (oidcConfigured > 0 && oidcConfigured < 3) {
+    throw new Error(
+      "OPENSIEL_OIDC_ISSUER, OPENSIEL_OIDC_CLIENT_ID and OPENSIEL_OIDC_CLIENT_SECRET must all be set",
+    );
+  }
+
+  const publicUrl = s.OPENSIEL_PUBLIC_URL;
+  const oidc: OidcConfig | undefined =
+    oidcConfigured === 3
+      ? {
+          issuer: s.OPENSIEL_OIDC_ISSUER!,
+          clientId: s.OPENSIEL_OIDC_CLIENT_ID!,
+          clientSecret: s.OPENSIEL_OIDC_CLIENT_SECRET!,
+          redirectUri:
+            s.OPENSIEL_OIDC_REDIRECT_URI ??
+            `${(publicUrl ?? `http://localhost:${s.PORT}`).replace(/\/$/, "")}/api/auth/oidc/callback`,
+          scopes: s.OPENSIEL_OIDC_SCOPES,
+          allowedDomains: (s.OPENSIEL_OIDC_ALLOWED_DOMAINS ?? "")
+            .split(",")
+            .map((domain) => domain.trim().toLowerCase())
+            .filter(Boolean),
+          autoCreate: s.OPENSIEL_OIDC_AUTO_CREATE === "true",
+        }
+      : undefined;
+
   return {
     nodeEnv: s.NODE_ENV,
     port: s.PORT,
@@ -50,12 +95,13 @@ export function loadEnv(source: NodeJS.ProcessEnv = process.env): Env {
     databaseUrl: s.DATABASE_URL,
     masterKey,
     jwtSecret: s.OPENSIEL_JWT_SECRET,
-    publicUrl: s.OPENSIEL_PUBLIC_URL,
+    publicUrl,
     webDir: s.OPENSIEL_WEB_DIR,
     allowSignup: s.OPENSIEL_ALLOW_SIGNUP === "true",
     autoMigrate: s.OPENSIEL_AUTO_MIGRATE === "true",
     rateLimit: s.OPENSIEL_RATE_LIMIT === "true",
     isProd,
-    secureCookies: s.OPENSIEL_PUBLIC_URL ? s.OPENSIEL_PUBLIC_URL.startsWith("https://") : isProd,
+    secureCookies: publicUrl ? publicUrl.startsWith("https://") : isProd,
+    oidc,
   };
 }
