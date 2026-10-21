@@ -10,6 +10,8 @@ import { Input } from "./ui/input";
 import { Label } from "./ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "./ui/select";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "./ui/table";
+import { Pagination } from "./Pagination";
+import { usePagination } from "../hooks/usePagination";
 import { Notice } from "./Notice";
 import { KeyRotationCard } from "./KeyRotationCard";
 
@@ -50,6 +52,15 @@ export function MembersView() {
   useEffect(() => {
     void load();
   }, [load]);
+
+  const memberPagination = usePagination(data?.members ?? [], {
+    pageSize: 10,
+    resetKey: data?.org.id ?? "",
+  });
+  const invitePagination = usePagination(invites, {
+    pageSize: 10,
+    resetKey: data?.org.id ?? "",
+  });
 
   async function invite(event: React.FormEvent) {
     event.preventDefault();
@@ -215,7 +226,7 @@ export function MembersView() {
             </TableRow>
           </TableHeader>
           <TableBody>
-            {(data?.members ?? []).map((member) => {
+            {memberPagination.pageItems.map((member) => {
               const isSelf = member.userId === data?.currentUserId;
               const locked =
                 !data?.canManage || isSelf || (member.role === "owner" && !data?.isOwner);
@@ -276,6 +287,16 @@ export function MembersView() {
             )}
           </TableBody>
         </Table>
+        <Pagination
+          page={memberPagination.page}
+          pageSize={memberPagination.pageSize}
+          total={memberPagination.total}
+          totalPages={memberPagination.totalPages}
+          rangeStart={memberPagination.rangeStart}
+          rangeEnd={memberPagination.rangeEnd}
+          onPageChange={memberPagination.setPage}
+          onPageSizeChange={memberPagination.setPageSize}
+        />
       </Card>
 
       {data?.canManage && (
@@ -291,7 +312,7 @@ export function MembersView() {
               </TableRow>
             </TableHeader>
             <TableBody>
-              {invites.map((invite) => (
+              {invitePagination.pageItems.map((invite) => (
                 <TableRow key={invite.id}>
                   <TableCell>{invite.email}</TableCell>
                   <TableCell>
@@ -324,6 +345,16 @@ export function MembersView() {
               )}
             </TableBody>
           </Table>
+          <Pagination
+            page={invitePagination.page}
+            pageSize={invitePagination.pageSize}
+            total={invitePagination.total}
+            totalPages={invitePagination.totalPages}
+            rangeStart={invitePagination.rangeStart}
+            rangeEnd={invitePagination.rangeEnd}
+            onPageChange={invitePagination.setPage}
+            onPageSizeChange={invitePagination.setPageSize}
+          />
         </Card>
       )}
       {data?.isOwner && <KeyRotationCard />}

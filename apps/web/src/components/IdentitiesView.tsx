@@ -19,6 +19,8 @@ import { Input } from "./ui/input";
 import { Label } from "./ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "./ui/select";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "./ui/table";
+import { Pagination } from "./Pagination";
+import { usePagination } from "../hooks/usePagination";
 import { Notice } from "./Notice";
 
 interface CreatedIdentity {
@@ -53,6 +55,11 @@ export function IdentitiesView({ project }: { project: ProjectDto }) {
   useEffect(() => {
     void load();
   }, [load]);
+
+  const identityPagination = usePagination(rows, {
+    pageSize: 10,
+    resetKey: project.id,
+  });
 
   function toggleEnv(id: string) {
     setEnvIds((current) =>
@@ -209,7 +216,7 @@ export function IdentitiesView({ project }: { project: ProjectDto }) {
             </TableRow>
           </TableHeader>
           <TableBody>
-            {rows.map((identity) => (
+            {identityPagination.pageItems.map((identity) => (
               <TableRow key={identity.id}>
                 <TableCell>{identity.name}</TableCell>
                 <TableCell>
@@ -250,6 +257,16 @@ export function IdentitiesView({ project }: { project: ProjectDto }) {
             )}
           </TableBody>
         </Table>
+        <Pagination
+          page={identityPagination.page}
+          pageSize={identityPagination.pageSize}
+          total={identityPagination.total}
+          totalPages={identityPagination.totalPages}
+          rangeStart={identityPagination.rangeStart}
+          rangeEnd={identityPagination.rangeEnd}
+          onPageChange={identityPagination.setPage}
+          onPageSizeChange={identityPagination.setPageSize}
+        />
       </Card>
 
       <Dialog open={open} onOpenChange={setOpen}>

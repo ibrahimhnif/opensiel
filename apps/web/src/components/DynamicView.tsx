@@ -16,6 +16,8 @@ import {
 import { Input } from "./ui/input";
 import { Label } from "./ui/label";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "./ui/table";
+import { Pagination } from "./Pagination";
+import { usePagination } from "../hooks/usePagination";
 import { Textarea } from "./ui/textarea";
 import { Notice } from "./Notice";
 
@@ -68,6 +70,15 @@ export function DynamicView({ project }: { project: ProjectDto; canManage: boole
   useEffect(() => {
     void load();
   }, [load]);
+
+  const configPagination = usePagination(configs, {
+    pageSize: 10,
+    resetKey: project.id,
+  });
+  const leasePagination = usePagination(leases, {
+    pageSize: 10,
+    resetKey: project.id,
+  });
 
   function openForm() {
     setOpen(true);
@@ -282,7 +293,7 @@ export function DynamicView({ project }: { project: ProjectDto; canManage: boole
               </TableRow>
             </TableHeader>
             <TableBody>
-              {configs.map((config) => (
+              {configPagination.pageItems.map((config) => (
                 <TableRow key={config.id}>
                   <TableCell>
                     <span className="flex items-center gap-2">
@@ -333,6 +344,16 @@ export function DynamicView({ project }: { project: ProjectDto; canManage: boole
               )}
             </TableBody>
           </Table>
+          <Pagination
+            page={configPagination.page}
+            pageSize={configPagination.pageSize}
+            total={configPagination.total}
+            totalPages={configPagination.totalPages}
+            rangeStart={configPagination.rangeStart}
+            rangeEnd={configPagination.rangeEnd}
+            onPageChange={configPagination.setPage}
+            onPageSizeChange={configPagination.setPageSize}
+          />
         </Card>
       </div>
 
@@ -351,7 +372,7 @@ export function DynamicView({ project }: { project: ProjectDto; canManage: boole
               </TableRow>
             </TableHeader>
             <TableBody>
-              {leases.map((lease) => (
+              {leasePagination.pageItems.map((lease) => (
                 <TableRow key={lease.id}>
                   <TableCell>{lease.configName}</TableCell>
                   <TableCell>
@@ -398,6 +419,16 @@ export function DynamicView({ project }: { project: ProjectDto; canManage: boole
               )}
             </TableBody>
           </Table>
+          <Pagination
+            page={leasePagination.page}
+            pageSize={leasePagination.pageSize}
+            total={leasePagination.total}
+            totalPages={leasePagination.totalPages}
+            rangeStart={leasePagination.rangeStart}
+            rangeEnd={leasePagination.rangeEnd}
+            onPageChange={leasePagination.setPage}
+            onPageSizeChange={leasePagination.setPageSize}
+          />
         </Card>
       </div>
 

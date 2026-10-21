@@ -8,6 +8,8 @@ import { Card } from "./ui/card";
 import { Input } from "./ui/input";
 import { Label } from "./ui/label";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "./ui/table";
+import { Pagination } from "./Pagination";
+import { usePagination } from "../hooks/usePagination";
 import { Textarea } from "./ui/textarea";
 import { Notice } from "./Notice";
 
@@ -16,6 +18,12 @@ export function ScanView({ project }: { project: ProjectDto }) {
   const [result, setResult] = useState<ScanResult | null>(null);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
+  const [scanId, setScanId] = useState(0);
+
+  const findingPagination = usePagination(result?.findings ?? [], {
+    pageSize: 20,
+    resetKey: String(scanId),
+  });
 
   async function scan() {
     if (!contents.trim()) return;
@@ -26,6 +34,7 @@ export function ScanView({ project }: { project: ProjectDto }) {
         contents,
       });
       setResult(response);
+      setScanId((value) => value + 1);
     } catch (err) {
       setError(errorMessage(err));
     } finally {
@@ -132,7 +141,7 @@ export function ScanView({ project }: { project: ProjectDto }) {
               </TableRow>
             </TableHeader>
             <TableBody>
-              {result.findings.map((finding, index) => (
+              {findingPagination.pageItems.map((finding, index) => (
                 <TableRow key={`${finding.type}-${finding.name}-${finding.line}-${index}`}>
                   <TableCell className="font-mono text-xs">{finding.line}</TableCell>
                   <TableCell>
@@ -171,6 +180,16 @@ export function ScanView({ project }: { project: ProjectDto }) {
               )}
             </TableBody>
           </Table>
+          <Pagination
+            page={findingPagination.page}
+            pageSize={findingPagination.pageSize}
+            total={findingPagination.total}
+            totalPages={findingPagination.totalPages}
+            rangeStart={findingPagination.rangeStart}
+            rangeEnd={findingPagination.rangeEnd}
+            onPageChange={findingPagination.setPage}
+            onPageSizeChange={findingPagination.setPageSize}
+          />
         </Card>
       )}
     </section>

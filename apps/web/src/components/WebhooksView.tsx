@@ -18,6 +18,8 @@ import {
 import { Input } from "./ui/input";
 import { Label } from "./ui/label";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "./ui/table";
+import { Pagination } from "./Pagination";
+import { usePagination } from "../hooks/usePagination";
 import { Notice } from "./Notice";
 
 interface CreatedWebhook {
@@ -50,6 +52,11 @@ export function WebhooksView({ project }: { project: ProjectDto }) {
   useEffect(() => {
     void load();
   }, [load]);
+
+  const webhookPagination = usePagination(rows, {
+    pageSize: 10,
+    resetKey: project.id,
+  });
 
   function toggleEvent(event: WebhookEvent) {
     setEvents((current) =>
@@ -199,7 +206,7 @@ export function WebhooksView({ project }: { project: ProjectDto }) {
             </TableRow>
           </TableHeader>
           <TableBody>
-            {rows.map((webhook) => (
+            {webhookPagination.pageItems.map((webhook) => (
               <TableRow key={webhook.id}>
                 <TableCell className="max-w-sm truncate">
                   <code className="bg-transparent p-0 text-xs">{webhook.url}</code>
@@ -262,6 +269,16 @@ export function WebhooksView({ project }: { project: ProjectDto }) {
             )}
           </TableBody>
         </Table>
+        <Pagination
+          page={webhookPagination.page}
+          pageSize={webhookPagination.pageSize}
+          total={webhookPagination.total}
+          totalPages={webhookPagination.totalPages}
+          rangeStart={webhookPagination.rangeStart}
+          rangeEnd={webhookPagination.rangeEnd}
+          onPageChange={webhookPagination.setPage}
+          onPageSizeChange={webhookPagination.setPageSize}
+        />
       </Card>
 
       <Dialog open={open} onOpenChange={setOpen}>

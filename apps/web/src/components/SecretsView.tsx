@@ -34,6 +34,8 @@ import {
 import { Input } from "./ui/input";
 import { Label } from "./ui/label";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "./ui/table";
+import { Pagination } from "./Pagination";
+import { usePagination } from "../hooks/usePagination";
 import { Textarea } from "./ui/textarea";
 import { Notice } from "./Notice";
 
@@ -102,6 +104,15 @@ export function SecretsView({ project, env }: Props) {
         row.value.toLowerCase().includes(needle),
     );
   }, [rows, query]);
+
+  const pagination = usePagination(filtered, {
+    pageSize: 20,
+    resetKey: `${project.id}:${env}:${query}`,
+  });
+  const historyPagination = usePagination(history?.versions ?? [], {
+    pageSize: 10,
+    resetKey: `${history?.key ?? ""}:${history?.path ?? ""}`,
+  });
 
   const activeEnvironment = project.environments.find((environment) => environment.slug === env);
 
@@ -334,7 +345,7 @@ export function SecretsView({ project, env }: Props) {
             </TableRow>
           </TableHeader>
           <TableBody>
-            {filtered.map((row) => {
+            {pagination.pageItems.map((row) => {
               const id = rowId(row);
               const isRevealed = Boolean(revealed[id]);
               return (
@@ -432,6 +443,16 @@ export function SecretsView({ project, env }: Props) {
             )}
           </TableBody>
         </Table>
+        <Pagination
+          page={pagination.page}
+          pageSize={pagination.pageSize}
+          total={pagination.total}
+          totalPages={pagination.totalPages}
+          rangeStart={pagination.rangeStart}
+          rangeEnd={pagination.rangeEnd}
+          onPageChange={pagination.setPage}
+          onPageSizeChange={pagination.setPageSize}
+        />
       </Card>
 
       <Dialog
@@ -531,7 +552,7 @@ export function SecretsView({ project, env }: Props) {
               </DialogHeader>
 
               <div className="space-y-2">
-                {history.versions.map((version) => (
+                {historyPagination.pageItems.map((version) => (
                   <div
                     key={version.version}
                     className="flex items-center justify-between gap-3 rounded-lg border px-3 py-2"
@@ -557,6 +578,17 @@ export function SecretsView({ project, env }: Props) {
                   </div>
                 ))}
               </div>
+              <Pagination
+                page={historyPagination.page}
+                pageSize={historyPagination.pageSize}
+                total={historyPagination.total}
+                totalPages={historyPagination.totalPages}
+                rangeStart={historyPagination.rangeStart}
+                rangeEnd={historyPagination.rangeEnd}
+                onPageChange={historyPagination.setPage}
+                onPageSizeChange={historyPagination.setPageSize}
+                className="border-0 px-0"
+              />
 
               <DialogFooter>
                 <Button variant="outline" onClick={() => setHistory(null)}>

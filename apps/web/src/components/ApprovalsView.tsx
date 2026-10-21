@@ -16,6 +16,8 @@ import { Checkbox } from "./ui/checkbox";
 import { Input } from "./ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "./ui/select";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "./ui/table";
+import { Pagination } from "./Pagination";
+import { usePagination } from "../hooks/usePagination";
 import { Notice } from "./Notice";
 
 interface Props {
@@ -88,6 +90,11 @@ export function ApprovalsView({ project, currentUserId, canApprove }: Props) {
   useEffect(() => {
     void load();
   }, [load]);
+
+  const requestPagination = usePagination(requests, {
+    pageSize: 20,
+    resetKey: `${project.id}:${filter}`,
+  });
 
   async function decide(request: ChangeRequestDto, decision: "approve" | "reject") {
     setBusy(true);
@@ -284,7 +291,7 @@ export function ApprovalsView({ project, currentUserId, canApprove }: Props) {
               </TableRow>
             </TableHeader>
             <TableBody>
-              {requests.map((request) => {
+              {requestPagination.pageItems.map((request) => {
                 const isOwn = request.requestedById === currentUserId;
                 const pending = request.status === "pending";
                 return (
@@ -371,6 +378,16 @@ export function ApprovalsView({ project, currentUserId, canApprove }: Props) {
               )}
             </TableBody>
           </Table>
+          <Pagination
+            page={requestPagination.page}
+            pageSize={requestPagination.pageSize}
+            total={requestPagination.total}
+            totalPages={requestPagination.totalPages}
+            rangeStart={requestPagination.rangeStart}
+            rangeEnd={requestPagination.rangeEnd}
+            onPageChange={requestPagination.setPage}
+            onPageSizeChange={requestPagination.setPageSize}
+          />
         </Card>
       </div>
     </section>

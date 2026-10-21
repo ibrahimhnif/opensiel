@@ -6,6 +6,8 @@ import { Badge } from "./ui/badge";
 import { Button } from "./ui/button";
 import { Card } from "./ui/card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "./ui/table";
+import { Pagination } from "./Pagination";
+import { usePagination } from "../hooks/usePagination";
 import { Notice } from "./Notice";
 
 export function AuditView({ project }: { project: ProjectDto }) {
@@ -27,6 +29,8 @@ export function AuditView({ project }: { project: ProjectDto }) {
   useEffect(() => {
     void load();
   }, [load]);
+
+  const pagination = usePagination(logs, { pageSize: 20, resetKey: project.id });
 
   return (
     <section className="space-y-4">
@@ -56,7 +60,7 @@ export function AuditView({ project }: { project: ProjectDto }) {
             </TableRow>
           </TableHeader>
           <TableBody>
-            {logs.map((log) => (
+            {pagination.pageItems.map((log) => (
               <TableRow key={log.id}>
                 <TableCell className="text-xs text-muted-foreground">
                   {formatDate(log.createdAt)}
@@ -88,6 +92,16 @@ export function AuditView({ project }: { project: ProjectDto }) {
             )}
           </TableBody>
         </Table>
+        <Pagination
+          page={pagination.page}
+          pageSize={pagination.pageSize}
+          total={pagination.total}
+          totalPages={pagination.totalPages}
+          rangeStart={pagination.rangeStart}
+          rangeEnd={pagination.rangeEnd}
+          onPageChange={pagination.setPage}
+          onPageSizeChange={pagination.setPageSize}
+        />
       </Card>
     </section>
   );
