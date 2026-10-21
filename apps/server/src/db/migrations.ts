@@ -262,4 +262,26 @@ create index dynamic_secret_leases_config_idx on dynamic_secret_leases (config_i
 alter table projects add column kek_version integer not null default 1;
 `,
   },
+  {
+    name: "0007_webhooks",
+    sql: `
+create table webhooks (
+  id uuid primary key default gen_random_uuid(),
+  project_id uuid not null references projects(id) on delete cascade,
+  url text not null,
+  secret_ciphertext text not null,
+  secret_iv text not null,
+  secret_tag text not null,
+  events jsonb not null default '[]'::jsonb,
+  enabled boolean not null default true,
+  last_status integer,
+  last_error text,
+  last_delivery_at timestamptz,
+  failure_count integer not null default 0,
+  created_at timestamptz not null default now()
+);
+
+create index webhooks_project_idx on webhooks (project_id);
+`,
+  },
 ];

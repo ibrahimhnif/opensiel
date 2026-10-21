@@ -17,6 +17,7 @@ import { registerOidcRoutes } from "./routes/oidc.js";
 import { registerScanRoutes } from "./routes/scan.js";
 import { registerDynamicRoutes } from "./routes/dynamic.js";
 import { registerAdminRoutes } from "./routes/admin.js";
+import { registerWebhookRoutes } from "./routes/webhooks.js";
 import type { Deps } from "./types.js";
 
 export async function buildApp(deps: Deps): Promise<FastifyInstance> {
@@ -68,6 +69,7 @@ export async function buildApp(deps: Deps): Promise<FastifyInstance> {
   registerScanRoutes(app, deps);
   registerDynamicRoutes(app, deps);
   registerAdminRoutes(app, deps);
+  registerWebhookRoutes(app, deps);
 
   app.setErrorHandler((error, request, reply) => {
     if (error instanceof AppError) {

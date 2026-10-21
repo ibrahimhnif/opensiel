@@ -24,6 +24,7 @@ import { writeAudit } from "../audit.js";
 import { createChangeRequest } from "../approvals-service.js";
 import { loadEnvironmentSecrets } from "../secret-read.js";
 import { parseImportContents } from "../dotenv.js";
+import { dispatchEvent } from "../webhooks.js";
 import {
   applySecretDelete,
   applySecretRollback,
@@ -216,6 +217,18 @@ export function registerSecretRoutes(app: FastifyInstance, deps: Deps): void {
       ip: request.ip,
     });
 
+    void dispatchEvent(deps, project, {
+      event: result.version === 1 ? "secret.created" : "secret.updated",
+      actor: { type: actor.type, id: actor.id, name: actor.name },
+      resource: {
+        type: "secret",
+        key,
+        path,
+        environment: environment.slug,
+        version: result.version,
+      },
+    }).catch(() => {});
+
     return reply.code(201).send({
       secret: {
         key,
@@ -315,6 +328,13 @@ export function registerSecretRoutes(app: FastifyInstance, deps: Deps): void {
       ip: request.ip,
     });
 
+    void dispatchEvent(deps, project, {
+      event: "secret.import",
+      actor: { type: actor.type, id: actor.id, name: actor.name },
+      resource: { type: "secret", path, environment: environment.slug },
+      data: { count: entries.length, created, updated, keys },
+    }).catch(() => {});
+
     return reply.code(201).send({
       dryRun: false,
       keys,
@@ -362,6 +382,13 @@ export function registerSecretRoutes(app: FastifyInstance, deps: Deps): void {
       metadata: { environment: environment.slug, path, key },
       ip: request.ip,
     });
+
+    void dispatchEvent(deps, project, {
+      event: "secret.deleted",
+      actor: { type: actor.type, id: actor.id, name: actor.name },
+      resource: { type: "secret", key, path, environment: environment.slug },
+    }).catch(() => {});
+
     return { ok: true };
   });
 
@@ -451,6 +478,19 @@ export function registerSecretRoutes(app: FastifyInstance, deps: Deps): void {
       },
       ip: request.ip,
     });
+
+    void dispatchEvent(deps, project, {
+      event: "secret.rollback",
+      actor: { type: actor.type, id: actor.id, name: actor.name },
+      resource: {
+        type: "secret",
+        key,
+        path,
+        environment: environment.slug,
+        from: result.from,
+        version: result.version,
+      },
+    }).catch(() => {});
 
     return reply.code(201).send({
       secret: { key, path, version: result.version, updatedAt: new Date().toISOString() },

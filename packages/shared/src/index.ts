@@ -148,6 +148,41 @@ export interface CreatedLeaseDto {
   database: string;
 }
 
+export const webhookEvents = [
+  "secret.created",
+  "secret.updated",
+  "secret.deleted",
+  "secret.rollback",
+  "secret.import",
+  "change_request.created",
+  "change_request.approved",
+  "change_request.rejected",
+] as const;
+export type WebhookEvent = (typeof webhookEvents)[number];
+
+export const createWebhookSchema = z.object({
+  url: z.string().url().max(2000),
+  secret: z.string().min(16).max(200).optional(),
+  events: z.array(z.enum(webhookEvents)).min(1),
+});
+export type CreateWebhookInput = z.infer<typeof createWebhookSchema>;
+
+export const updateWebhookSchema = z.object({
+  enabled: z.boolean(),
+});
+
+export interface WebhookDto {
+  id: string;
+  url: string;
+  events: string[];
+  enabled: boolean;
+  lastStatus: number | null;
+  lastError: string | null;
+  lastDeliveryAt: string | null;
+  failureCount: number;
+  createdAt: string;
+}
+
 export const createIdentitySchema = z.object({
   name: nameSchema,
   role: identityRoleSchema.default("viewer"),

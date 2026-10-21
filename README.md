@@ -24,6 +24,8 @@ identities. MIT licensed, single service, Postgres-backed.
   them manually, and let the background sweep drop expired roles.
 - **Master key rotation** — rewrap every project data key to a new KEK without re-encrypting
   secrets.
+- **Webhooks** — signed event deliveries for secret and approval changes, with retries and
+  delivery status.
 - **Machine identities** — client credentials, 15-minute tokens, environment scopes,
   `viewer` / `member` roles.
 - **Audit** — all mutations and secret reads are recorded, values never included.
@@ -129,6 +131,9 @@ token from `POST /api/auth/login`, or machine token from `POST /api/auth/token`)
 | POST | `/projects/:id/dynamic-secrets/leases/:leaseId/revoke` | revoke a lease |
 | GET | `/admin/key` | key version status |
 | POST | `/admin/rotate-key` | rewrap project DEKs to the next key |
+| GET/POST | `/projects/:id/webhooks` | list / create webhooks |
+| PATCH/DELETE | `/projects/:id/webhooks/:webhookId` | toggle / delete |
+| POST | `/projects/:id/webhooks/:webhookId/test` | send a test delivery |
 | GET/DELETE | `/projects/:id/secrets/:key` | read / soft-delete |
 | GET | `/projects/:id/secrets/:key/versions` | version history |
 | POST | `/projects/:id/secrets/:key/rollback` | roll back to a version |
@@ -260,6 +265,32 @@ key. Rotation therefore rewraps DEKs and leaves secret ciphertext untouched.
 Keep the old key until step 4 finishes; projects on an unknown version fail to decrypt with
 `missing_key_version`. New projects always use the current `OPENSIEL_MASTER_KEY_VERSION`.
 
+## Webhooks
+
+Owners and admins can register HTTPS endpoints (the **Webhooks** tab) for project events:
+
+`secret.created`, `secret.updated`, `secret.deleted`, `secret.rollback`, `secret.import`,
+`change_request.created`, `change_request.approved`, `change_request.rejected`.
+
+Each delivery is a JSON `POST` with:
+
+- `x-opensiel-event` — event name,
+- `x-opensiel-delivery` — unique delivery id,
+- `x-opensiel-signature` — `sha256=<hex>` HMAC-SHA256 of the raw body using the signing
+  secret shown once at creation.
+
+Payloads contain the actor and resource metadata (key, path, environment, version, change
+request id) but **never** secret values. Deliveries time out after 5 seconds and retry up to
+three times; the last status, error, and consecutive failure count are stored and shown in
+the UI. The test button sends a `webhook.test` delivery.
+
+```js
+const expected = "sha256=" + createHmac("sha256", secret).update(rawBody).digest("hex");
+if (!timingSafeEqual(Buffer.from(expected), Buffer.from(req.headers["x-opensiel-signature"]))) {
+  return res.status(401).end();
+}
+```
+
 ## Deployment (Kubernetes)
 
 ```bash
@@ -309,7 +340,7 @@ KMS yet.
 
 ## Roadmap
 
-v1: SAML SSO and webhook/CI integrations.
+v1: SAML SSO and external KMS/HSM support.
 
 ## License
 

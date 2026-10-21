@@ -14,13 +14,23 @@ import { ApprovalsView } from "./ApprovalsView";
 import { IdentitiesView } from "./IdentitiesView";
 import { AuditView } from "./AuditView";
 import { DynamicView } from "./DynamicView";
+import { WebhooksView } from "./WebhooksView";
 
-type Tab = "secrets" | "scan" | "dynamic" | "approvals" | "members" | "identities" | "audit";
+type Tab =
+  | "secrets"
+  | "scan"
+  | "dynamic"
+  | "webhooks"
+  | "approvals"
+  | "members"
+  | "identities"
+  | "audit";
 
 const TABS: { value: Tab; label: string }[] = [
   { value: "secrets", label: "Secrets" },
   { value: "scan", label: "Scan" },
   { value: "dynamic", label: "Dynamic" },
+  { value: "webhooks", label: "Webhooks" },
   { value: "approvals", label: "Approvals" },
   { value: "members", label: "Members" },
   { value: "identities", label: "Identities" },
@@ -217,7 +227,10 @@ export function Dashboard({ user, onSignedOut }: { user: UserDto; onSignedOut: (
 
             <Tabs value={tab} onValueChange={(value) => setTab(value as Tab)}>
               <TabsList>
-                {TABS.filter((entry) => entry.value !== "dynamic" || canManage).map((entry) => (
+                {TABS.filter(
+                  (entry) =>
+                    (entry.value !== "dynamic" && entry.value !== "webhooks") || canManage,
+                ).map((entry) => (
                   <TabsTrigger key={entry.value} value={entry.value}>
                     {entry.label}
                   </TabsTrigger>
@@ -232,6 +245,9 @@ export function Dashboard({ user, onSignedOut }: { user: UserDto; onSignedOut: (
               </TabsContent>
               <TabsContent value="dynamic">
                 <DynamicView project={project} canManage={canManage} />
+              </TabsContent>
+              <TabsContent value="webhooks">
+                <WebhooksView project={project} />
               </TabsContent>
               <TabsContent value="approvals">
                 <ApprovalsView

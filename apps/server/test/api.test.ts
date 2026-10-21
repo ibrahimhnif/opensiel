@@ -1,8 +1,9 @@
 import Fastify from "fastify";
 import type { FastifyInstance } from "fastify";
+import { createHmac } from "node:crypto";
 import { exportJWK, generateKeyPair, SignJWT } from "jose";
 import postgres from "postgres";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { buildApp } from "../src/app.js";
 import { createDb } from "../src/db/client.js";
 import type { Database } from "../src/db/client.js";
@@ -41,6 +42,27 @@ if (!databaseUrl) {
   let idpPrivateKey: Awaited<ReturnType<typeof generateKeyPair>>["privateKey"];
   let idpJwk: Record<string, unknown>;
   const idpCodes = new Map<string, { nonce: string; email: string; name: string }>();
+
+  let hookReceiver: FastifyInstance;
+  let hookUrl = "";
+  interface ReceivedHook {
+    headers: Record<string, string | string[] | undefined>;
+    body: string;
+  }
+  const hookQueue: ReceivedHook[] = [];
+  const hookWaiters: ((hook: ReceivedHook) => void)[] = [];
+
+  function nextHook(timeoutMs = 3000): Promise<ReceivedHook> {
+    const queued = hookQueue.shift();
+    if (queued) return Promise.resolve(queued);
+    return new Promise((resolve, reject) => {
+      const timer = setTimeout(() => reject(new Error("timed out waiting for a webhook")), timeoutMs);
+      hookWaiters.push((hook) => {
+        clearTimeout(timer);
+        resolve(hook);
+      });
+    });
+  }
 
   function cookieValue(
     header: string | string[] | undefined,
@@ -247,6 +269,27 @@ if (!databaseUrl) {
     const idpPort = typeof address === "object" && address ? address.port : 0;
     idpIssuer = `http://127.0.0.1:${idpPort}`;
 
+    hookReceiver = Fastify();
+    hookReceiver.addContentTypeParser(
+      "application/json",
+      { parseAs: "string" },
+      (_request, body, done) => done(null, body),
+    );
+    hookReceiver.post("/hook", async (request, reply) => {
+      const received: ReceivedHook = {
+        headers: request.headers,
+        body: request.body as string,
+      };
+      const waiter = hookWaiters.shift();
+      if (waiter) waiter(received);
+      else hookQueue.push(received);
+      return reply.code(200).send({ ok: true });
+    });
+    await hookReceiver.listen({ port: 0, host: "127.0.0.1" });
+    const hookAddress = hookReceiver.server.address();
+    const hookPort = typeof hookAddress === "object" && hookAddress ? hookAddress.port : 0;
+    hookUrl = `http://127.0.0.1:${hookPort}/hook`;
+
     env.oidc = {
       issuer: idpIssuer,
       clientId: "test-client",
@@ -267,6 +310,7 @@ if (!databaseUrl) {
   afterAll(async () => {
     await app.close();
     await idp.close();
+    await hookReceiver.close();
     await database.sql.end({ timeout: 5 });
   });
 
@@ -1247,6 +1291,103 @@ if (!databaseUrl) {
     const actions = audit.json<{ logs: { action: string }[] }>().logs.map((log) => log.action);
     expect(actions).toContain("dynamic.lease.create");
     expect(actions).toContain("dynamic.lease.revoke");
+  });
+
+  it("delivers signed webhook events without secret values", async () => {
+    const session = await signup(`hooks-${Date.now()}@test.dev`);
+    const auth = { authorization: `Bearer ${session.token}` };
+    const projectId = session.projectId;
+    const base = `/api/projects/${projectId}/webhooks`;
+
+    const created = await app.inject({
+      method: "POST",
+      url: base,
+      headers: auth,
+      payload: { url: hookUrl, events: ["secret.created"] },
+    });
+    expect(created.statusCode).toBe(201);
+    const { webhook, signingSecret } = created.json<{
+      webhook: { id: string };
+      signingSecret: string;
+    }>();
+    expect(signingSecret.length).toBeGreaterThanOrEqual(16);
+
+    const viewer = await inviteAndAccept(
+      session.token,
+      `hooks-viewer-${Date.now()}@test.dev`,
+      "viewer",
+    );
+    const forbidden = await app.inject({
+      method: "POST",
+      url: base,
+      headers: { authorization: `Bearer ${viewer.token}` },
+      payload: { url: hookUrl, events: ["secret.created"] },
+    });
+    expect(forbidden.statusCode).toBe(403);
+
+    await app.inject({
+      method: "POST",
+      url: `/api/projects/${projectId}/secrets`,
+      headers: auth,
+      payload: { key: "HOOK_KEY", value: "hook-secret-value", env: "dev" },
+    });
+
+    const delivery = await nextHook();
+    expect(delivery.headers["x-opensiel-event"]).toBe("secret.created");
+    expect(delivery.body).not.toContain("hook-secret-value");
+    const payload = JSON.parse(delivery.body) as {
+      event: string;
+      resource: { key: string; environment: string };
+    };
+    expect(payload.event).toBe("secret.created");
+    expect(payload.resource.key).toBe("HOOK_KEY");
+    expect(payload.resource.environment).toBe("dev");
+
+    const expected = createHmac("sha256", signingSecret).update(delivery.body).digest("hex");
+    expect(delivery.headers["x-opensiel-signature"]).toBe(`sha256=${expected}`);
+
+    await vi.waitFor(async () => {
+      const list = await app.inject({ method: "GET", url: base, headers: auth });
+      expect(
+        list.json<{ webhooks: { lastStatus: number | null }[] }>().webhooks[0]?.lastStatus,
+      ).toBe(200);
+    });
+
+    await app.inject({
+      method: "POST",
+      url: base,
+      headers: auth,
+      payload: { url: hookUrl, events: ["secret.updated"] },
+    });
+
+    await app.inject({
+      method: "POST",
+      url: `/api/projects/${projectId}/secrets`,
+      headers: auth,
+      payload: { key: "HOOK_KEY", value: "hook-secret-value-2", env: "dev" },
+    });
+
+    const updateDelivery = await nextHook();
+    expect(updateDelivery.headers["x-opensiel-event"]).toBe("secret.updated");
+
+    const testDelivery = await app.inject({
+      method: "POST",
+      url: `${base}/${webhook.id}/test`,
+      headers: auth,
+    });
+    expect(testDelivery.statusCode).toBe(200);
+    expect(testDelivery.json<{ delivered: boolean }>().delivered).toBe(true);
+    const testHook = await nextHook();
+    expect(testHook.headers["x-opensiel-event"]).toBe("webhook.test");
+
+    const audit = await app.inject({
+      method: "GET",
+      url: `/api/audit?projectId=${projectId}`,
+      headers: auth,
+    });
+    const actions = audit.json<{ logs: { action: string }[] }>().logs.map((log) => log.action);
+    expect(actions).toContain("webhook.create");
+    expect(actions).toContain("webhook.test");
   });
 
   it("rotates project data keys to the next master key", async () => {

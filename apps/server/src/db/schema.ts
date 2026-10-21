@@ -310,6 +310,28 @@ export const dynamicSecretLeases = pgTable(
   (table) => [index("dynamic_secret_leases_config_idx").on(table.configId, table.expiresAt)],
 );
 
+export const webhooks = pgTable(
+  "webhooks",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    projectId: uuid("project_id")
+      .notNull()
+      .references(() => projects.id, { onDelete: "cascade" }),
+    url: text("url").notNull(),
+    secretCiphertext: text("secret_ciphertext").notNull(),
+    secretIv: text("secret_iv").notNull(),
+    secretTag: text("secret_tag").notNull(),
+    events: jsonb("events").$type<string[]>().notNull().default([]),
+    enabled: boolean("enabled").notNull().default(true),
+    lastStatus: integer("last_status"),
+    lastError: text("last_error"),
+    lastDeliveryAt: timestamp("last_delivery_at", { withTimezone: true }),
+    failureCount: integer("failure_count").notNull().default(0),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [index("webhooks_project_idx").on(table.projectId)],
+);
+
 export const auditLogs = pgTable(
   "audit_logs",
   {
@@ -344,3 +366,4 @@ export type IdentityRow = typeof identities.$inferSelect;
 export type ChangeRequestRow = typeof changeRequests.$inferSelect;
 export type DynamicSecretConfigRow = typeof dynamicSecretConfigs.$inferSelect;
 export type DynamicSecretLeaseRow = typeof dynamicSecretLeases.$inferSelect;
+export type WebhookRow = typeof webhooks.$inferSelect;

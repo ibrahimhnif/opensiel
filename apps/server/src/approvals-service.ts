@@ -11,6 +11,7 @@ import { conflict, forbidden, notFound } from "./errors.js";
 import { changeRequestApprovals, changeRequests, environments, projects, users } from "./db/schema.js";
 import type { ChangeRequestRow, EnvironmentRow, ProjectRow } from "./db/schema.js";
 import { writeAudit } from "./audit.js";
+import { dispatchEvent } from "./webhooks.js";
 import {
   applySecretDelete,
   applySecretRollback,
@@ -82,6 +83,19 @@ export async function createChangeRequest(
     },
     ip,
   });
+
+  void dispatchEvent(deps, project, {
+    event: "change_request.created",
+    actor: { type: actor.type, id: actor.id, name: actor.name },
+    resource: {
+      type: "change_request",
+      id: request.id,
+      action: request.action,
+      key: request.secretKey,
+      path: request.path,
+      environment: environment.slug,
+    },
+  }).catch(() => {});
 
   return requestDto(request, environment.slug, [], environment.requiredApprovals);
 }
@@ -166,6 +180,10 @@ export async function decideChangeRequest(
   const environment = envRows[0];
   if (!environment) throw notFound("environment not found");
 
+  const projectRows = await deps.db.select().from(projects).where(eq(projects.id, projectId)).limit(1);
+  const project = projectRows[0];
+  if (!project) throw notFound("project not found");
+
   try {
     await deps.db.insert(changeRequestApprovals).values({
       requestId: request.id,
@@ -198,6 +216,18 @@ export async function decideChangeRequest(
       metadata: { key: request.secretKey, environment: environment.slug, note: params.note ?? null },
       ip: params.ip,
     });
+
+    void dispatchEvent(deps, project, {
+      event: "change_request.rejected",
+      actor: { type: "user", id: actor.id, name: actor.name },
+      resource: {
+        type: "change_request",
+        id: request.id,
+        action: request.action,
+        key: request.secretKey,
+        environment: environment.slug,
+      },
+    }).catch(() => {});
 
     return {
       request: requestDto(
@@ -259,10 +289,6 @@ export async function decideChangeRequest(
   if (claimed.length === 0) {
     throw conflict("this change request was already applied");
   }
-
-  const projectRows = await deps.db.select().from(projects).where(eq(projects.id, projectId)).limit(1);
-  const project = projectRows[0];
-  if (!project) throw notFound("project not found");
 
   const requester: ActorMeta = {
     type: request.requestedByType as ActorMeta["type"],
@@ -351,6 +377,19 @@ export async function decideChangeRequest(
       .where(eq(changeRequests.id, request.id));
     throw error;
   }
+
+  void dispatchEvent(deps, project, {
+    event: "change_request.approved",
+    actor: { type: "user", id: actor.id, name: actor.name },
+    resource: {
+      type: "change_request",
+      id: request.id,
+      action: request.action,
+      key: request.secretKey,
+      path: request.path,
+      environment: environment.slug,
+    },
+  }).catch(() => {});
 
   return {
     request: requestDto(
