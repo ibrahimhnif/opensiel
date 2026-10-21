@@ -3,6 +3,7 @@ import type { UserDto } from "@opensiel/shared";
 import { api, errorMessage } from "./api";
 import { Login } from "./components/Login";
 import { Dashboard } from "./components/Dashboard";
+import { AcceptInvite } from "./components/AcceptInvite";
 
 interface BootstrapConfig {
   initialized: boolean;
@@ -14,6 +15,14 @@ export function App() {
   const [config, setConfig] = useState<BootstrapConfig | null>(null);
   const [user, setUser] = useState<UserDto | null>(null);
   const [error, setError] = useState("");
+  const [inviteToken, setInviteToken] = useState<string | null>(() =>
+    new URLSearchParams(window.location.search).get("invite"),
+  );
+
+  function clearInvite() {
+    window.history.replaceState({}, "", window.location.pathname);
+    setInviteToken(null);
+  }
 
   useEffect(() => {
     let cancelled = false;
@@ -36,6 +45,19 @@ export function App() {
       cancelled = true;
     };
   }, []);
+
+  if (inviteToken) {
+    return (
+      <AcceptInvite
+        token={inviteToken}
+        onDone={(nextUser) => {
+          clearInvite();
+          setUser(nextUser);
+        }}
+        onCancel={clearInvite}
+      />
+    );
+  }
 
   if (error) {
     return (

@@ -2,10 +2,11 @@ import { useCallback, useEffect, useState } from "react";
 import type { ProjectDto, UserDto } from "@opensiel/shared";
 import { api, errorMessage } from "../api";
 import { SecretsView } from "./SecretsView";
+import { MembersView } from "./MembersView";
 import { IdentitiesView } from "./IdentitiesView";
 import { AuditView } from "./AuditView";
 
-type Tab = "secrets" | "identities" | "audit";
+type Tab = "secrets" | "members" | "identities" | "audit";
 
 export function Dashboard({ user, onSignedOut }: { user: UserDto; onSignedOut: () => void }) {
   const [projects, setProjects] = useState<ProjectDto[]>([]);
@@ -159,7 +160,7 @@ export function Dashboard({ user, onSignedOut }: { user: UserDto; onSignedOut: (
             </header>
 
             <div className="tabs">
-              {(["secrets", "identities", "audit"] as Tab[]).map((candidate) => (
+              {(["secrets", "members", "identities", "audit"] as Tab[]).map((candidate) => (
                 <button
                   key={candidate}
                   className={`tab ${tab === candidate ? "active" : ""}`}
@@ -171,6 +172,7 @@ export function Dashboard({ user, onSignedOut }: { user: UserDto; onSignedOut: (
             </div>
 
             {tab === "secrets" && <SecretsView project={project} env={env} />}
+            {tab === "members" && <MembersView />}
             {tab === "identities" && <IdentitiesView project={project} />}
             {tab === "audit" && <AuditView project={project} />}
           </>

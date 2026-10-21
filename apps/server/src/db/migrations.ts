@@ -145,4 +145,26 @@ create index audit_logs_org_created_idx on audit_logs (org_id, created_at);
 create index audit_logs_project_created_idx on audit_logs (project_id, created_at);
 `,
   },
+  {
+    name: "0002_org_invites",
+    sql: `
+create table org_invites (
+  id uuid primary key default gen_random_uuid(),
+  org_id uuid not null references orgs(id) on delete cascade,
+  email text not null,
+  role text not null default 'member',
+  token_hash text not null,
+  invited_by uuid not null references users(id) on delete cascade,
+  expires_at timestamptz not null,
+  accepted_at timestamptz,
+  created_at timestamptz not null default now()
+);
+
+create unique index org_invites_token_hash_uq on org_invites (token_hash);
+
+create index org_invites_org_idx on org_invites (org_id);
+
+create unique index org_invites_pending_uq on org_invites (org_id, email) where accepted_at is null;
+`,
+  },
 ];

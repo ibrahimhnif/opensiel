@@ -249,4 +249,154 @@ if (!databaseUrl) {
     expect(logs.some((log) => log.action === "secret.write")).toBe(true);
     expect(JSON.stringify(logs)).not.toContain("super-secret-value");
   });
+
+  it("invites teammates into the same organization", async () => {
+    const owner = await signup(`invite-owner-${Date.now()}@test.dev`);
+    const auth = { authorization: `Bearer ${owner.token}` };
+    const mateEmail = `invite-mate-${Date.now()}@test.dev`;
+
+    const created = await app.inject({
+      method: "POST",
+      url: "/api/org/invites",
+      headers: auth,
+      payload: { email: mateEmail, role: "member" },
+    });
+    expect(created.statusCode).toBe(201);
+    const token = created.json<{ token: string }>().token;
+
+    const info = await app.inject({
+      method: "GET",
+      url: `/api/auth/invite?token=${encodeURIComponent(token)}`,
+    });
+    expect(info.statusCode).toBe(200);
+    expect(info.json<{ invite: { email: string } }>().invite.email).toBe(mateEmail);
+
+    const accepted = await app.inject({
+      method: "POST",
+      url: "/api/auth/accept-invite",
+      payload: { token, name: "Mate", password: "correct-horse-battery" },
+    });
+    expect(accepted.statusCode).toBe(201);
+    const mate = accepted.json<{ token: string; user: { role: string } }>();
+    expect(mate.user.role).toBe("member");
+
+    const org = await app.inject({ method: "GET", url: "/api/org", headers: auth });
+    expect(org.json<{ members: unknown[] }>().members).toHaveLength(2);
+
+    const mateProjects = await app.inject({
+      method: "GET",
+      url: "/api/projects",
+      headers: { authorization: `Bearer ${mate.token}` },
+    });
+    expect(mateProjects.json<{ projects: unknown[] }>().projects).toHaveLength(1);
+
+    const duplicate = await app.inject({
+      method: "POST",
+      url: "/api/org/invites",
+      headers: auth,
+      payload: { email: mateEmail, role: "viewer" },
+    });
+    expect(duplicate.statusCode).toBe(409);
+
+    const mateInvite = await app.inject({
+      method: "POST",
+      url: "/api/org/invites",
+      headers: { authorization: `Bearer ${mate.token}` },
+      payload: { email: `nobody-${Date.now()}@test.dev`, role: "viewer" },
+    });
+    expect(mateInvite.statusCode).toBe(403);
+  });
+
+  it("protects owner-only rules and the last owner", async () => {
+    const owner = await signup(`owner-rules-${Date.now()}@test.dev`);
+    const auth = { authorization: `Bearer ${owner.token}` };
+    const org = await app.inject({ method: "GET", url: "/api/org", headers: auth });
+    const currentUserId = org.json<{ currentUserId: string }>().currentUserId;
+
+    const demoteSelf = await app.inject({
+      method: "PATCH",
+      url: `/api/org/members/${currentUserId}`,
+      headers: auth,
+      payload: { role: "admin" },
+    });
+    expect(demoteSelf.statusCode).toBe(409);
+
+    const adminEmail = `admin-${Date.now()}@test.dev`;
+    const adminInvite = await app.inject({
+      method: "POST",
+      url: "/api/org/invites",
+      headers: auth,
+      payload: { email: adminEmail, role: "admin" },
+    });
+    const adminToken = adminInvite.json<{ token: string }>().token;
+    const adminAccepted = await app.inject({
+      method: "POST",
+      url: "/api/auth/accept-invite",
+      payload: { token: adminToken, name: "Admin", password: "correct-horse-battery" },
+    });
+    const adminAuth = {
+      authorization: `Bearer ${adminAccepted.json<{ token: string }>().token}`,
+    };
+
+    const adminGrantsOwner = await app.inject({
+      method: "POST",
+      url: "/api/org/invites",
+      headers: adminAuth,
+      payload: { email: `owner2-${Date.now()}@test.dev`, role: "owner" },
+    });
+    expect(adminGrantsOwner.statusCode).toBe(403);
+
+    const adminTouchesOwner = await app.inject({
+      method: "PATCH",
+      url: `/api/org/members/${currentUserId}`,
+      headers: adminAuth,
+      payload: { role: "viewer" },
+    });
+    expect(adminTouchesOwner.statusCode).toBe(403);
+
+    const removeOwner = await app.inject({
+      method: "DELETE",
+      url: `/api/org/members/${currentUserId}`,
+      headers: adminAuth,
+    });
+    expect(removeOwner.statusCode).toBe(403);
+  });
+
+  it("rejects expired, revoked, and wrong-password invites", async () => {
+    const owner = await signup(`invite-edge-${Date.now()}@test.dev`);
+    const auth = { authorization: `Bearer ${owner.token}` };
+    const email = `edge-${Date.now()}@test.dev`;
+
+    const created = await app.inject({
+      method: "POST",
+      url: "/api/org/invites",
+      headers: auth,
+      payload: { email, role: "viewer" },
+    });
+    const { token, invite } = created.json<{ token: string; invite: { id: string } }>();
+
+    const wrongPassword = await app.inject({
+      method: "POST",
+      url: "/api/auth/accept-invite",
+      payload: { token, name: "Edge", password: "short" },
+    });
+    expect(wrongPassword.statusCode).toBe(400);
+
+    await app.inject({
+      method: "DELETE",
+      url: `/api/org/invites/${invite.id}`,
+      headers: auth,
+    });
+    const afterRevoke = await app.inject({
+      method: "GET",
+      url: `/api/auth/invite?token=${encodeURIComponent(token)}`,
+    });
+    expect(afterRevoke.statusCode).toBe(404);
+
+    const bogus = await app.inject({
+      method: "GET",
+      url: "/api/auth/invite?token=not-a-real-token-value-at-all",
+    });
+    expect(bogus.statusCode).toBe(404);
+  });
 }

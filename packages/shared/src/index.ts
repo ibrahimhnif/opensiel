@@ -78,6 +78,46 @@ export const tokenRequestSchema = z.object({
 });
 export type TokenRequest = z.infer<typeof tokenRequestSchema>;
 
+export const inviteMemberSchema = z.object({
+  email: emailSchema,
+  role: roleSchema.default("member"),
+});
+export type InviteMemberInput = z.infer<typeof inviteMemberSchema>;
+
+export const updateMemberSchema = z.object({ role: roleSchema });
+
+export const acceptInviteSchema = z.object({
+  token: z.string().min(20).max(200),
+  name: nameSchema.optional(),
+  password: passwordSchema.optional(),
+});
+export type AcceptInviteInput = z.infer<typeof acceptInviteSchema>;
+
+export interface MemberDto {
+  userId: string;
+  email: string;
+  name: string;
+  role: Role;
+  createdAt: string;
+}
+
+export interface InviteDto {
+  id: string;
+  email: string;
+  role: Role;
+  invitedByName: string;
+  expiresAt: string;
+  createdAt: string;
+}
+
+export interface InviteInfoDto {
+  email: string;
+  role: Role;
+  orgName: string;
+  orgSlug: string;
+  expiresAt: string;
+}
+
 export interface EnvironmentDto {
   id: string;
   name: string;

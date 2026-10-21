@@ -8,6 +8,8 @@ identities. MIT licensed, single service, Postgres-backed.
 - **CLI** — `opensiel run --env dev -- npm run dev` injects secrets as env vars.
 - **SDK** — `@opensiel/sdk` for Node 20+.
 - **Versioning** — every write is an immutable version; rollback creates a new version.
+- **Team management** — email invites (link shown once), roles `owner/admin/member/viewer`,
+  owner-only escalation, and last-owner protection.
 - **Machine identities** — client credentials, 15-minute tokens, environment scopes,
   `viewer` / `member` roles.
 - **Audit** — all mutations and secret reads are recorded, values never included.
@@ -88,7 +90,13 @@ token from `POST /api/auth/login`, or machine token from `POST /api/auth/token`)
 | --- | --- | --- |
 | POST | `/auth/signup`, `/auth/login`, `/auth/logout` | user sessions |
 | GET | `/auth/me`, `/auth/config` | current user / bootstrap info |
+| GET | `/auth/invite?token=` | public invite info |
+| POST | `/auth/accept-invite` | join an org from an invite |
 | POST | `/auth/token` | client-credentials token (15 min) |
+| GET | `/org` | organization + members |
+| POST | `/org/invites` | create an invite (owner/admin) |
+| GET/DELETE | `/org/invites[/:id]` | list / revoke pending invites |
+| PATCH/DELETE | `/org/members/:userId` | change role / remove member |
 | GET/POST | `/projects` | list / create projects |
 | GET/PATCH/DELETE | `/projects/:id` | project detail / rename / delete |
 | GET/POST | `/projects/:id/environments` | environments |
@@ -125,9 +133,12 @@ The image is published to `ghcr.io/ibrahimhnif/opensiel` by the CI workflow on `
 The reference instance runs at **https://opensiel.liostech.id** (namespace `opensiel`, exposed
 through the existing Cloudflare Tunnel). While the GHCR package is private, it uses
 `deploy/k8s/app-sourcebuild.yaml`, which clones this repo inside the cluster with the
-`opensiel-git` secret, builds it once into a 2Gi PVC, and then runs the server. Delete the
-`opensiel-build` PVC to force a rebuild; switch to `app.yaml` once the package is public (or
-create a `ghcr-creds` image pull secret).
+`opensiel-git` secret, builds it once into a 2Gi PVC, and then runs the server. Bump
+`SOURCE_REV` in that manifest to force a rebuild on the next rollout; switch to `app.yaml`
+once the package is public (or create a `ghcr-creds` image pull secret).
+
+Invites do not send email (no SMTP in v0): the API returns the invite link once and the UI
+shows it for you to copy.
 
 After the first account is created, disable open signup:
 
@@ -146,8 +157,8 @@ contain values. No SSO, approvals, dynamic secrets, PKI, or KMS yet.
 
 ## Roadmap
 
-v1: SSO (OIDC/SAML), approval workflows, dynamic database credentials, secret scanning,
-invites and multi-user orgs, key rotation, webhook/CI integrations.
+v1: OIDC/SAML SSO, approval workflows, dynamic database credentials, secret scanning,
+secret references, key rotation, webhook/CI integrations.
 
 ## License
 

@@ -53,6 +53,32 @@ export const orgMembers = pgTable(
   ],
 );
 
+export const orgInvites = pgTable(
+  "org_invites",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    orgId: uuid("org_id")
+      .notNull()
+      .references(() => orgs.id, { onDelete: "cascade" }),
+    email: text("email").notNull(),
+    role: text("role").$type<Role>().notNull().default("member"),
+    tokenHash: text("token_hash").notNull(),
+    invitedBy: uuid("invited_by")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+    acceptedAt: timestamp("accepted_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    uniqueIndex("org_invites_token_hash_uq").on(table.tokenHash),
+    index("org_invites_org_idx").on(table.orgId),
+    uniqueIndex("org_invites_pending_uq")
+      .on(table.orgId, table.email)
+      .where(sql`${table.acceptedAt} is null`),
+  ],
+);
+
 export const sessions = pgTable(
   "sessions",
   {

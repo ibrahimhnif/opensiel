@@ -7,6 +7,7 @@ import Fastify from "fastify";
 import type { FastifyInstance } from "fastify";
 import { AppError } from "./errors.js";
 import { registerAuthRoutes } from "./routes/auth.js";
+import { registerOrgRoutes } from "./routes/org.js";
 import { registerProjectRoutes } from "./routes/projects.js";
 import { registerSecretRoutes } from "./routes/secrets.js";
 import { registerIdentityRoutes } from "./routes/identities.js";
@@ -52,6 +53,7 @@ export async function buildApp(deps: Deps): Promise<FastifyInstance> {
   });
 
   registerAuthRoutes(app, deps);
+  registerOrgRoutes(app, deps);
   registerProjectRoutes(app, deps);
   registerSecretRoutes(app, deps);
   registerIdentityRoutes(app, deps);

@@ -370,6 +370,21 @@ label.checkbox input { width: auto; }
 
 .history-list { display: flex; flex-direction: column; gap: 8px; }
 
+.invite-form { padding: 16px; }
+
+.invite-fields {
+  display: grid;
+  grid-template-columns: 1fr 1.3fr auto;
+  gap: 12px;
+  align-items: end;
+}
+
+.role-select {
+  width: auto;
+  padding: 5px 8px;
+  font-size: 12px;
+}
+
 .history-row {
   display: grid;
   grid-template-columns: 1fr 1fr auto;
@@ -387,4 +402,5 @@ label.checkbox input { width: auto; }
   .sidebar-footer { border: none; padding: 0; }
   .main { padding: 18px; }
   .topbar { flex-direction: column; align-items: flex-start; }
+  .invite-fields { grid-template-columns: 1fr; }
 }
