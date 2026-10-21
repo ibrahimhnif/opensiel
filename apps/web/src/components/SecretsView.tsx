@@ -1,5 +1,10 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import type { ProjectDto, SecretDto, SecretVersionDto } from "@opensiel/shared";
+import type {
+  ImportSecretsResult,
+  ProjectDto,
+  SecretDto,
+  SecretVersionDto,
+} from "@opensiel/shared";
 import { api, errorMessage } from "../api";
 
 interface Props {
@@ -31,6 +36,12 @@ export function SecretsView({ project, env }: Props) {
   const [editor, setEditor] = useState<EditorState | null>(null);
   const [history, setHistory] = useState<HistoryState | null>(null);
   const [busy, setBusy] = useState(false);
+  const [importOpen, setImportOpen] = useState(false);
+  const [importText, setImportText] = useState("");
+  const [importPath, setImportPath] = useState("/");
+  const [importComment, setImportComment] = useState("");
+  const [importPreview, setImportPreview] = useState<string[] | null>(null);
+  const [importBusy, setImportBusy] = useState(false);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -154,6 +165,71 @@ export function SecretsView({ project, env }: Props) {
     }
   }
 
+  async function readImportFile(event: React.ChangeEvent<HTMLInputElement>) {
+    const file = event.target.files?.[0];
+    if (!file) return;
+    setImportText(await file.text());
+    setImportPreview(null);
+  }
+
+  async function previewImport() {
+    if (!importText.trim()) {
+      setError("paste or upload a .env file first");
+      return;
+    }
+    setImportBusy(true);
+    setError("");
+    try {
+      const result = await api.post<ImportSecretsResult>(
+        `/api/projects/${project.id}/secrets/import`,
+        {
+          env,
+          path: importPath.trim() || "/",
+          format: "env",
+          contents: importText,
+          comment: importComment.trim() || undefined,
+          dryRun: true,
+        },
+      );
+      setImportPreview(result.keys);
+    } catch (err) {
+      setError(errorMessage(err));
+    } finally {
+      setImportBusy(false);
+    }
+  }
+
+  async function runImport() {
+    if (!importText.trim()) return;
+    setImportBusy(true);
+    setError("");
+    try {
+      const result = await api.post<ImportSecretsResult>(
+        `/api/projects/${project.id}/secrets/import`,
+        {
+          env,
+          path: importPath.trim() || "/",
+          format: "env",
+          contents: importText,
+          comment: importComment.trim() || undefined,
+        },
+      );
+      setNotice(
+        `imported ${result.imported.length} secrets (${result.created} new, ${result.updated} updated)`,
+      );
+      setImportOpen(false);
+      setImportText("");
+      setImportPath("/");
+      setImportComment("");
+      setImportPreview(null);
+      await load();
+    } catch (err) {
+      setError(errorMessage(err));
+    } finally {
+      setImportBusy(false);
+    }
+  }
+
   return (
     <section className="view">
       <div className="toolbar">
@@ -166,6 +242,14 @@ export function SecretsView({ project, env }: Props) {
         <div className="toolbar-actions">
           <button onClick={() => void load()} disabled={loading}>
             {loading ? "refreshing…" : "refresh"}
+          </button>
+          <button
+            onClick={() => {
+              setImportOpen(true);
+              setImportPreview(null);
+            }}
+          >
+            Import .env
           </button>
           <button
             className="primary"
@@ -377,6 +461,82 @@ export function SecretsView({ project, env }: Props) {
             <div className="modal-actions">
               <button type="button" onClick={() => setHistory(null)}>
                 close
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {importOpen && (
+        <div className="overlay" onClick={() => setImportOpen(false)}>
+          <div className="modal" onClick={(event) => event.stopPropagation()}>
+            <h2>Import secrets</h2>
+            <p className="muted small">
+              Paste a .env file or choose one. Supports comments, <code>export KEY=…</code>, and
+              quoted values. Existing keys get a new version.
+            </p>
+
+            <label>
+              Choose a file
+              <input type="file" accept=".env,text/plain" onChange={(event) => void readImportFile(event)} />
+            </label>
+
+            <label>
+              Paste .env
+              <textarea
+                rows={10}
+                value={importText}
+                onChange={(event) => {
+                  setImportText(event.target.value);
+                  setImportPreview(null);
+                }}
+                placeholder={"# comment\nDATABASE_URL=postgres://user:pass@host/db\nAPI_KEY=\"quoted value\"\nexport DEBUG=true"}
+              />
+            </label>
+
+            <div className="grid-2">
+              <label>
+                Folder path
+                <input
+                  value={importPath}
+                  onChange={(event) => setImportPath(event.target.value)}
+                  placeholder="/"
+                />
+              </label>
+              <label>
+                Comment <span className="muted small">(optional)</span>
+                <input
+                  value={importComment}
+                  onChange={(event) => setImportComment(event.target.value)}
+                  placeholder="bulk import"
+                />
+              </label>
+            </div>
+
+            {importPreview && (
+              <p className="muted small">
+                {importPreview.length} key(s): {importPreview.join(", ")}
+              </p>
+            )}
+
+            <div className="modal-actions">
+              <button type="button" onClick={() => setImportOpen(false)}>
+                cancel
+              </button>
+              <button type="button" onClick={() => void previewImport()} disabled={importBusy}>
+                preview
+              </button>
+              <button
+                className="primary"
+                type="button"
+                onClick={() => void runImport()}
+                disabled={importBusy || !importText.trim()}
+              >
+                {importBusy
+                  ? "working…"
+                  : importPreview
+                    ? `import ${importPreview.length} secrets`
+                    : "import"}
               </button>
             </div>
           </div>

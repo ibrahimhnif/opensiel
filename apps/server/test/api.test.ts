@@ -375,6 +375,104 @@ if (!databaseUrl) {
     expect(machineRows.find((row) => row.key === "FOO")).toBeUndefined();
   });
 
+  it("bulk imports .env content and JSON", async () => {
+    const session = await signup(`import-${Date.now()}@test.dev`);
+    const auth = { authorization: `Bearer ${session.token}` };
+    const url = `/api/projects/${session.projectId}/secrets`;
+
+    const contents = [
+      "# seeded",
+      "FOO=bar",
+      'export QUOTED="a b"',
+      'NEWLINE="line1\\nline2"',
+    ].join("\n");
+
+    const dryRun = await app.inject({
+      method: "POST",
+      url: `${url}/import`,
+      headers: auth,
+      payload: { env: "dev", contents, dryRun: true },
+    });
+    expect(dryRun.statusCode).toBe(200);
+    expect(dryRun.json<{ keys: string[] }>().keys).toEqual(["FOO", "QUOTED", "NEWLINE"]);
+
+    const hidden = await app.inject({ method: "GET", url: `${url}?env=dev`, headers: auth });
+    expect(hidden.json<{ secrets: unknown[] }>().secrets).toHaveLength(0);
+
+    const imported = await app.inject({
+      method: "POST",
+      url: `${url}/import`,
+      headers: auth,
+      payload: { env: "dev", contents, comment: "seed" },
+    });
+    expect(imported.statusCode).toBe(201);
+    expect(imported.json<{ created: number; updated: number }>()).toMatchObject({
+      created: 3,
+      updated: 0,
+    });
+
+    const again = await app.inject({
+      method: "POST",
+      url: `${url}/import`,
+      headers: auth,
+      payload: { env: "dev", contents: "FOO=updated\nNEW_KEY=1" },
+    });
+    expect(again.json<{ created: number; updated: number }>()).toMatchObject({
+      created: 1,
+      updated: 1,
+    });
+
+    const list = await app.inject({ method: "GET", url: `${url}?env=dev`, headers: auth });
+    const values = Object.fromEntries(
+      list.json<{ secrets: { key: string; value: string }[] }>().secrets.map((row) => [
+        row.key,
+        row.value,
+      ]),
+    );
+    expect(values.FOO).toBe("updated");
+    expect(values.QUOTED).toBe("a b");
+    expect(values.NEWLINE).toBe("line1\nline2");
+
+    const json = await app.inject({
+      method: "POST",
+      url: `${url}/import`,
+      headers: auth,
+      payload: { env: "dev", format: "json", contents: '{"JSON_KEY":"v"}' },
+    });
+    expect(json.statusCode).toBe(201);
+
+    const malformed = await app.inject({
+      method: "POST",
+      url: `${url}/import`,
+      headers: auth,
+      payload: { env: "dev", contents: "NOT A LINE" },
+    });
+    expect(malformed.statusCode).toBe(400);
+
+    await app.inject({
+      method: "PATCH",
+      url: `/api/projects/${session.projectId}/environments/${session.prodId}/policy`,
+      headers: auth,
+      payload: { approvalRequired: true, requiredApprovals: 1 },
+    });
+    const blocked = await app.inject({
+      method: "POST",
+      url: `${url}/import`,
+      headers: auth,
+      payload: { env: "prod", contents: "PROD_KEY=1" },
+    });
+    expect(blocked.statusCode).toBe(409);
+
+    const audit = await app.inject({
+      method: "GET",
+      url: `/api/audit?projectId=${session.projectId}`,
+      headers: auth,
+    });
+    const logs = audit.json<{ logs: { action: string }[] }>().logs;
+    expect(logs.some((log) => log.action === "secret.import")).toBe(true);
+    expect(JSON.stringify(logs)).not.toContain("postgres://");
+  });
+
   it("writes audit entries without secret values", async () => {
     const session = await signup(`audit-${Date.now()}@test.dev`);
     const auth = { authorization: `Bearer ${session.token}` };

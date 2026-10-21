@@ -41,6 +41,14 @@ export interface MutationResult {
   changeRequest?: ChangeRequestSummary;
 }
 
+export interface ImportResult {
+  dryRun: boolean;
+  keys: string[];
+  created: number;
+  updated: number;
+  imported: { key: string; version: number }[];
+}
+
 export class OpensielError extends Error {
   constructor(
     public readonly status: number,
@@ -120,6 +128,30 @@ export class OpensielClient {
     return this.request(`/api/projects/${projectId}/secrets`, {
       method: "POST",
       body: { key, value, env, path: options.path, comment: options.comment },
+    });
+  }
+
+  importSecrets(
+    projectId: string,
+    env: string,
+    contents: string,
+    options: {
+      path?: string;
+      comment?: string;
+      format?: "env" | "json";
+      dryRun?: boolean;
+    } = {},
+  ): Promise<ImportResult> {
+    return this.request(`/api/projects/${projectId}/secrets/import`, {
+      method: "POST",
+      body: {
+        env,
+        contents,
+        format: options.format ?? "env",
+        path: options.path,
+        comment: options.comment,
+        dryRun: options.dryRun,
+      },
     });
   }
 

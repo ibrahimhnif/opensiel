@@ -65,6 +65,24 @@ export const rollbackSchema = z.object({
   path: secretPathSchema.optional(),
 });
 
+export const importSecretsSchema = z.object({
+  env: slugSchema,
+  path: secretPathSchema.optional(),
+  format: z.enum(["env", "json"]).default("env"),
+  contents: z.string().min(1).max(256_000),
+  comment: z.string().max(500).optional(),
+  dryRun: z.boolean().optional(),
+});
+export type ImportSecretsInput = z.infer<typeof importSecretsSchema>;
+
+export interface ImportSecretsResult {
+  dryRun: boolean;
+  keys: string[];
+  created: number;
+  updated: number;
+  imported: { key: string; version: number }[];
+}
+
 export const createIdentitySchema = z.object({
   name: nameSchema,
   role: identityRoleSchema.default("viewer"),

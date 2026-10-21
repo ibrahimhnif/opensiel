@@ -4,7 +4,7 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import { spawn } from "node:child_process";
 import { createInterface } from "node:readline/promises";
-import type { ProjectDto } from "@opensiel/shared";
+import type { ImportSecretsResult, ProjectDto } from "@opensiel/shared";
 
 interface Config {
   apiUrl: string;
@@ -323,6 +323,44 @@ secrets
       } else if (result.secret) {
         console.log(`set ${result.secret.key} (v${result.secret.version}) in ${env}`);
       }
+    }
+  });
+
+secrets
+  .command("import <file>")
+  .description("import secrets from a .env file (use '-' to read stdin)")
+  .option("--stdin", "read the .env content from stdin")
+  .option("--env <env>")
+  .option("--path <path>")
+  .option("--comment <comment>")
+  .option("--dry-run", "only parse and list the keys")
+  .action(async (file: string, options) => {
+    const projectId = resolveProjectId();
+    const env = resolveEnv(options.env as string | undefined);
+    const fromStdin = Boolean(options.stdin) || file === "-";
+    const contents = fromStdin ? readFileSync(0, "utf8") : readFileSync(file, "utf8");
+
+    const result = await apiRequest<ImportSecretsResult>(
+      `/api/projects/${projectId}/secrets/import`,
+      {
+        method: "POST",
+        body: {
+          env,
+          path: options.path,
+          format: "env",
+          contents,
+          comment: options.comment,
+          dryRun: Boolean(options.dryRun),
+        },
+      },
+    );
+
+    if (result.dryRun) {
+      console.log(`${result.keys.length} key(s): ${result.keys.join(", ")}`);
+    } else {
+      console.log(
+        `imported ${result.imported.length} secrets into ${env} (${result.created} new, ${result.updated} updated)`,
+      );
     }
   });
 

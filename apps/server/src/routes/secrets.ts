@@ -1,7 +1,14 @@
-import { and, desc, eq, isNull } from "drizzle-orm";
+import { and, desc, eq, inArray, isNull } from "drizzle-orm";
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
-import { rollbackSchema, secretPathSchema, secretKeySchema, setSecretSchema, slugSchema } from "@opensiel/shared";
+import {
+  importSecretsSchema,
+  rollbackSchema,
+  secretPathSchema,
+  secretKeySchema,
+  setSecretSchema,
+  slugSchema,
+} from "@opensiel/shared";
 import { requireActor } from "../auth.js";
 import {
   assertCanWrite,
@@ -10,12 +17,13 @@ import {
   loadProject,
   normalizePath,
 } from "../access.js";
-import { notFound, parse } from "../errors.js";
+import { AppError, badRequest, notFound, parse } from "../errors.js";
 import { secretVersions, secrets } from "../db/schema.js";
 import type { SecretRow } from "../db/schema.js";
 import { writeAudit } from "../audit.js";
 import { createChangeRequest } from "../approvals-service.js";
 import { loadEnvironmentSecrets } from "../secret-read.js";
+import { parseImportContents } from "../dotenv.js";
 import {
   applySecretDelete,
   applySecretRollback,
@@ -215,6 +223,104 @@ export function registerSecretRoutes(app: FastifyInstance, deps: Deps): void {
         version: result.version,
         updatedAt: new Date().toISOString(),
       },
+    });
+  });
+
+  app.post("/api/projects/:projectId/secrets/import", async (request, reply) => {
+    const actor = await requireActor(deps, request);
+    assertCanWrite(actor);
+    const { projectId } = request.params as { projectId: string };
+    const input = parse(importSecretsSchema, request.body);
+    const project = await loadProject(deps, actor, projectId);
+    const environment = await loadEnvironment(deps, project.id, input.env);
+    if (actor.type === "machine") assertEnvScope(actor, environment.id);
+
+    const path = normalizePath(input.path);
+    const entries = parseImportContents(input.contents, input.format ?? "env");
+    for (const entry of entries) {
+      if (entry.value.length > 100_000) {
+        throw badRequest(`value for ${entry.key} is too large`);
+      }
+    }
+
+    if (input.dryRun) {
+      return {
+        dryRun: true,
+        keys: entries.map((entry) => entry.key),
+        created: 0,
+        updated: 0,
+        imported: [],
+      };
+    }
+
+    if (environment.approvalRequired) {
+      throw new AppError(
+        409,
+        "this environment requires approvals; import secrets one at a time so each change can be approved",
+        "approval_required",
+      );
+    }
+
+    const keys = entries.map((entry) => entry.key);
+    const existingRows = await deps.db
+      .select({ key: secrets.key })
+      .from(secrets)
+      .where(
+        and(
+          eq(secrets.projectId, project.id),
+          eq(secrets.environmentId, environment.id),
+          eq(secrets.path, path),
+          isNull(secrets.deletedAt),
+          inArray(secrets.key, keys),
+        ),
+      );
+    const existing = new Set(existingRows.map((row) => row.key));
+
+    const imported: { key: string; version: number }[] = [];
+    for (const entry of entries) {
+      const result = await applySecretWrite(
+        deps,
+        project,
+        environment,
+        { type: actor.type, id: actor.id, name: actor.name },
+        {
+          key: entry.key,
+          value: entry.value,
+          path,
+          comment: input.comment ?? "bulk import",
+        },
+      );
+      imported.push({ key: entry.key, version: result.version });
+    }
+
+    const created = entries.filter((entry) => !existing.has(entry.key)).length;
+    const updated = entries.length - created;
+
+    await writeAudit(deps, {
+      orgId: actor.orgId,
+      projectId: project.id,
+      actorType: actor.type,
+      actorId: actor.id,
+      actorName: actor.name,
+      action: "secret.import",
+      resourceType: "secret",
+      resourceId: `${environment.slug}:${path}`,
+      metadata: {
+        environment: environment.slug,
+        path,
+        count: entries.length,
+        created,
+        updated,
+      },
+      ip: request.ip,
+    });
+
+    return reply.code(201).send({
+      dryRun: false,
+      keys,
+      created,
+      updated,
+      imported,
     });
   });
 

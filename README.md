@@ -14,6 +14,8 @@ identities. MIT licensed, single service, Postgres-backed.
   `requiredApprovals` approvals from owners/admins before they are applied.
 - **References & imports** — `${KEY}` / `${/path/KEY}` resolution and cross-environment
   imports, resolved at read time.
+- **Bulk import** — paste or upload a `.env` file (or JSON) instead of creating keys one by
+  one; existing keys get a new version.
 - **Machine identities** — client credentials, 15-minute tokens, environment scopes,
   `viewer` / `member` roles.
 - **Audit** — all mutations and secret reads are recorded, values never included.
@@ -54,6 +56,9 @@ export PATH="$PWD/apps/cli/dist:$PATH"   # or: pnpm --filter @opensiel/cli build
 opensiel login --api-url http://localhost:8787
 opensiel init --project default --env dev
 opensiel secrets set DATABASE_URL=postgres://localhost/app
+opensiel secrets import .env --env dev --dry-run
+opensiel secrets import .env --env dev
+cat .env.prod | opensiel secrets import - --env prod
 opensiel secrets list --reveal
 opensiel secrets versions DATABASE_URL
 opensiel secrets rollback DATABASE_URL --version 1
@@ -105,6 +110,7 @@ token from `POST /api/auth/login`, or machine token from `POST /api/auth/token`)
 | GET/PATCH/DELETE | `/projects/:id` | project detail / rename / delete |
 | GET/POST | `/projects/:id/environments` | environments |
 | GET/POST | `/projects/:id/secrets` | list (decrypted) / write new version |
+| POST | `/projects/:id/secrets/import` | bulk import .env or JSON |
 | GET/DELETE | `/projects/:id/secrets/:key` | read / soft-delete |
 | GET | `/projects/:id/secrets/:key/versions` | version history |
 | POST | `/projects/:id/secrets/:key/rollback` | roll back to a version |
@@ -151,6 +157,20 @@ An owner or admin can make one environment import another in the **Approvals** t
 (`PUT /projects/:id/environments/:eid/imports`). Values defined in the environment itself
 win over imported ones, imported rows carry `importedFrom`, and machine identities only see
 imports from environments they are scoped to.
+
+## Bulk import
+
+In the UI, **Import .env** accepts a pasted document or an uploaded file. The CLI does the
+same with `opensiel secrets import <file>` (or `-` for stdin). Payloads are parsed as
+dotenv (`#` comments, `export KEY=`, quoted values, escapes) or as a flat JSON object with
+`format: "json"`.
+
+- `dryRun: true` parses and returns the key list without writing.
+- Existing keys get a new version; the response reports `created` / `updated` counts.
+- Maximum 200 keys per import; values are encrypted individually and the audit log records
+  counts and keys, never values.
+- Importing into an environment that requires approvals returns `409`; create one secret at
+  a time there so each change can be approved.
 
 ## Deployment (Kubernetes)
 
