@@ -1,0 +1,201 @@
+export interface OpensielClientOptions {
+  apiUrl?: string;
+  token?: string;
+}
+
+export interface Project {
+  id: string;
+  name: string;
+  slug: string;
+  environments: { id: string; name: string; slug: string; position: number }[];
+}
+
+export interface Secret {
+  key: string;
+  value: string;
+  path: string;
+  version: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface SecretVersion {
+  version: number;
+  comment: string | null;
+  fingerprint: string;
+  createdByType: string;
+  createdById: string;
+  createdAt: string;
+  current: boolean;
+}
+
+export class OpensielError extends Error {
+  constructor(
+    public readonly status: number,
+    message: string,
+  ) {
+    super(message);
+    this.name = "OpensielError";
+  }
+}
+
+export class OpensielClient {
+  private apiUrl: string;
+  private token?: string;
+
+  constructor(options: OpensielClientOptions = {}) {
+    this.apiUrl = (options.apiUrl ?? "http://localhost:8787").replace(/\/+$/, "");
+    this.token = options.token;
+  }
+
+  setToken(token: string | undefined): void {
+    this.token = token;
+  }
+
+  async login(email: string, password: string): Promise<{ token: string }> {
+    const result = await this.request<{ token: string }>("/api/auth/login", {
+      method: "POST",
+      body: { email, password },
+    });
+    this.token = result.token;
+    return result;
+  }
+
+  async loginWithClientCredentials(
+    clientId: string,
+    clientSecret: string,
+  ): Promise<{ accessToken: string; expiresIn: number }> {
+    const result = await this.request<{ accessToken: string; expiresIn: number }>(
+      "/api/auth/token",
+      { method: "POST", body: { clientId, clientSecret } },
+    );
+    this.token = result.accessToken;
+    return result;
+  }
+
+  me(): Promise<{ user: { id: string; email: string; name: string; role: string } }> {
+    return this.request("/api/auth/me");
+  }
+
+  listProjects(): Promise<{ projects: Project[] }> {
+    return this.request("/api/projects");
+  }
+
+  createProject(name: string): Promise<{ project: Project }> {
+    return this.request("/api/projects", { method: "POST", body: { name } });
+  }
+
+  listSecrets(projectId: string, env: string, path = "/", recursive = false): Promise<{ secrets: Secret[] }> {
+    const query = new URLSearchParams({ env, path, recursive: String(recursive) });
+    return this.request(`/api/projects/${projectId}/secrets?${query}`);
+  }
+
+  async getSecret(projectId: string, env: string, key: string, path = "/"): Promise<string> {
+    const query = new URLSearchParams({ env, path });
+    const result = await this.request<{ secret: Secret }>(
+      `/api/projects/${projectId}/secrets/${encodeURIComponent(key)}?${query}`,
+    );
+    return result.secret.value;
+  }
+
+  setSecret(
+    projectId: string,
+    env: string,
+    key: string,
+    value: string,
+    options: { path?: string; comment?: string } = {},
+  ): Promise<{ secret: { key: string; version: number } }> {
+    return this.request(`/api/projects/${projectId}/secrets`, {
+      method: "POST",
+      body: { key, value, env, path: options.path, comment: options.comment },
+    });
+  }
+
+  deleteSecret(projectId: string, env: string, key: string, path = "/"): Promise<{ ok: boolean }> {
+    const query = new URLSearchParams({ env, path });
+    return this.request(`/api/projects/${projectId}/secrets/${encodeURIComponent(key)}?${query}`, {
+      method: "DELETE",
+    });
+  }
+
+  listSecretVersions(
+    projectId: string,
+    env: string,
+    key: string,
+    path = "/",
+  ): Promise<{ versions: SecretVersion[] }> {
+    const query = new URLSearchParams({ env, path });
+    return this.request(`/api/projects/${projectId}/secrets/${encodeURIComponent(key)}/versions?${query}`);
+  }
+
+  rollbackSecret(
+    projectId: string,
+    env: string,
+    key: string,
+    version: number,
+    path = "/",
+  ): Promise<{ secret: { version: number } }> {
+    return this.request(`/api/projects/${projectId}/secrets/${encodeURIComponent(key)}/rollback`, {
+      method: "POST",
+      body: { version, env, path },
+    });
+  }
+
+  async exportSecrets(
+    projectId: string,
+    env: string,
+    format: "dotenv" | "json" = "json",
+  ): Promise<Record<string, string>> {
+    const query = new URLSearchParams({ env, format });
+    const response = await fetch(`${this.apiUrl}/api/projects/${projectId}/export?${query}`, {
+      headers: this.headers(),
+    });
+    if (!response.ok) throw new OpensielError(response.status, await response.text());
+    if (format === "json") return (await response.json()) as Record<string, string>;
+    const text = await response.text();
+    return Object.fromEntries(
+      text
+        .split("\n")
+        .filter((line) => line.includes("="))
+        .map((line) => {
+          const index = line.indexOf("=");
+          return [line.slice(0, index), line.slice(index + 1)];
+        }),
+    );
+  }
+
+  private headers(): Record<string, string> {
+    const headers: Record<string, string> = { accept: "application/json" };
+    if (this.token) headers.authorization = `Bearer ${this.token}`;
+    return headers;
+  }
+
+  private async request<T>(
+    path: string,
+    options: { method?: string; body?: unknown } = {},
+  ): Promise<T> {
+    const headers = this.headers();
+    if (options.body !== undefined) headers["content-type"] = "application/json";
+
+    const response = await fetch(`${this.apiUrl}${path}`, {
+      method: options.method ?? "GET",
+      headers,
+      body: options.body === undefined ? undefined : JSON.stringify(options.body),
+    });
+
+    const text = await response.text();
+    if (!response.ok) {
+      let message = `${response.status} ${response.statusText}`;
+      try {
+        const parsed = JSON.parse(text) as { message?: string };
+        if (parsed.message) message = parsed.message;
+      } catch {
+        if (text) message = text.slice(0, 300);
+      }
+      throw new OpensielError(response.status, message);
+    }
+    return (text ? JSON.parse(text) : undefined) as T;
+  }
+}
+
+export default OpensielClient;

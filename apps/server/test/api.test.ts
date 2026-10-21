@@ -1,0 +1,252 @@
+import type { FastifyInstance } from "fastify";
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { buildApp } from "../src/app.js";
+import { createDb } from "../src/db/client.js";
+import type { Database } from "../src/db/client.js";
+import { runMigrations } from "../src/db/migrate.js";
+import { generateMasterKey, parseMasterKey } from "../src/crypto.js";
+import type { Env } from "../src/env.js";
+
+const databaseUrl = process.env.TEST_DATABASE_URL;
+
+if (!databaseUrl) {
+  describe.skip("api integration (set TEST_DATABASE_URL)", () => {
+    it("skipped", () => undefined);
+  });
+} else {
+  const env: Env = {
+    nodeEnv: "test",
+    port: 0,
+    host: "127.0.0.1",
+    databaseUrl,
+    masterKey: parseMasterKey(generateMasterKey()),
+    jwtSecret: "test-secret-that-is-long-enough-for-hs256",
+    allowSignup: true,
+    autoMigrate: true,
+    rateLimit: false,
+    isProd: false,
+    secureCookies: false,
+  };
+
+  let app: FastifyInstance;
+  let database: Database;
+
+  interface Session {
+    token: string;
+    projectId: string;
+    devId: string;
+    prodId: string;
+  }
+
+  async function signup(email: string): Promise<Session> {
+    const response = await app.inject({
+      method: "POST",
+      url: "/api/auth/signup",
+      payload: { email, password: "correct-horse-battery", name: "Test User" },
+    });
+    expect(response.statusCode).toBe(201);
+    const body = response.json<{ token: string; projectId: string }>();
+    const projects = await app.inject({
+      method: "GET",
+      url: "/api/projects",
+      headers: { authorization: `Bearer ${body.token}` },
+    });
+    const project = projects.json<{
+      projects: { id: string; environments: { id: string; slug: string }[] }[];
+    }>().projects[0];
+    return {
+      token: body.token,
+      projectId: body.projectId,
+      devId: project.environments.find((e) => e.slug === "dev")!.id,
+      prodId: project.environments.find((e) => e.slug === "prod")!.id,
+    };
+  }
+
+  beforeAll(async () => {
+    database = createDb(databaseUrl, { max: 5 });
+    await database.sql.unsafe("drop schema if exists public cascade");
+    await database.sql.unsafe("create schema public");
+    await runMigrations(database.sql);
+    app = await buildApp({ env, db: database.db, sql: database.sql });
+  });
+
+  afterAll(async () => {
+    await app.close();
+    await database.sql.end({ timeout: 5 });
+  });
+
+  it("reports health", async () => {
+    const response = await app.inject({ method: "GET", url: "/api/health" });
+    expect(response.statusCode).toBe(200);
+    expect(response.json<{ status: string }>().status).toBe("ok");
+  });
+
+  it("signs up, logs in, and rejects bad passwords", async () => {
+    const session = await signup(`owner-${Date.now()}@test.dev`);
+    expect(session.token).toBeTruthy();
+
+    const bad = await app.inject({
+      method: "POST",
+      url: "/api/auth/login",
+      payload: { email: "nope@test.dev", password: "whatever" },
+    });
+    expect(bad.statusCode).toBe(401);
+
+    const me = await app.inject({
+      method: "GET",
+      url: "/api/auth/me",
+      headers: { authorization: `Bearer ${session.token}` },
+    });
+    expect(me.statusCode).toBe(200);
+  });
+
+  it("versions secrets and rolls them back", async () => {
+    const session = await signup(`versions-${Date.now()}@test.dev`);
+    const auth = { authorization: `Bearer ${session.token}` };
+    const base = `/api/projects/${session.projectId}/secrets`;
+
+    const v1 = await app.inject({
+      method: "POST",
+      url: base,
+      headers: auth,
+      payload: { key: "DATABASE_URL", value: "v1", env: "dev", comment: "first" },
+    });
+    expect(v1.statusCode).toBe(201);
+    expect(v1.json<{ secret: { version: number } }>().secret.version).toBe(1);
+
+    const v2 = await app.inject({
+      method: "POST",
+      url: base,
+      headers: auth,
+      payload: { key: "DATABASE_URL", value: "v2", env: "dev" },
+    });
+    expect(v2.json<{ secret: { version: number } }>().secret.version).toBe(2);
+
+    const latest = await app.inject({ method: "GET", url: `${base}/DATABASE_URL?env=dev`, headers: auth });
+    expect(latest.json<{ secret: { value: string } }>().secret.value).toBe("v2");
+
+    const versions = await app.inject({
+      method: "GET",
+      url: `${base}/DATABASE_URL/versions?env=dev`,
+      headers: auth,
+    });
+    expect(versions.json<{ versions: unknown[] }>().versions).toHaveLength(2);
+
+    const rollback = await app.inject({
+      method: "POST",
+      url: `${base}/DATABASE_URL/rollback`,
+      headers: auth,
+      payload: { version: 1, env: "dev" },
+    });
+    expect(rollback.statusCode).toBe(201);
+    expect(rollback.json<{ secret: { version: number } }>().secret.version).toBe(3);
+
+    const after = await app.inject({ method: "GET", url: `${base}/DATABASE_URL?env=dev`, headers: auth });
+    expect(after.json<{ secret: { value: string } }>().secret.value).toBe("v1");
+
+    const exported = await app.inject({
+      method: "GET",
+      url: `/api/projects/${session.projectId}/export?env=dev&format=dotenv`,
+      headers: auth,
+    });
+    expect(exported.body).toContain("DATABASE_URL=v1");
+  });
+
+  it("isolates organizations", async () => {
+    const a = await signup(`org-a-${Date.now()}@test.dev`);
+    const b = await signup(`org-b-${Date.now()}@test.dev`);
+
+    const bProjects = await app.inject({
+      method: "GET",
+      url: "/api/projects",
+      headers: { authorization: `Bearer ${b.token}` },
+    });
+    expect(bProjects.json<{ projects: unknown[] }>().projects).toHaveLength(1);
+
+    const cross = await app.inject({
+      method: "GET",
+      url: `/api/projects/${a.projectId}/secrets?env=dev`,
+      headers: { authorization: `Bearer ${b.token}` },
+    });
+    expect(cross.statusCode).toBe(404);
+  });
+
+  it("scopes machine identities to environments and roles", async () => {
+    const session = await signup(`machine-${Date.now()}@test.dev`);
+    const auth = { authorization: `Bearer ${session.token}` };
+
+    const created = await app.inject({
+      method: "POST",
+      url: `/api/projects/${session.projectId}/identities`,
+      headers: auth,
+      payload: { name: "ci", role: "viewer", environmentIds: [session.devId] },
+    });
+    expect(created.statusCode).toBe(201);
+    const identity = created.json<{ identity: { id: string; clientId: string; clientSecret: string } }>()
+      .identity;
+
+    const tokenResponse = await app.inject({
+      method: "POST",
+      url: "/api/auth/token",
+      payload: { clientId: identity.clientId, clientSecret: identity.clientSecret },
+    });
+    expect(tokenResponse.statusCode).toBe(200);
+    const machineToken = tokenResponse.json<{ accessToken: string }>().accessToken;
+
+    const devRead = await app.inject({
+      method: "GET",
+      url: `/api/projects/${session.projectId}/secrets?env=dev`,
+      headers: { authorization: `Bearer ${machineToken}` },
+    });
+    expect(devRead.statusCode).toBe(200);
+
+    const prodRead = await app.inject({
+      method: "GET",
+      url: `/api/projects/${session.projectId}/secrets?env=prod`,
+      headers: { authorization: `Bearer ${machineToken}` },
+    });
+    expect(prodRead.statusCode).toBe(403);
+
+    const write = await app.inject({
+      method: "POST",
+      url: `/api/projects/${session.projectId}/secrets`,
+      headers: { authorization: `Bearer ${machineToken}` },
+      payload: { key: "NOPE", value: "x", env: "dev" },
+    });
+    expect(write.statusCode).toBe(403);
+
+    await app.inject({
+      method: "POST",
+      url: `/api/projects/${session.projectId}/identities/${identity.id}/revoke`,
+      headers: auth,
+    });
+    const afterRevoke = await app.inject({
+      method: "POST",
+      url: "/api/auth/token",
+      payload: { clientId: identity.clientId, clientSecret: identity.clientSecret },
+    });
+    expect(afterRevoke.statusCode).toBe(401);
+  });
+
+  it("writes audit entries without secret values", async () => {
+    const session = await signup(`audit-${Date.now()}@test.dev`);
+    const auth = { authorization: `Bearer ${session.token}` };
+
+    await app.inject({
+      method: "POST",
+      url: `/api/projects/${session.projectId}/secrets`,
+      headers: auth,
+      payload: { key: "TOKEN", value: "super-secret-value", env: "dev" },
+    });
+
+    const audit = await app.inject({
+      method: "GET",
+      url: `/api/audit?projectId=${session.projectId}`,
+      headers: auth,
+    });
+    expect(audit.statusCode).toBe(200);
+    const logs = audit.json<{ logs: { action: string; metadata: Record<string, unknown> }[] }>().logs;
+    expect(logs.some((log) => log.action === "secret.write")).toBe(true);
+    expect(JSON.stringify(logs)).not.toContain("super-secret-value");
+  });
+}

@@ -1,0 +1,21 @@
+{
+  "name": "opensiel",
+  "version": "0.1.0",
+  "private": true,
+  "license": "MIT",
+  "packageManager": "pnpm@10.33.0",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "dev": "pnpm --parallel --filter @opensiel/server --filter @opensiel/web dev",
+    "build": "pnpm -r build",
+    "test": "pnpm -r test",
+    "typecheck": "pnpm -r typecheck",
+    "db:up": "docker compose -f deploy/docker-compose.yml up -d db",
+    "db:down": "docker compose -f deploy/docker-compose.yml down"
+  },
+  "pnpm": {
+    "onlyBuiltDependencies": ["esbuild"]
+  }
+}
