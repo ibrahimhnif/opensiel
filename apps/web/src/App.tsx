@@ -1,6 +1,8 @@
 import { useEffect, useState } from "react";
 import type { UserDto } from "@opensiel/shared";
+import { Loader2 } from "lucide-react";
 import { api, errorMessage } from "./api";
+import { Card, CardContent } from "./components/ui/card";
 import { Login } from "./components/Login";
 import { Dashboard } from "./components/Dashboard";
 import { AcceptInvite } from "./components/AcceptInvite";
@@ -65,17 +67,29 @@ export function App() {
 
   if (error) {
     return (
-      <div className="center">
-        <div className="card narrow">
-          <h2>opensiel</h2>
-          <p className="error">{error}</p>
-          <p className="muted">The API is unreachable. Check that the server is running.</p>
-        </div>
+      <div className="grid min-h-full place-items-center p-6">
+        <Card className="w-full max-w-sm gap-3">
+          <CardContent className="space-y-2">
+            <h1 className="text-lg font-semibold">opensiel</h1>
+            <p className="text-sm text-destructive">{error}</p>
+            <p className="text-sm text-muted-foreground">
+              The API is unreachable. Check that the server is running.
+            </p>
+          </CardContent>
+        </Card>
       </div>
     );
   }
 
-  if (!config) return <div className="center muted">loading…</div>;
+  if (!config) {
+    return (
+      <div className="grid min-h-full place-items-center p-6">
+        <span className="flex items-center gap-2 text-sm text-muted-foreground">
+          <Loader2 className="size-4 animate-spin" /> loading…
+        </span>
+      </div>
+    );
+  }
 
   if (!user) {
     return <Login config={config} onLogin={setUser} initialError={ssoError ?? undefined} />;

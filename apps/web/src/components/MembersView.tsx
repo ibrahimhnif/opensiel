@@ -1,6 +1,16 @@
 import { useCallback, useEffect, useState } from "react";
 import type { InviteDto, MemberDto, Role } from "@opensiel/shared";
+import { Copy, Loader2, RefreshCw, UserPlus, X } from "lucide-react";
 import { api, errorMessage } from "../api";
+import { cn } from "../lib/utils";
+import { Badge } from "./ui/badge";
+import { Button } from "./ui/button";
+import { Card } from "./ui/card";
+import { Input } from "./ui/input";
+import { Label } from "./ui/label";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "./ui/select";
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "./ui/table";
+import { Notice } from "./Notice";
 
 interface OrgData {
   org: { id: string; name: string; slug: string };
@@ -9,13 +19,6 @@ interface OrgData {
   canManage: boolean;
   isOwner: boolean;
 }
-
-const ROLE_HINT: Record<Role, string> = {
-  owner: "full control, can delete the organization",
-  admin: "manage projects, environments, identities, members",
-  member: "read and write secrets",
-  viewer: "read secrets only",
-};
 
 export function MembersView() {
   const [data, setData] = useState<OrgData | null>(null);
@@ -79,7 +82,8 @@ export function MembersView() {
   }
 
   async function remove(member: MemberDto) {
-    if (!window.confirm(`Remove ${member.name} from the organization? Their sessions are revoked.`)) return;
+    if (!window.confirm(`Remove ${member.name} from the organization? Their sessions are revoked.`))
+      return;
     try {
       await api.del(`/api/org/members/${member.userId}`);
       setNotice(`${member.name} removed`);
@@ -108,189 +112,220 @@ export function MembersView() {
     }
   }
 
-  if (!data) {
-    return <section className="view">{error ? <div className="banner error-banner">{error}</div> : <p className="muted">loading…</p>}</section>;
-  }
-
-  const assignableRoles: Role[] = data.isOwner
+  const assignableRoles: Role[] = data?.isOwner
     ? ["owner", "admin", "member", "viewer"]
     : ["admin", "member", "viewer"];
 
   return (
-    <section className="view">
-      <div className="toolbar">
+    <section className="space-y-4">
+      <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
-          <h2>{data.org.name} members</h2>
-          <p className="muted small">
-            {data.members.length} member{data.members.length === 1 ? "" : "s"} · {data.org.slug}
+          <h2 className="text-lg font-semibold">
+            {data ? `${data.org.name} members` : "Members"}
+          </h2>
+          <p className="text-sm text-muted-foreground">
+            {data
+              ? `${data.members.length} member${data.members.length === 1 ? "" : "s"} · ${data.org.slug}`
+              : "loading…"}
           </p>
         </div>
-        <button onClick={() => void load()}>refresh</button>
+        <Button variant="outline" size="sm" onClick={() => void load()}>
+          <RefreshCw className="size-4" /> refresh
+        </Button>
       </div>
 
       {notice && (
-        <div className="banner info-banner">
+        <Notice tone="success" onDismiss={() => setNotice("")}>
           {notice}
-          <button className="link" onClick={() => setNotice("")}>
-            dismiss
-          </button>
-        </div>
+        </Notice>
       )}
       {error && (
-        <div className="banner error-banner">
+        <Notice tone="error" onDismiss={() => setError("")}>
           {error}
-          <button className="link" onClick={() => setError("")}>
-            dismiss
-          </button>
-        </div>
+        </Notice>
       )}
 
       {inviteLink && (
-        <div className="banner secret-banner">
-          <div>
-            <strong>Invite link (shown once, valid for 7 days)</strong>
-            <div className="credential">
-              <code>{inviteLink}</code>
+        <div className="border-primary/40 bg-primary/10 text-primary rounded-lg border px-4 py-3 text-sm">
+          <div className="flex items-start justify-between gap-3">
+            <div className="min-w-0 space-y-2">
+              <p className="font-medium">Invite link (shown once, valid for 7 days)</p>
+              <code className="block break-all bg-transparent p-0 text-xs">{inviteLink}</code>
+              <div className="flex flex-wrap items-center gap-2">
+                <Button size="sm" variant="outline" onClick={() => void copyLink()}>
+                  <Copy className="size-3.5" /> copy
+                </Button>
+                <span className="text-xs opacity-80">
+                  No SMTP is configured, so send this link yourself.
+                </span>
+              </div>
             </div>
-            <p className="muted small">
-              There is no SMTP configured, so copy this link and send it yourself.
-            </p>
-          </div>
-          <div className="toolbar-actions">
-            <button className="small" onClick={() => void copyLink()}>
-              copy
-            </button>
-            <button className="link" onClick={() => setInviteLink("")}>
-              dismiss
+            <button onClick={() => setInviteLink("")} aria-label="dismiss" className="opacity-70">
+              <X className="size-4" />
             </button>
           </div>
         </div>
       )}
 
-      {data.canManage && (
-        <form className="card invite-form" onSubmit={invite}>
-          <div className="invite-fields">
-            <label>
-              Invite by email
-              <input
+      {data?.canManage && (
+        <Card className="p-4">
+          <form className="flex flex-col gap-3 sm:flex-row sm:items-end" onSubmit={invite}>
+            <div className="flex-1 space-y-2">
+              <Label htmlFor="invite-email-input">Invite by email</Label>
+              <Input
+                id="invite-email-input"
                 type="email"
                 placeholder="teammate@example.com"
                 value={email}
                 onChange={(event) => setEmail(event.target.value)}
                 required
               />
-            </label>
-            <label>
-              Role
-              <select value={role} onChange={(event) => setRole(event.target.value as Role)}>
-                {assignableRoles.map((candidate) => (
-                  <option key={candidate} value={candidate}>
-                    {candidate} — {ROLE_HINT[candidate]}
-                  </option>
-                ))}
-              </select>
-            </label>
-            <button className="primary" type="submit" disabled={busy}>
-              {busy ? "creating…" : "create invite"}
-            </button>
-          </div>
-        </form>
+            </div>
+            <div className="w-full space-y-2 sm:w-44">
+              <Label>Role</Label>
+              <Select value={role} onValueChange={(value) => setRole(value as Role)}>
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {assignableRoles.map((candidate) => (
+                    <SelectItem key={candidate} value={candidate}>
+                      {candidate}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <Button type="submit" disabled={busy}>
+              {busy ? <Loader2 className="size-4 animate-spin" /> : <UserPlus className="size-4" />}
+              create invite
+            </Button>
+          </form>
+        </Card>
       )}
 
-      <div className="card table-card">
-        <table>
-          <thead>
-            <tr>
-              <th>Name</th>
-              <th>Email</th>
-              <th>Role</th>
-              <th>Joined</th>
-              <th className="right">Actions</th>
-            </tr>
-          </thead>
-          <tbody>
-            {data.members.map((member) => {
-              const isSelf = member.userId === data.currentUserId;
-              const locked = !data.canManage || isSelf || (member.role === "owner" && !data.isOwner);
+      <Card className="overflow-hidden py-0">
+        <Table>
+          <TableHeader>
+            <TableRow>
+              <TableHead>Name</TableHead>
+              <TableHead>Email</TableHead>
+              <TableHead>Role</TableHead>
+              <TableHead>Joined</TableHead>
+              <TableHead className="text-right">Actions</TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {(data?.members ?? []).map((member) => {
+              const isSelf = member.userId === data?.currentUserId;
+              const locked =
+                !data?.canManage || isSelf || (member.role === "owner" && !data?.isOwner);
               return (
-                <tr key={member.userId}>
-                  <td>
-                    {member.name} {isSelf && <span className="pill">you</span>}
-                  </td>
-                  <td className="muted small">{member.email}</td>
-                  <td>
-                    {data.canManage ? (
-                      <select
-                        className="role-select"
+                <TableRow key={member.userId}>
+                  <TableCell>
+                    <span className="flex items-center gap-2">
+                      {member.name}
+                      {isSelf && <Badge variant="outline">you</Badge>}
+                    </span>
+                  </TableCell>
+                  <TableCell className="text-muted-foreground">{member.email}</TableCell>
+                  <TableCell>
+                    {data?.canManage ? (
+                      <Select
                         value={member.role}
                         disabled={locked}
-                        onChange={(event) => void changeRole(member, event.target.value as Role)}
+                        onValueChange={(value) => void changeRole(member, value as Role)}
                       >
-                        {assignableRoles.map((candidate) => (
-                          <option key={candidate} value={candidate}>
-                            {candidate}
-                          </option>
-                        ))}
-                      </select>
+                        <SelectTrigger className="h-8 w-32">
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {assignableRoles.map((candidate) => (
+                            <SelectItem key={candidate} value={candidate}>
+                              {candidate}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
                     ) : (
-                      <span className="pill">{member.role}</span>
+                      <Badge>{member.role}</Badge>
                     )}
-                  </td>
-                  <td className="muted small">{formatDate(member.createdAt)}</td>
-                  <td className="right actions">
-                    <button
-                      className="small danger"
+                  </TableCell>
+                  <TableCell className="text-xs text-muted-foreground">
+                    {formatDate(member.createdAt)}
+                  </TableCell>
+                  <TableCell className="text-right">
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      className={cn("text-destructive hover:text-destructive")}
                       disabled={locked}
                       onClick={() => void remove(member)}
                     >
                       remove
-                    </button>
-                  </td>
-                </tr>
+                    </Button>
+                  </TableCell>
+                </TableRow>
               );
             })}
-          </tbody>
-        </table>
-      </div>
+            {data && data.members.length === 0 && (
+              <TableRow>
+                <TableCell colSpan={5} className="py-8 text-center text-muted-foreground">
+                  No members.
+                </TableCell>
+              </TableRow>
+            )}
+          </TableBody>
+        </Table>
+      </Card>
 
-      {data.canManage && (
-        <div className="card table-card">
-          <table>
-            <thead>
-              <tr>
-                <th>Pending invite</th>
-                <th>Role</th>
-                <th>Invited by</th>
-                <th>Expires</th>
-                <th className="right">Actions</th>
-              </tr>
-            </thead>
-            <tbody>
+      {data?.canManage && (
+        <Card className="overflow-hidden py-0">
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead>Pending invite</TableHead>
+                <TableHead>Role</TableHead>
+                <TableHead>Invited by</TableHead>
+                <TableHead>Expires</TableHead>
+                <TableHead className="text-right">Actions</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
               {invites.map((invite) => (
-                <tr key={invite.id}>
-                  <td>{invite.email}</td>
-                  <td>
-                    <span className="pill">{invite.role}</span>
-                  </td>
-                  <td className="muted small">{invite.invitedByName}</td>
-                  <td className="muted small">{formatDate(invite.expiresAt)}</td>
-                  <td className="right actions">
-                    <button className="small danger" onClick={() => void revokeInvite(invite)}>
+                <TableRow key={invite.id}>
+                  <TableCell>{invite.email}</TableCell>
+                  <TableCell>
+                    <Badge>{invite.role}</Badge>
+                  </TableCell>
+                  <TableCell className="text-xs text-muted-foreground">
+                    {invite.invitedByName}
+                  </TableCell>
+                  <TableCell className="text-xs text-muted-foreground">
+                    {formatDate(invite.expiresAt)}
+                  </TableCell>
+                  <TableCell className="text-right">
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      className="text-destructive hover:text-destructive"
+                      onClick={() => void revokeInvite(invite)}
+                    >
                       revoke
-                    </button>
-                  </td>
-                </tr>
+                    </Button>
+                  </TableCell>
+                </TableRow>
               ))}
               {invites.length === 0 && (
-                <tr>
-                  <td colSpan={5} className="muted">
+                <TableRow>
+                  <TableCell colSpan={5} className="py-8 text-center text-muted-foreground">
                     No pending invites.
-                  </td>
-                </tr>
+                  </TableCell>
+                </TableRow>
               )}
-            </tbody>
-          </table>
-        </div>
+            </TableBody>
+          </Table>
+        </Card>
       )}
     </section>
   );

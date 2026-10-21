@@ -5,7 +5,37 @@ import type {
   SecretDto,
   SecretVersionDto,
 } from "@opensiel/shared";
+import {
+  Copy,
+  Eye,
+  EyeOff,
+  History,
+  Loader2,
+  Pencil,
+  Plus,
+  RefreshCw,
+  Search,
+  Trash2,
+  Upload,
+} from "lucide-react";
 import { api, errorMessage } from "../api";
+import { cn } from "../lib/utils";
+import { Badge } from "./ui/badge";
+import { Button } from "./ui/button";
+import { Card } from "./ui/card";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "./ui/dialog";
+import { Input } from "./ui/input";
+import { Label } from "./ui/label";
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "./ui/table";
+import { Textarea } from "./ui/textarea";
+import { Notice } from "./Notice";
 
 interface Props {
   project: ProjectDto;
@@ -72,6 +102,8 @@ export function SecretsView({ project, env }: Props) {
         row.value.toLowerCase().includes(needle),
     );
   }, [rows, query]);
+
+  const activeEnvironment = project.environments.find((environment) => environment.slug === env);
 
   function rowId(row: SecretDto) {
     return `${row.path}:${row.key}`;
@@ -231,317 +263,389 @@ export function SecretsView({ project, env }: Props) {
   }
 
   return (
-    <section className="view">
-      <div className="toolbar">
-        <input
-          className="search"
-          placeholder="search keys, paths, values…"
-          value={query}
-          onChange={(event) => setQuery(event.target.value)}
-        />
-        <div className="toolbar-actions">
-          <button onClick={() => void load()} disabled={loading}>
-            {loading ? "refreshing…" : "refresh"}
-          </button>
-          <button
+    <section className="space-y-4">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div className="relative w-full max-w-sm">
+          <Search className="text-muted-foreground absolute top-1/2 left-2.5 size-4 -translate-y-1/2" />
+          <Input
+            className="pl-8"
+            placeholder="Search keys, paths, values…"
+            value={query}
+            onChange={(event) => setQuery(event.target.value)}
+          />
+        </div>
+        <div className="flex flex-wrap items-center gap-2">
+          <Button variant="outline" size="sm" onClick={() => void load()} disabled={loading}>
+            <RefreshCw className={cn("size-4", loading && "animate-spin")} />
+            refresh
+          </Button>
+          <Button
+            variant="outline"
+            size="sm"
             onClick={() => {
               setImportOpen(true);
               setImportPreview(null);
             }}
           >
-            Import .env
-          </button>
-          <button
-            className="primary"
+            <Upload className="size-4" />
+            import .env
+          </Button>
+          <Button
+            size="sm"
             onClick={() => setEditor({ key: "", value: "", path: "/", comment: "", isNew: true })}
           >
-            New secret
-          </button>
+            <Plus className="size-4" />
+            new secret
+          </Button>
         </div>
       </div>
 
-      {project.environments.find((environment) => environment.slug === env)?.approvalRequired && (
-        <div className="banner info-banner">
-          Changes to <code>{env}</code> require{" "}
-          {project.environments.find((environment) => environment.slug === env)?.requiredApprovals}{" "}
-          approval(s) before they are applied.
-        </div>
+      {activeEnvironment?.approvalRequired && (
+        <Notice>
+          Changes to <code>{env}</code> require {activeEnvironment.requiredApprovals} approval(s)
+          before they are applied.
+        </Notice>
       )}
 
       {notice && (
-        <div className="banner info-banner">
+        <Notice tone="success" onDismiss={() => setNotice("")}>
           {notice}
-          <button className="link" onClick={() => setNotice("")}>
-            dismiss
-          </button>
-        </div>
+        </Notice>
       )}
       {error && (
-        <div className="banner error-banner">
+        <Notice tone="error" onDismiss={() => setError("")}>
           {error}
-          <button className="link" onClick={() => setError("")}>
-            dismiss
-          </button>
-        </div>
+        </Notice>
       )}
 
-      <div className="card table-card">
-        <table>
-          <thead>
-            <tr>
-              <th>Key</th>
-              <th>Value</th>
-              <th>Version</th>
-              <th>Updated</th>
-              <th className="right">Actions</th>
-            </tr>
-          </thead>
-          <tbody>
+      <Card className="overflow-hidden py-0">
+        <Table>
+          <TableHeader>
+            <TableRow>
+              <TableHead>Key</TableHead>
+              <TableHead>Value</TableHead>
+              <TableHead>Version</TableHead>
+              <TableHead>Updated</TableHead>
+              <TableHead className="text-right">Actions</TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
             {filtered.map((row) => {
               const id = rowId(row);
               const isRevealed = Boolean(revealed[id]);
               return (
-                <tr key={id}>
-                  <td>
-                    <code>{row.key}</code>
-                    {row.path !== "/" && <div className="muted small">{row.path}</div>}
-                    {row.importedFrom && (
-                      <span className="pill">imported from {row.importedFrom}</span>
+                <TableRow key={id}>
+                  <TableCell className="whitespace-normal">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <code className="bg-transparent p-0 text-sm">{row.key}</code>
+                      {row.importedFrom && (
+                        <Badge variant="outline">from {row.importedFrom}</Badge>
+                      )}
+                    </div>
+                    {row.path !== "/" && (
+                      <div className="text-xs text-muted-foreground">{row.path}</div>
                     )}
-                  </td>
-                  <td className="value-cell">
-                    <span className={isRevealed ? "value" : "value masked"}>
-                      {isRevealed ? row.value : "••••••••••••"}
-                    </span>
-                    <button
-                      className="icon"
-                      title={isRevealed ? "hide" : "reveal"}
-                      onClick={() =>
-                        setRevealed((current) => ({ ...current, [id]: !current[id] }))
-                      }
-                    >
-                      {isRevealed ? "◉" : "◎"}
-                    </button>
-                    <button className="icon" title="copy" onClick={() => void copy(row.value)}>
-                      ⧉
-                    </button>
-                  </td>
-                  <td>
-                    <span className="pill">v{row.version}</span>
-                  </td>
-                  <td className="muted small">{formatDate(row.updatedAt)}</td>
-                  <td className="right actions">
-                    <button
-                      className="small"
-                      onClick={() =>
-                        setEditor({
-                          key: row.key,
-                          value: row.value,
-                          path: row.path,
-                          comment: "",
-                          isNew: false,
-                        })
-                      }
-                    >
-                      edit
-                    </button>
-                    <button className="small" onClick={() => void openHistory(row)}>
-                      history
-                    </button>
-                    <button className="small danger" onClick={() => void remove(row)}>
-                      delete
-                    </button>
-                  </td>
-                </tr>
+                  </TableCell>
+                  <TableCell>
+                    <div className="flex items-center gap-1">
+                      <span
+                        className={cn(
+                          "font-mono text-xs",
+                          !isRevealed && "tracking-widest text-muted-foreground",
+                        )}
+                      >
+                        {isRevealed ? row.value : "••••••••••••"}
+                      </span>
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className="size-7"
+                        title={isRevealed ? "hide" : "reveal"}
+                        onClick={() =>
+                          setRevealed((current) => ({ ...current, [id]: !current[id] }))
+                        }
+                      >
+                        {isRevealed ? <EyeOff className="size-3.5" /> : <Eye className="size-3.5" />}
+                      </Button>
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className="size-7"
+                        title="copy"
+                        onClick={() => void copy(row.value)}
+                      >
+                        <Copy className="size-3.5" />
+                      </Button>
+                    </div>
+                  </TableCell>
+                  <TableCell>
+                    <Badge variant="outline">v{row.version}</Badge>
+                  </TableCell>
+                  <TableCell className="text-xs text-muted-foreground">
+                    {formatDate(row.updatedAt)}
+                  </TableCell>
+                  <TableCell className="text-right">
+                    <div className="flex justify-end gap-1">
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={() =>
+                          setEditor({
+                            key: row.key,
+                            value: row.value,
+                            path: row.path,
+                            comment: "",
+                            isNew: false,
+                          })
+                        }
+                      >
+                        <Pencil className="size-3.5" /> edit
+                      </Button>
+                      <Button variant="ghost" size="sm" onClick={() => void openHistory(row)}>
+                        <History className="size-3.5" /> history
+                      </Button>
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        className="text-destructive hover:text-destructive"
+                        onClick={() => void remove(row)}
+                      >
+                        <Trash2 className="size-3.5" /> delete
+                      </Button>
+                    </div>
+                  </TableCell>
+                </TableRow>
               );
             })}
             {filtered.length === 0 && (
-              <tr>
-                <td colSpan={5} className="muted">
+              <TableRow>
+                <TableCell colSpan={5} className="py-10 text-center text-sm text-muted-foreground">
                   {rows.length === 0 ? `No secrets in ${env} yet.` : "No matches."}
-                </td>
-              </tr>
+                </TableCell>
+              </TableRow>
             )}
-          </tbody>
-        </table>
-      </div>
+          </TableBody>
+        </Table>
+      </Card>
 
-      {editor && (
-        <div className="overlay" onClick={() => setEditor(null)}>
-          <form className="modal" onClick={(event) => event.stopPropagation()} onSubmit={save}>
-            <h2>{editor.isNew ? "New secret" : `Edit ${editor.key}`}</h2>
-            <p className="muted small">
-              Writing creates a new immutable version in <code>{env}</code>.
-            </p>
+      <Dialog
+        open={Boolean(editor)}
+        onOpenChange={(open) => {
+          if (!open) setEditor(null);
+        }}
+      >
+        <DialogContent>
+          {editor && (
+            <form className="space-y-4" onSubmit={save}>
+              <DialogHeader>
+                <DialogTitle>{editor.isNew ? "New secret" : `Edit ${editor.key}`}</DialogTitle>
+                <DialogDescription>
+                  Writing creates a new immutable version in <code>{env}</code>.
+                </DialogDescription>
+              </DialogHeader>
 
-            <label>
-              Key
-              <input
-                autoFocus
-                value={editor.key}
-                disabled={!editor.isNew}
-                onChange={(event) => setEditor({ ...editor, key: event.target.value })}
-                placeholder="DATABASE_URL"
-                required
-              />
-            </label>
-
-            <label>
-              Value
-              <textarea
-                rows={6}
-                value={editor.value}
-                onChange={(event) => setEditor({ ...editor, value: event.target.value })}
-                placeholder="postgres://…"
-                required
-              />
-            </label>
-
-            <div className="grid-2">
-              <label>
-                Folder path
-                <input
-                  value={editor.path}
-                  onChange={(event) => setEditor({ ...editor, path: event.target.value })}
-                  placeholder="/"
+              <div className="space-y-2">
+                <Label htmlFor="secret-key">Key</Label>
+                <Input
+                  id="secret-key"
+                  autoFocus
+                  value={editor.key}
+                  disabled={!editor.isNew}
+                  placeholder="DATABASE_URL"
+                  onChange={(event) => setEditor({ ...editor, key: event.target.value })}
+                  required
                 />
-              </label>
-              <label>
-                Comment <span className="muted small">(optional)</span>
-                <input
-                  value={editor.comment}
-                  onChange={(event) => setEditor({ ...editor, comment: event.target.value })}
-                  placeholder="rotated by hand"
+              </div>
+
+              <div className="space-y-2">
+                <Label htmlFor="secret-value">Value</Label>
+                <Textarea
+                  id="secret-value"
+                  rows={6}
+                  value={editor.value}
+                  placeholder="postgres://…"
+                  onChange={(event) => setEditor({ ...editor, value: event.target.value })}
+                  required
                 />
-              </label>
-            </div>
+              </div>
 
-            <div className="modal-actions">
-              <button type="button" onClick={() => setEditor(null)}>
-                cancel
-              </button>
-              <button className="primary" type="submit" disabled={busy}>
-                {busy ? "saving…" : "save version"}
-              </button>
-            </div>
-          </form>
-        </div>
-      )}
-
-      {history && (
-        <div className="overlay" onClick={() => setHistory(null)}>
-          <div className="modal" onClick={(event) => event.stopPropagation()}>
-            <h2>
-              History · <code>{history.key}</code>
-            </h2>
-            <p className="muted small">
-              {history.path} · {env}
-            </p>
-            <div className="history-list">
-              {history.versions.map((version) => (
-                <div key={version.version} className="history-row">
-                  <div>
-                    <span className="pill">v{version.version}</span>{" "}
-                    {version.current && <span className="pill current">current</span>}
-                    <div className="muted small">{formatDate(version.createdAt)}</div>
-                  </div>
-                  <div className="muted small">
-                    {version.comment ?? "—"} · by {version.createdByType}
-                  </div>
-                  <button
-                    className="small"
-                    disabled={version.current}
-                    onClick={() => void rollback(version.version)}
-                  >
-                    rollback
-                  </button>
+              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                <div className="space-y-2">
+                  <Label htmlFor="secret-path">Folder path</Label>
+                  <Input
+                    id="secret-path"
+                    value={editor.path}
+                    placeholder="/"
+                    onChange={(event) => setEditor({ ...editor, path: event.target.value })}
+                  />
                 </div>
-              ))}
-            </div>
-            <div className="modal-actions">
-              <button type="button" onClick={() => setHistory(null)}>
-                close
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
+                <div className="space-y-2">
+                  <Label htmlFor="secret-comment">
+                    Comment{" "}
+                    <span className="font-normal text-muted-foreground">(optional)</span>
+                  </Label>
+                  <Input
+                    id="secret-comment"
+                    value={editor.comment}
+                    placeholder="rotated by hand"
+                    onChange={(event) => setEditor({ ...editor, comment: event.target.value })}
+                  />
+                </div>
+              </div>
 
-      {importOpen && (
-        <div className="overlay" onClick={() => setImportOpen(false)}>
-          <div className="modal" onClick={(event) => event.stopPropagation()}>
-            <h2>Import secrets</h2>
-            <p className="muted small">
+              <DialogFooter>
+                <Button type="button" variant="outline" onClick={() => setEditor(null)}>
+                  cancel
+                </Button>
+                <Button type="submit" disabled={busy}>
+                  {busy && <Loader2 className="size-4 animate-spin" />}
+                  {busy ? "saving…" : "save version"}
+                </Button>
+              </DialogFooter>
+            </form>
+          )}
+        </DialogContent>
+      </Dialog>
+
+      <Dialog
+        open={Boolean(history)}
+        onOpenChange={(open) => {
+          if (!open) setHistory(null);
+        }}
+      >
+        <DialogContent>
+          {history && (
+            <>
+              <DialogHeader>
+                <DialogTitle>
+                  History · <code>{history.key}</code>
+                </DialogTitle>
+                <DialogDescription>
+                  {history.path} · {env}
+                </DialogDescription>
+              </DialogHeader>
+
+              <div className="space-y-2">
+                {history.versions.map((version) => (
+                  <div
+                    key={version.version}
+                    className="flex items-center justify-between gap-3 rounded-lg border px-3 py-2"
+                  >
+                    <div>
+                      <div className="flex items-center gap-2">
+                        <Badge variant="outline">v{version.version}</Badge>
+                        {version.current && <Badge>current</Badge>}
+                      </div>
+                      <div className="mt-1 text-xs text-muted-foreground">
+                        {formatDate(version.createdAt)} · {version.comment ?? "—"} · by{" "}
+                        {version.createdByType}
+                      </div>
+                    </div>
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      disabled={version.current}
+                      onClick={() => void rollback(version.version)}
+                    >
+                      rollback
+                    </Button>
+                  </div>
+                ))}
+              </div>
+
+              <DialogFooter>
+                <Button variant="outline" onClick={() => setHistory(null)}>
+                  close
+                </Button>
+              </DialogFooter>
+            </>
+          )}
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={importOpen} onOpenChange={setImportOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Import secrets</DialogTitle>
+            <DialogDescription>
               Paste a .env file or choose one. Supports comments, <code>export KEY=…</code>, and
               quoted values. Existing keys get a new version.
-            </p>
+            </DialogDescription>
+          </DialogHeader>
 
-            <label>
-              Choose a file
-              <input type="file" accept=".env,text/plain" onChange={(event) => void readImportFile(event)} />
-            </label>
+          <div className="space-y-2">
+            <Label htmlFor="import-file">Choose a file</Label>
+            <Input
+              id="import-file"
+              type="file"
+              accept=".env,text/plain"
+              onChange={(event) => void readImportFile(event)}
+            />
+          </div>
 
-            <label>
-              Paste .env
-              <textarea
-                rows={10}
-                value={importText}
-                onChange={(event) => {
-                  setImportText(event.target.value);
-                  setImportPreview(null);
-                }}
-                placeholder={"# comment\nDATABASE_URL=postgres://user:pass@host/db\nAPI_KEY=\"quoted value\"\nexport DEBUG=true"}
+          <div className="space-y-2">
+            <Label htmlFor="import-text">Paste .env</Label>
+            <Textarea
+              id="import-text"
+              rows={10}
+              value={importText}
+              onChange={(event) => {
+                setImportText(event.target.value);
+                setImportPreview(null);
+              }}
+              placeholder={
+                "# comment\nDATABASE_URL=postgres://user:pass@host/db\nAPI_KEY=\"quoted value\"\nexport DEBUG=true"
+              }
+            />
+          </div>
+
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+            <div className="space-y-2">
+              <Label htmlFor="import-path">Folder path</Label>
+              <Input
+                id="import-path"
+                value={importPath}
+                placeholder="/"
+                onChange={(event) => setImportPath(event.target.value)}
               />
-            </label>
-
-            <div className="grid-2">
-              <label>
-                Folder path
-                <input
-                  value={importPath}
-                  onChange={(event) => setImportPath(event.target.value)}
-                  placeholder="/"
-                />
-              </label>
-              <label>
-                Comment <span className="muted small">(optional)</span>
-                <input
-                  value={importComment}
-                  onChange={(event) => setImportComment(event.target.value)}
-                  placeholder="bulk import"
-                />
-              </label>
             </div>
-
-            {importPreview && (
-              <p className="muted small">
-                {importPreview.length} key(s): {importPreview.join(", ")}
-              </p>
-            )}
-
-            <div className="modal-actions">
-              <button type="button" onClick={() => setImportOpen(false)}>
-                cancel
-              </button>
-              <button type="button" onClick={() => void previewImport()} disabled={importBusy}>
-                preview
-              </button>
-              <button
-                className="primary"
-                type="button"
-                onClick={() => void runImport()}
-                disabled={importBusy || !importText.trim()}
-              >
-                {importBusy
-                  ? "working…"
-                  : importPreview
-                    ? `import ${importPreview.length} secrets`
-                    : "import"}
-              </button>
+            <div className="space-y-2">
+              <Label htmlFor="import-comment">
+                Comment <span className="font-normal text-muted-foreground">(optional)</span>
+              </Label>
+              <Input
+                id="import-comment"
+                value={importComment}
+                placeholder="bulk import"
+                onChange={(event) => setImportComment(event.target.value)}
+              />
             </div>
           </div>
-        </div>
-      )}
+
+          {importPreview && (
+            <p className="text-xs text-muted-foreground">
+              {importPreview.length} key(s): {importPreview.join(", ")}
+            </p>
+          )}
+
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setImportOpen(false)}>
+              cancel
+            </Button>
+            <Button variant="outline" onClick={() => void previewImport()} disabled={importBusy}>
+              preview
+            </Button>
+            <Button onClick={() => void runImport()} disabled={importBusy || !importText.trim()}>
+              {importBusy && <Loader2 className="size-4 animate-spin" />}
+              {importBusy
+                ? "working…"
+                : importPreview
+                  ? `import ${importPreview.length} secrets`
+                  : "import"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </section>
   );
 }

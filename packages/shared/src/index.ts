@@ -83,6 +83,27 @@ export interface ImportSecretsResult {
   imported: { key: string; version: number }[];
 }
 
+export const scanSchema = z.object({
+  contents: z.string().min(1).max(256_000),
+});
+export type ScanInput = z.infer<typeof scanSchema>;
+
+export interface ScanFinding {
+  type: "stored-secret" | "pattern";
+  name: string;
+  environment?: string;
+  path?: string;
+  line: number;
+  preview: string;
+}
+
+export interface ScanResult {
+  findings: ScanFinding[];
+  characters: number;
+  scannedEnvironments: number;
+  scannedSecrets: number;
+}
+
 export const createIdentitySchema = z.object({
   name: nameSchema,
   role: identityRoleSchema.default("viewer"),

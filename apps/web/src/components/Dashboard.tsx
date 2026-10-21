@@ -1,13 +1,29 @@
 import { useCallback, useEffect, useState } from "react";
 import type { ProjectDto, UserDto } from "@opensiel/shared";
+import { Diamond, FolderPlus, Loader2, LogOut, Plus } from "lucide-react";
 import { api, errorMessage } from "../api";
+import { cn } from "../lib/utils";
+import { Button } from "./ui/button";
+import { Input } from "./ui/input";
+import { Notice } from "./Notice";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "./ui/tabs";
 import { SecretsView } from "./SecretsView";
+import { ScanView } from "./ScanView";
 import { MembersView } from "./MembersView";
 import { ApprovalsView } from "./ApprovalsView";
 import { IdentitiesView } from "./IdentitiesView";
 import { AuditView } from "./AuditView";
 
-type Tab = "secrets" | "approvals" | "members" | "identities" | "audit";
+type Tab = "secrets" | "scan" | "approvals" | "members" | "identities" | "audit";
+
+const TABS: { value: Tab; label: string }[] = [
+  { value: "secrets", label: "Secrets" },
+  { value: "scan", label: "Scan" },
+  { value: "approvals", label: "Approvals" },
+  { value: "members", label: "Members" },
+  { value: "identities", label: "Identities" },
+  { value: "audit", label: "Audit" },
+];
 
 export function Dashboard({ user, onSignedOut }: { user: UserDto; onSignedOut: () => void }) {
   const [projects, setProjects] = useState<ProjectDto[]>([]);
@@ -17,6 +33,7 @@ export function Dashboard({ user, onSignedOut }: { user: UserDto; onSignedOut: (
   const [error, setError] = useState("");
   const [creating, setCreating] = useState(false);
   const [newProjectName, setNewProjectName] = useState("");
+  const [loading, setLoading] = useState(true);
 
   const loadProjects = useCallback(async () => {
     try {
@@ -26,8 +43,11 @@ export function Dashboard({ user, onSignedOut }: { user: UserDto; onSignedOut: (
         if (current && result.projects.some((project) => project.id === current)) return current;
         return result.projects[0]?.id ?? "";
       });
+      setError("");
     } catch (err) {
       setError(errorMessage(err));
+    } finally {
+      setLoading(false);
     }
   }, []);
 
@@ -69,120 +89,161 @@ export function Dashboard({ user, onSignedOut }: { user: UserDto; onSignedOut: (
   }
 
   return (
-    <div className="shell">
-      <aside className="sidebar">
-        <div className="brand">
-          <span className="brand-mark">◈</span> opensiel
+    <div className="grid min-h-full md:grid-cols-[264px_1fr]">
+      <aside className="flex flex-col gap-6 border-b bg-sidebar p-5 md:border-r md:border-b-0">
+        <div className="flex items-center gap-2 text-lg font-semibold tracking-tight">
+          <Diamond className="size-5 text-primary" />
+          opensiel
         </div>
 
-        <div className="sidebar-section">
-          <div className="sidebar-heading">
-            Projects
-            <button className="icon" title="New project" onClick={() => setCreating((value) => !value)}>
-              +
-            </button>
+        <div className="flex-1 space-y-3">
+          <div className="flex items-center justify-between">
+            <span className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
+              Projects
+            </span>
+            <Button
+              variant="ghost"
+              size="icon"
+              className="size-7"
+              title="New project"
+              onClick={() => setCreating((value) => !value)}
+            >
+              <Plus className="size-4" />
+            </Button>
           </div>
 
           {creating && (
-            <form className="inline-form" onSubmit={createProject}>
-              <input
+            <form className="flex gap-2" onSubmit={createProject}>
+              <Input
                 autoFocus
                 placeholder="project name"
                 value={newProjectName}
                 onChange={(event) => setNewProjectName(event.target.value)}
+                className="h-8"
               />
-              <button className="small primary" type="submit">
+              <Button size="sm" type="submit">
                 add
-              </button>
+              </Button>
             </form>
           )}
 
-          <nav className="project-list">
+          <nav className="space-y-1">
             {projects.map((candidate) => (
-              <button
+              <Button
                 key={candidate.id}
-                className={`project ${candidate.id === projectId ? "active" : ""}`}
+                variant={candidate.id === projectId ? "secondary" : "ghost"}
+                className={cn(
+                  "h-auto w-full justify-between px-3 py-2 font-normal",
+                  candidate.id === projectId && "font-medium",
+                )}
                 onClick={() => setProjectId(candidate.id)}
               >
-                <span>{candidate.name}</span>
-                <span className="muted small">{candidate.environments.length} env</span>
-              </button>
+                <span className="truncate">{candidate.name}</span>
+                <span className="text-xs text-muted-foreground">
+                  {candidate.environments.length}
+                </span>
+              </Button>
             ))}
-            {projects.length === 0 && <p className="muted small">No projects yet.</p>}
+            {projects.length === 0 && !loading && (
+              <p className="px-3 text-sm text-muted-foreground">No projects yet.</p>
+            )}
+            {loading && (
+              <p className="flex items-center gap-2 px-3 text-sm text-muted-foreground">
+                <Loader2 className="size-3.5 animate-spin" /> loading…
+              </p>
+            )}
           </nav>
         </div>
 
-        <div className="sidebar-footer">
-          <div className="muted small">{user.email}</div>
-          <button className="link" onClick={signOut}>
-            sign out
-          </button>
+        <div className="space-y-2 border-t pt-4">
+          <p className="truncate text-xs text-muted-foreground">{user.email}</p>
+          <Button
+            variant="ghost"
+            size="sm"
+            className="h-auto px-0 py-0 text-xs text-muted-foreground hover:bg-transparent hover:text-foreground"
+            onClick={signOut}
+          >
+            <LogOut className="size-3.5" /> sign out
+          </Button>
         </div>
       </aside>
 
-      <main className="main">
+      <main className="flex min-w-0 flex-col gap-6 p-6">
         {error && (
-          <div className="banner error-banner">
+          <Notice tone="error" onDismiss={() => setError("")}>
             {error}
-            <button className="link" onClick={() => setError("")}>
-              dismiss
-            </button>
-          </div>
+          </Notice>
         )}
 
         {!project ? (
-          <div className="empty">
-            <h2>No project selected</h2>
-            <p className="muted">Create a project to start storing secrets.</p>
+          <div className="grid flex-1 place-items-center py-20 text-center">
+            <div className="space-y-3">
+              <FolderPlus className="mx-auto size-10 text-muted-foreground" />
+              <h2 className="text-lg font-semibold">No project selected</h2>
+              <p className="text-sm text-muted-foreground">
+                Create a project to start storing secrets.
+              </p>
+            </div>
           </div>
         ) : (
           <>
-            <header className="topbar">
-              <div>
-                <h1>{project.name}</h1>
-                <p className="muted small">
+            <header className="flex flex-wrap items-end justify-between gap-4">
+              <div className="space-y-1">
+                <h1 className="text-xl font-semibold tracking-tight">{project.name}</h1>
+                <p className="text-sm text-muted-foreground">
                   {project.slug} · {project.environments.length} environments
                 </p>
               </div>
-              <div className="env-tabs">
+              <div className="flex flex-wrap items-center gap-2">
                 {project.environments
                   .slice()
                   .sort((a, b) => a.position - b.position)
                   .map((environment) => (
-                    <button
+                    <Button
                       key={environment.id}
-                      className={`env ${environment.slug === env ? "active" : ""}`}
+                      size="sm"
+                      variant={environment.slug === env ? "default" : "outline"}
+                      className="font-mono"
                       onClick={() => setEnv(environment.slug)}
                     >
                       {environment.slug}
-                    </button>
+                    </Button>
                   ))}
               </div>
             </header>
 
-            <div className="tabs">
-              {(["secrets", "approvals", "members", "identities", "audit"] as Tab[]).map((candidate) => (
-                <button
-                  key={candidate}
-                  className={`tab ${tab === candidate ? "active" : ""}`}
-                  onClick={() => setTab(candidate)}
-                >
-                  {candidate}
-                </button>
-              ))}
-            </div>
+            <Tabs value={tab} onValueChange={(value) => setTab(value as Tab)}>
+              <TabsList>
+                {TABS.map((entry) => (
+                  <TabsTrigger key={entry.value} value={entry.value}>
+                    {entry.label}
+                  </TabsTrigger>
+                ))}
+              </TabsList>
 
-            {tab === "secrets" && <SecretsView project={project} env={env} />}
-            {tab === "approvals" && (
-              <ApprovalsView
-                project={project}
-                currentUserId={user.id}
-                canApprove={user.role === "owner" || user.role === "admin"}
-              />
-            )}
-            {tab === "members" && <MembersView />}
-            {tab === "identities" && <IdentitiesView project={project} />}
-            {tab === "audit" && <AuditView project={project} />}
+              <TabsContent value="secrets">
+                <SecretsView project={project} env={env} />
+              </TabsContent>
+              <TabsContent value="scan">
+                <ScanView project={project} />
+              </TabsContent>
+              <TabsContent value="approvals">
+                <ApprovalsView
+                  project={project}
+                  currentUserId={user.id}
+                  canApprove={user.role === "owner" || user.role === "admin"}
+                />
+              </TabsContent>
+              <TabsContent value="members">
+                <MembersView />
+              </TabsContent>
+              <TabsContent value="identities">
+                <IdentitiesView project={project} />
+              </TabsContent>
+              <TabsContent value="audit">
+                <AuditView project={project} />
+              </TabsContent>
+            </Tabs>
           </>
         )}
       </main>

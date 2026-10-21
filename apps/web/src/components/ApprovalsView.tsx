@@ -6,7 +6,17 @@ import type {
   EnvironmentImportDto,
   ProjectDto,
 } from "@opensiel/shared";
+import { Check, Loader2, RefreshCw, X } from "lucide-react";
 import { api, errorMessage } from "../api";
+import { cn } from "../lib/utils";
+import { Badge } from "./ui/badge";
+import { Button } from "./ui/button";
+import { Card } from "./ui/card";
+import { Checkbox } from "./ui/checkbox";
+import { Input } from "./ui/input";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "./ui/select";
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "./ui/table";
+import { Notice } from "./Notice";
 
 interface Props {
   project: ProjectDto;
@@ -14,7 +24,20 @@ interface Props {
   canApprove: boolean;
 }
 
-const STATUS_FILTERS: (ChangeRequestStatus | "all")[] = ["pending", "all", "approved", "rejected", "cancelled"];
+const STATUS_FILTERS: (ChangeRequestStatus | "all")[] = [
+  "pending",
+  "all",
+  "approved",
+  "rejected",
+  "cancelled",
+];
+
+function statusVariant(status: ChangeRequestStatus) {
+  if (status === "approved") return "success" as const;
+  if (status === "rejected") return "destructive" as const;
+  if (status === "cancelled") return "outline" as const;
+  return "secondary" as const;
+}
 
 export function ApprovalsView({ project, currentUserId, canApprove }: Props) {
   const [requests, setRequests] = useState<ChangeRequestDto[]>([]);
@@ -98,7 +121,10 @@ export function ApprovalsView({ project, currentUserId, canApprove }: Props) {
     }
   }
 
-  async function savePolicy(environment: EnvironmentDto, next: { approvalRequired: boolean; requiredApprovals: number }) {
+  async function savePolicy(
+    environment: EnvironmentDto,
+    next: { approvalRequired: boolean; requiredApprovals: number },
+  ) {
     try {
       const result = await api.patch<{ environment: EnvironmentDto }>(
         `/api/projects/${project.id}/environments/${environment.id}/policy`,
@@ -106,9 +132,7 @@ export function ApprovalsView({ project, currentUserId, canApprove }: Props) {
       );
       setEnvs((current) =>
         current.map((candidate) =>
-          candidate.id === environment.id
-            ? { ...candidate, ...result.environment }
-            : candidate,
+          candidate.id === environment.id ? { ...candidate, ...result.environment } : candidate,
         ),
       );
       setNotice(`policy updated for ${environment.slug}`);
@@ -141,198 +165,215 @@ export function ApprovalsView({ project, currentUserId, canApprove }: Props) {
   }
 
   return (
-    <section className="view">
-      <div className="toolbar">
+    <section className="space-y-4">
+      <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
-          <h2>Approvals</h2>
-          <p className="muted small">
-            Changes to environments with approval enabled are applied only after the required
-            number of approvals.
+          <h2 className="text-lg font-semibold">Approvals</h2>
+          <p className="text-sm text-muted-foreground">
+            Changes to approval-enabled environments apply only after the required number of
+            approvals.
           </p>
         </div>
-        <div className="toolbar-actions">
-          <select
+        <div className="flex items-center gap-2">
+          <Select
             value={filter}
-            onChange={(event) => setFilter(event.target.value as ChangeRequestStatus | "all")}
+            onValueChange={(value) => setFilter(value as ChangeRequestStatus | "all")}
           >
-            {STATUS_FILTERS.map((status) => (
-              <option key={status} value={status}>
-                {status}
-              </option>
-            ))}
-          </select>
-          <button onClick={() => void load()}>refresh</button>
+            <SelectTrigger className="h-8 w-36">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              {STATUS_FILTERS.map((status) => (
+                <SelectItem key={status} value={status}>
+                  {status}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+          <Button variant="outline" size="sm" onClick={() => void load()}>
+            <RefreshCw className="size-4" /> refresh
+          </Button>
         </div>
       </div>
 
       {notice && (
-        <div className="banner info-banner">
+        <Notice tone="success" onDismiss={() => setNotice("")}>
           {notice}
-          <button className="link" onClick={() => setNotice("")}>
-            dismiss
-          </button>
-        </div>
+        </Notice>
       )}
       {error && (
-        <div className="banner error-banner">
+        <Notice tone="error" onDismiss={() => setError("")}>
           {error}
-          <button className="link" onClick={() => setError("")}>
-            dismiss
-          </button>
-        </div>
+        </Notice>
       )}
 
       {canApprove && (
         <>
-          <p className="muted small">
-            Enable approvals per environment. Changes then need the configured number of
-            approvals from owners or admins.
-          </p>
-          <div className="card table-card">
-            <table>
-              <thead>
-                <tr>
-                  <th>Environment</th>
-                  <th>Require approval</th>
-                  <th>Approvals needed</th>
-                  <th className="right">Actions</th>
-                </tr>
-              </thead>
-              <tbody>
-                {envs.map((environment) => (
-                  <PolicyRow
-                    key={environment.id}
-                    environment={environment}
-                    onSave={(next) => void savePolicy(environment, next)}
-                  />
-                ))}
-              </tbody>
-            </table>
+          <div className="space-y-2">
+            <h3 className="text-sm font-medium">Environment policies</h3>
+            <p className="text-xs text-muted-foreground">
+              Enable approvals per environment and choose how many approvals are required.
+            </p>
+            <Card className="overflow-hidden py-0">
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Environment</TableHead>
+                    <TableHead>Require approval</TableHead>
+                    <TableHead>Approvals needed</TableHead>
+                    <TableHead className="text-right">Actions</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {envs.map((environment) => (
+                    <PolicyRow
+                      key={environment.id}
+                      environment={environment}
+                      onSave={(next) => void savePolicy(environment, next)}
+                    />
+                  ))}
+                </TableBody>
+              </Table>
+            </Card>
           </div>
 
-          <p className="muted small">
-            Environment imports merge another environment&apos;s secrets at read time. Values
-            defined in the environment itself win over imported ones.
-          </p>
-          <div className="card table-card">
-            <table>
-              <thead>
-                <tr>
-                  <th>Environment</th>
-                  <th>Imports from</th>
-                  <th className="right">Actions</th>
-                </tr>
-              </thead>
-              <tbody>
-                {envs.map((environment) => (
-                  <ImportRow
-                    key={environment.id}
-                    environment={environment}
-                    options={envs.filter((candidate) => candidate.id !== environment.id)}
-                    current={imports[environment.id] ?? null}
-                    onSave={(sourceId) => void saveImport(environment, sourceId)}
-                  />
-                ))}
-              </tbody>
-            </table>
+          <div className="space-y-2">
+            <h3 className="text-sm font-medium">Environment imports</h3>
+            <p className="text-xs text-muted-foreground">
+              Merge another environment&apos;s secrets at read time. Values defined in the
+              environment itself win.
+            </p>
+            <Card className="overflow-hidden py-0">
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Environment</TableHead>
+                    <TableHead>Imports from</TableHead>
+                    <TableHead className="text-right">Actions</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {envs.map((environment) => (
+                    <ImportRow
+                      key={environment.id}
+                      environment={environment}
+                      options={envs.filter((candidate) => candidate.id !== environment.id)}
+                      current={imports[environment.id] ?? null}
+                      onSave={(sourceId) => void saveImport(environment, sourceId)}
+                    />
+                  ))}
+                </TableBody>
+              </Table>
+            </Card>
           </div>
         </>
       )}
 
-      <div className="card table-card">
-        <table>
-          <thead>
-            <tr>
-              <th>Environment</th>
-              <th>Change</th>
-              <th>Requested by</th>
-              <th>Approvals</th>
-              <th>Status</th>
-              <th className="right">Actions</th>
-            </tr>
-          </thead>
-          <tbody>
-            {requests.map((request) => {
-              const isOwn = request.requestedById === currentUserId;
-              const pending = request.status === "pending";
-              return (
-                <tr key={request.id}>
-                  <td>
-                    <span className="pill">{request.environmentSlug}</span>
-                  </td>
-                  <td>
-                    <code>{request.action}</code> <strong>{request.key}</strong>
-                    {request.path !== "/" && <div className="muted small">{request.path}</div>}
-                    {request.comment && <div className="muted small">{request.comment}</div>}
-                    {request.targetVersion !== null && (
-                      <div className="muted small">target v{request.targetVersion}</div>
-                    )}
-                  </td>
-                  <td>
-                    {request.requestedByName}
-                    <div className="muted small">{request.requestedByType}</div>
-                  </td>
-                  <td>
-                    <span className="pill">
-                      {request.approvals}/{request.requiredApprovals}
-                    </span>
-                    {request.approvedBy.length > 0 && (
-                      <div className="muted small">{request.approvedBy.join(", ")}</div>
-                    )}
-                  </td>
-                  <td>
-                    <span
-                      className={`pill ${
-                        request.status === "approved"
-                          ? "ok"
-                          : request.status === "rejected"
-                            ? "danger"
-                            : ""
-                      }`}
-                    >
-                      {request.status}
-                    </span>
-                  </td>
-                  <td className="right actions">
-                    {pending && canApprove && !isOwn && (
-                      <>
-                        <button
-                          className="small primary"
-                          disabled={busy}
-                          onClick={() => void decide(request, "approve")}
-                        >
-                          approve
-                        </button>
-                        <button
-                          className="small danger"
-                          disabled={busy}
-                          onClick={() => void decide(request, "reject")}
-                        >
-                          reject
-                        </button>
-                      </>
-                    )}
-                    {pending && (isOwn || canApprove) && (
-                      <button className="small" onClick={() => void cancel(request)}>
-                        cancel
-                      </button>
-                    )}
-                    {!pending && request.decisionNote && (
-                      <span className="muted small">{request.decisionNote}</span>
-                    )}
-                  </td>
-                </tr>
-              );
-            })}
-            {requests.length === 0 && (
-              <tr>
-                <td colSpan={6} className="muted">
-                  No change requests.
-                </td>
-              </tr>
-            )}
-          </tbody>
-        </table>
+      <div className="space-y-2">
+        <h3 className="text-sm font-medium">Change requests</h3>
+        <Card className="overflow-hidden py-0">
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead>Environment</TableHead>
+                <TableHead>Change</TableHead>
+                <TableHead>Requested by</TableHead>
+                <TableHead>Approvals</TableHead>
+                <TableHead>Status</TableHead>
+                <TableHead className="text-right">Actions</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {requests.map((request) => {
+                const isOwn = request.requestedById === currentUserId;
+                const pending = request.status === "pending";
+                return (
+                  <TableRow key={request.id}>
+                    <TableCell>
+                      <Badge variant="outline">{request.environmentSlug}</Badge>
+                    </TableCell>
+                    <TableCell className="whitespace-normal">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <code className="bg-transparent p-0">{request.action}</code>
+                        <span className="font-medium">{request.key}</span>
+                      </div>
+                      {request.path !== "/" && (
+                        <div className="text-xs text-muted-foreground">{request.path}</div>
+                      )}
+                      {request.comment && (
+                        <div className="text-xs text-muted-foreground">{request.comment}</div>
+                      )}
+                      {request.targetVersion !== null && (
+                        <div className="text-xs text-muted-foreground">
+                          target v{request.targetVersion}
+                        </div>
+                      )}
+                    </TableCell>
+                    <TableCell>
+                      {request.requestedByName}
+                      <div className="text-xs text-muted-foreground">
+                        {request.requestedByType}
+                      </div>
+                    </TableCell>
+                    <TableCell>
+                      <Badge variant="outline">
+                        {request.approvals}/{request.requiredApprovals}
+                      </Badge>
+                      {request.approvedBy.length > 0 && (
+                        <div className="text-xs text-muted-foreground">
+                          {request.approvedBy.join(", ")}
+                        </div>
+                      )}
+                    </TableCell>
+                    <TableCell>
+                      <Badge variant={statusVariant(request.status)}>{request.status}</Badge>
+                    </TableCell>
+                    <TableCell className="text-right">
+                      <div className="flex justify-end gap-1">
+                        {pending && canApprove && !isOwn && (
+                          <>
+                            <Button
+                              size="sm"
+                              disabled={busy}
+                              onClick={() => void decide(request, "approve")}
+                            >
+                              <Check className="size-3.5" /> approve
+                            </Button>
+                            <Button
+                              size="sm"
+                              variant="destructive"
+                              disabled={busy}
+                              onClick={() => void decide(request, "reject")}
+                            >
+                              <X className="size-3.5" /> reject
+                            </Button>
+                          </>
+                        )}
+                        {pending && (isOwn || canApprove) && (
+                          <Button size="sm" variant="ghost" onClick={() => void cancel(request)}>
+                            cancel
+                          </Button>
+                        )}
+                        {!pending && request.decisionNote && (
+                          <span className="text-xs text-muted-foreground">
+                            {request.decisionNote}
+                          </span>
+                        )}
+                      </div>
+                    </TableCell>
+                  </TableRow>
+                );
+              })}
+              {requests.length === 0 && (
+                <TableRow>
+                  <TableCell colSpan={6} className="py-8 text-center text-muted-foreground">
+                    No change requests.
+                  </TableCell>
+                </TableRow>
+              )}
+            </TableBody>
+          </Table>
+        </Card>
       </div>
     </section>
   );
@@ -354,40 +395,42 @@ function PolicyRow({
   }, [environment]);
 
   return (
-    <tr>
-      <td>
-        <span className="pill">{environment.slug}</span>
-      </td>
-      <td>
-        <label className="checkbox">
-          <input
-            type="checkbox"
+    <TableRow>
+      <TableCell>
+        <Badge variant="outline">{environment.slug}</Badge>
+      </TableCell>
+      <TableCell>
+        <label className="flex items-center gap-2 text-sm">
+          <Checkbox
             checked={required}
-            onChange={(event) => setRequired(event.target.checked)}
+            onCheckedChange={(checked) => setRequired(checked === true)}
           />
           {required ? "enabled" : "disabled"}
         </label>
-      </td>
-      <td>
-        <input
-          className="role-select"
+      </TableCell>
+      <TableCell>
+        <Input
           type="number"
           min={1}
           max={10}
-          value={count}
           disabled={!required}
-          onChange={(event) => setCount(Math.max(1, Math.min(10, Number(event.target.value))))}
+          className="h-8 w-20"
+          value={count}
+          onChange={(event) =>
+            setCount(Math.max(1, Math.min(10, Number(event.target.value) || 1)))
+          }
         />
-      </td>
-      <td className="right actions">
-        <button
-          className="small"
+      </TableCell>
+      <TableCell className="text-right">
+        <Button
+          size="sm"
+          variant="outline"
           onClick={() => onSave({ approvalRequired: required, requiredApprovals: count })}
         >
           save
-        </button>
-      </td>
-    </tr>
+        </Button>
+      </TableCell>
+    </TableRow>
   );
 }
 
@@ -409,29 +452,33 @@ function ImportRow({
   }, [current]);
 
   return (
-    <tr>
-      <td>
-        <span className="pill">{environment.slug}</span>
-      </td>
-      <td>
-        <select
-          className="role-select"
-          value={source}
-          onChange={(event) => setSource(event.target.value)}
+    <TableRow>
+      <TableCell>
+        <Badge variant="outline">{environment.slug}</Badge>
+      </TableCell>
+      <TableCell>
+        <Select
+          value={source || "none"}
+          onValueChange={(value) => setSource(value === "none" ? "" : value)}
         >
-          <option value="">none</option>
-          {options.map((candidate) => (
-            <option key={candidate.id} value={candidate.id}>
-              {candidate.slug}
-            </option>
-          ))}
-        </select>
-      </td>
-      <td className="right actions">
-        <button className="small" onClick={() => onSave(source || null)}>
+          <SelectTrigger className={cn("h-8 w-40")}>
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="none">none</SelectItem>
+            {options.map((candidate) => (
+              <SelectItem key={candidate.id} value={candidate.id}>
+                {candidate.slug}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+      </TableCell>
+      <TableCell className="text-right">
+        <Button size="sm" variant="outline" onClick={() => onSave(source || null)}>
           save
-        </button>
-      </td>
-    </tr>
+        </Button>
+      </TableCell>
+    </TableRow>
   );
 }

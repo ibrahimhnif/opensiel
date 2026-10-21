@@ -1,6 +1,12 @@
 import { useState } from "react";
 import type { UserDto } from "@opensiel/shared";
+import { Diamond, Loader2 } from "lucide-react";
 import { api, errorMessage } from "../api";
+import { Button } from "./ui/button";
+import { Card, CardContent } from "./ui/card";
+import { Input } from "./ui/input";
+import { Label } from "./ui/label";
+import { Notice } from "./Notice";
 
 interface Props {
   config: { initialized: boolean; signupEnabled: boolean; oidc?: { enabled: boolean; name: string } };
@@ -24,7 +30,12 @@ export function Login({ config, onLogin, initialError }: Props) {
     try {
       const result =
         mode === "signup"
-          ? await api.post<{ user: UserDto }>("/api/auth/signup", { email, password, name, orgName: orgName || undefined })
+          ? await api.post<{ user: UserDto }>("/api/auth/signup", {
+              email,
+              password,
+              name,
+              orgName: orgName || undefined,
+            })
           : await api.post<{ user: UserDto }>("/api/auth/login", { email, password });
       onLogin(result.user);
     } catch (err) {
@@ -35,83 +46,110 @@ export function Login({ config, onLogin, initialError }: Props) {
   }
 
   return (
-    <div className="center">
-      <form className="card narrow" onSubmit={submit}>
-        <div className="brand">
-          <span className="brand-mark">◈</span> opensiel
+    <div className="grid min-h-full place-items-center p-6">
+      <div className="w-full max-w-sm space-y-5">
+        <div className="flex items-center justify-center gap-2 text-xl font-semibold tracking-tight">
+          <Diamond className="size-5 text-primary" />
+          opensiel
         </div>
-        <p className="muted small">self-hosted secrets manager</p>
 
-        {config.oidc?.enabled && (
-          <>
-            <a className="sso-button" href="/api/auth/oidc/start">
-              Continue with {config.oidc.name}
-            </a>
-            <div className="divider">
-              <span>or use your password</span>
-            </div>
-          </>
-        )}
+        <Card className="gap-4">
+          <CardContent className="space-y-4">
+            <p className="text-sm text-muted-foreground">self-hosted secrets manager</p>
 
-        <label>
-          Email
-          <input
-            type="email"
-            autoComplete="email"
-            value={email}
-            onChange={(event) => setEmail(event.target.value)}
-            required
-          />
-        </label>
+            {config.oidc?.enabled && (
+              <>
+                <Button asChild className="w-full">
+                  <a href="/api/auth/oidc/start">Continue with {config.oidc.name}</a>
+                </Button>
+                <div className="flex items-center gap-3 text-xs text-muted-foreground">
+                  <span className="h-px flex-1 bg-border" />
+                  <span>or use your password</span>
+                  <span className="h-px flex-1 bg-border" />
+                </div>
+              </>
+            )}
 
-        <label>
-          Password
-          <input
-            type="password"
-            autoComplete={mode === "signup" ? "new-password" : "current-password"}
-            value={password}
-            onChange={(event) => setPassword(event.target.value)}
-            required
-            minLength={mode === "signup" ? 12 : 1}
-          />
-        </label>
+            <form className="space-y-4" onSubmit={submit}>
+              <div className="space-y-2">
+                <Label htmlFor="email">Email</Label>
+                <Input
+                  id="email"
+                  type="email"
+                  autoComplete="email"
+                  value={email}
+                  onChange={(event) => setEmail(event.target.value)}
+                  required
+                />
+              </div>
 
-        {mode === "signup" && (
-          <>
-            <label>
-              Name
-              <input value={name} onChange={(event) => setName(event.target.value)} required />
-            </label>
-            <label>
-              Organization <span className="muted small">(optional)</span>
-              <input value={orgName} onChange={(event) => setOrgName(event.target.value)} />
-            </label>
-          </>
-        )}
+              <div className="space-y-2">
+                <Label htmlFor="password">Password</Label>
+                <Input
+                  id="password"
+                  type="password"
+                  autoComplete={mode === "signup" ? "new-password" : "current-password"}
+                  value={password}
+                  onChange={(event) => setPassword(event.target.value)}
+                  required
+                  minLength={mode === "signup" ? 12 : 1}
+                />
+              </div>
 
-        {error && <p className="error">{error}</p>}
+              {mode === "signup" && (
+                <>
+                  <div className="space-y-2">
+                    <Label htmlFor="name">Name</Label>
+                    <Input
+                      id="name"
+                      value={name}
+                      onChange={(event) => setName(event.target.value)}
+                      required
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="orgName">
+                      Organization <span className="font-normal text-muted-foreground">(optional)</span>
+                    </Label>
+                    <Input
+                      id="orgName"
+                      value={orgName}
+                      onChange={(event) => setOrgName(event.target.value)}
+                    />
+                  </div>
+                </>
+              )}
 
-        <button className="primary" type="submit" disabled={busy}>
-          {busy ? "working…" : mode === "signup" ? "Create account" : "Sign in"}
-        </button>
+              {error && <Notice tone="error">{error}</Notice>}
 
-        {config.signupEnabled && (
-          <button
-            type="button"
-            className="link"
-            onClick={() => {
-              setMode(mode === "signup" ? "login" : "signup");
-              setError("");
-            }}
-          >
-            {mode === "signup" ? "I already have an account" : "Create another account"}
-          </button>
-        )}
+              <Button className="w-full" type="submit" disabled={busy}>
+                {busy && <Loader2 className="size-4 animate-spin" />}
+                {busy ? "working…" : mode === "signup" ? "Create account" : "Sign in"}
+              </Button>
+            </form>
 
-        {mode === "signup" && (
-          <p className="muted small">The first account becomes the instance owner. Password: 12+ characters.</p>
-        )}
-      </form>
+            {config.signupEnabled && (
+              <Button
+                type="button"
+                variant="link"
+                className="h-auto p-0 text-xs"
+                onClick={() => {
+                  setMode(mode === "signup" ? "login" : "signup");
+                  setError("");
+                }}
+              >
+                {mode === "signup" ? "I already have an account" : "Create another account"}
+              </Button>
+            )}
+
+            {mode === "signup" && (
+              <p className="text-xs text-muted-foreground">
+                The first account becomes the instance owner. Password: 12+ characters.
+              </p>
+            )}
+          </CardContent>
+        </Card>
+      </div>
     </div>
   );
 }

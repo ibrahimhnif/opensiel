@@ -1,6 +1,25 @@
 import { useCallback, useEffect, useState } from "react";
 import type { IdentityDto, ProjectDto } from "@opensiel/shared";
+import { Copy, KeyRound, Loader2, Plus, RefreshCw, X } from "lucide-react";
 import { api, errorMessage } from "../api";
+import { cn } from "../lib/utils";
+import { Badge } from "./ui/badge";
+import { Button } from "./ui/button";
+import { Card } from "./ui/card";
+import { Checkbox } from "./ui/checkbox";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "./ui/dialog";
+import { Input } from "./ui/input";
+import { Label } from "./ui/label";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "./ui/select";
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "./ui/table";
+import { Notice } from "./Notice";
 
 interface CreatedIdentity {
   name: string;
@@ -17,6 +36,7 @@ export function IdentitiesView({ project }: { project: ProjectDto }) {
   const [role, setRole] = useState<"viewer" | "member">("viewer");
   const [envIds, setEnvIds] = useState<string[]>([]);
   const [busy, setBusy] = useState(false);
+  const [notice, setNotice] = useState("");
 
   const load = useCallback(async () => {
     try {
@@ -71,13 +91,27 @@ export function IdentitiesView({ project }: { project: ProjectDto }) {
   }
 
   async function revoke(identity: IdentityDto) {
-    if (!window.confirm(`Revoke ${identity.name}? Existing tokens stay valid until they expire (15 min).`))
+    if (
+      !window.confirm(
+        `Revoke ${identity.name}? Existing tokens stay valid until they expire (15 min).`,
+      )
+    )
       return;
     try {
       await api.post(`/api/projects/${project.id}/identities/${identity.id}/revoke`);
+      setNotice(`${identity.name} revoked`);
       await load();
     } catch (err) {
       setError(errorMessage(err));
+    }
+  }
+
+  async function copy(value: string, label: string) {
+    try {
+      await navigator.clipboard.writeText(value);
+      setNotice(`${label} copied`);
+    } catch {
+      setError("clipboard is not available");
     }
   }
 
@@ -86,147 +120,206 @@ export function IdentitiesView({ project }: { project: ProjectDto }) {
   }
 
   return (
-    <section className="view">
-      <div className="toolbar">
+    <section className="space-y-4">
+      <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
-          <h2>Machine identities</h2>
-          <p className="muted small">Client-credentials auth for CI, servers, and local tooling.</p>
+          <h2 className="text-lg font-semibold">Machine identities</h2>
+          <p className="text-sm text-muted-foreground">
+            Client credentials for CI, servers, and local tooling.
+          </p>
         </div>
-        <button className="primary" onClick={openForm}>
-          New identity
-        </button>
+        <div className="flex items-center gap-2">
+          <Button variant="outline" size="sm" onClick={() => void load()}>
+            <RefreshCw className="size-4" /> refresh
+          </Button>
+          <Button size="sm" onClick={openForm}>
+            <Plus className="size-4" /> new identity
+          </Button>
+        </div>
       </div>
 
+      {notice && (
+        <Notice tone="success" onDismiss={() => setNotice("")}>
+          {notice}
+        </Notice>
+      )}
       {error && (
-        <div className="banner error-banner">
+        <Notice tone="error" onDismiss={() => setError("")}>
           {error}
-          <button className="link" onClick={() => setError("")}>
-            dismiss
-          </button>
-        </div>
+        </Notice>
       )}
 
       {created && (
-        <div className="banner secret-banner">
-          <div>
-            <strong>Save this secret now — it is shown once.</strong>
-            <div className="credential">
-              <span className="muted small">client id</span>
-              <code>{created.clientId}</code>
+        <div className="border-primary/40 bg-primary/10 text-primary rounded-lg border px-4 py-3 text-sm">
+          <div className="flex items-start justify-between gap-3">
+            <div className="min-w-0 space-y-3">
+              <div className="flex items-center gap-2 font-medium">
+                <KeyRound className="size-4" /> Save this secret now — it is shown once.
+              </div>
+              <div className="space-y-1">
+                <span className="text-xs opacity-80">client id</span>
+                <div className="flex items-center gap-2">
+                  <code className="block break-all bg-transparent p-0 text-xs">
+                    {created.clientId}
+                  </code>
+                  <Button
+                    size="icon"
+                    variant="ghost"
+                    className="size-7"
+                    onClick={() => void copy(created.clientId, "client id")}
+                  >
+                    <Copy className="size-3.5" />
+                  </Button>
+                </div>
+              </div>
+              <div className="space-y-1">
+                <span className="text-xs opacity-80">client secret</span>
+                <div className="flex items-center gap-2">
+                  <code className="block break-all bg-transparent p-0 text-xs">
+                    {created.clientSecret}
+                  </code>
+                  <Button
+                    size="icon"
+                    variant="ghost"
+                    className="size-7"
+                    onClick={() => void copy(created.clientSecret, "client secret")}
+                  >
+                    <Copy className="size-3.5" />
+                  </Button>
+                </div>
+              </div>
             </div>
-            <div className="credential">
-              <span className="muted small">client secret</span>
-              <code>{created.clientSecret}</code>
-            </div>
+            <button onClick={() => setCreated(null)} aria-label="dismiss" className="opacity-70">
+              <X className="size-4" />
+            </button>
           </div>
-          <button className="link" onClick={() => setCreated(null)}>
-            dismiss
-          </button>
         </div>
       )}
 
-      <div className="card table-card">
-        <table>
-          <thead>
-            <tr>
-              <th>Name</th>
-              <th>Client ID</th>
-              <th>Role</th>
-              <th>Environments</th>
-              <th>Status</th>
-              <th className="right">Actions</th>
-            </tr>
-          </thead>
-          <tbody>
+      <Card className="overflow-hidden py-0">
+        <Table>
+          <TableHeader>
+            <TableRow>
+              <TableHead>Name</TableHead>
+              <TableHead>Client ID</TableHead>
+              <TableHead>Role</TableHead>
+              <TableHead>Environments</TableHead>
+              <TableHead>Status</TableHead>
+              <TableHead className="text-right">Actions</TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
             {rows.map((identity) => (
-              <tr key={identity.id}>
-                <td>{identity.name}</td>
-                <td>
-                  <code>{identity.clientId}</code>
-                </td>
-                <td>
-                  <span className="pill">{identity.role}</span>
-                </td>
-                <td className="muted small">
+              <TableRow key={identity.id}>
+                <TableCell>{identity.name}</TableCell>
+                <TableCell>
+                  <code className="bg-transparent p-0 text-xs">{identity.clientId}</code>
+                </TableCell>
+                <TableCell>
+                  <Badge variant="outline">{identity.role}</Badge>
+                </TableCell>
+                <TableCell className="text-xs text-muted-foreground">
                   {identity.environmentIds.map(envName).join(", ") || "—"}
-                </td>
-                <td>
+                </TableCell>
+                <TableCell>
                   {identity.revokedAt ? (
-                    <span className="pill danger">revoked</span>
+                    <Badge variant="destructive">revoked</Badge>
                   ) : (
-                    <span className="pill ok">active</span>
+                    <Badge variant="success">active</Badge>
                   )}
-                </td>
-                <td className="right actions">
-                  <button
-                    className="small danger"
+                </TableCell>
+                <TableCell className="text-right">
+                  <Button
+                    variant="ghost"
+                    size="sm"
                     disabled={Boolean(identity.revokedAt)}
+                    className={cn("text-destructive hover:text-destructive")}
                     onClick={() => void revoke(identity)}
                   >
                     revoke
-                  </button>
-                </td>
-              </tr>
+                  </Button>
+                </TableCell>
+              </TableRow>
             ))}
             {rows.length === 0 && (
-              <tr>
-                <td colSpan={6} className="muted">
+              <TableRow>
+                <TableCell colSpan={6} className="py-8 text-center text-muted-foreground">
                   No machine identities yet.
-                </td>
-              </tr>
+                </TableCell>
+              </TableRow>
             )}
-          </tbody>
-        </table>
-      </div>
+          </TableBody>
+        </Table>
+      </Card>
 
-      {open && (
-        <div className="overlay" onClick={() => setOpen(false)}>
-          <form className="modal" onClick={(event) => event.stopPropagation()} onSubmit={create}>
-            <h2>New machine identity</h2>
-            <label>
-              Name
-              <input
+      <Dialog open={open} onOpenChange={setOpen}>
+        <DialogContent>
+          <form className="space-y-4" onSubmit={create}>
+            <DialogHeader>
+              <DialogTitle>New machine identity</DialogTitle>
+              <DialogDescription>
+                The client secret is shown once after creation.
+              </DialogDescription>
+            </DialogHeader>
+
+            <div className="space-y-2">
+              <Label htmlFor="identity-name">Name</Label>
+              <Input
+                id="identity-name"
                 autoFocus
                 value={name}
                 onChange={(event) => setName(event.target.value)}
                 placeholder="github-actions"
                 required
               />
-            </label>
-
-            <label>
-              Role
-              <select value={role} onChange={(event) => setRole(event.target.value as "viewer" | "member")}>
-                <option value="viewer">viewer — read secrets</option>
-                <option value="member">member — read and write secrets</option>
-              </select>
-            </label>
-
-            <fieldset>
-              <legend>Environments</legend>
-              {project.environments.map((environment) => (
-                <label key={environment.id} className="checkbox">
-                  <input
-                    type="checkbox"
-                    checked={envIds.includes(environment.id)}
-                    onChange={() => toggleEnv(environment.id)}
-                  />
-                  {environment.slug}
-                </label>
-              ))}
-            </fieldset>
-
-            <div className="modal-actions">
-              <button type="button" onClick={() => setOpen(false)}>
-                cancel
-              </button>
-              <button className="primary" type="submit" disabled={busy || envIds.length === 0}>
-                {busy ? "creating…" : "create identity"}
-              </button>
             </div>
+
+            <div className="space-y-2">
+              <Label>Role</Label>
+              <Select
+                value={role}
+                onValueChange={(value) => setRole(value as "viewer" | "member")}
+              >
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="viewer">viewer — read secrets</SelectItem>
+                  <SelectItem value="member">member — read and write secrets</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+
+            <div className="space-y-2">
+              <Label>Environments</Label>
+              <div className="flex flex-wrap gap-4 rounded-lg border px-3 py-3">
+                {project.environments.map((environment) => (
+                  <label
+                    key={environment.id}
+                    className="flex items-center gap-2 text-sm capitalize"
+                  >
+                    <Checkbox
+                      checked={envIds.includes(environment.id)}
+                      onCheckedChange={() => toggleEnv(environment.id)}
+                    />
+                    {environment.slug}
+                  </label>
+                ))}
+              </div>
+            </div>
+
+            <DialogFooter>
+              <Button type="button" variant="outline" onClick={() => setOpen(false)}>
+                cancel
+              </Button>
+              <Button type="submit" disabled={busy || envIds.length === 0}>
+                {busy && <Loader2 className="size-4 animate-spin" />}
+                {busy ? "creating…" : "create identity"}
+              </Button>
+            </DialogFooter>
           </form>
-        </div>
-      )}
+        </DialogContent>
+      </Dialog>
     </section>
   );
 }

@@ -1049,4 +1049,97 @@ if (!databaseUrl) {
     expect(rows[0]?.count).toBe(0);
     env.oidc!.autoCreate = true;
   });
+
+  it("scans text for stored secrets and credential patterns", async () => {
+    const session = await signup(`scan-${Date.now()}@test.dev`);
+    const auth = { authorization: `Bearer ${session.token}` };
+    const projectId = session.projectId;
+    const secretValue = "super-secret-scan-value";
+
+    const created = await app.inject({
+      method: "POST",
+      url: `/api/projects/${projectId}/secrets`,
+      headers: auth,
+      payload: { key: "SCAN_TOKEN", value: secretValue, env: "dev" },
+    });
+    expect(created.statusCode).toBe(201);
+
+    const contents = ["line one", `leaked ${secretValue} here`, "AKIAABCDEFGHIJKLMNOP"].join("\n");
+    const response = await app.inject({
+      method: "POST",
+      url: `/api/projects/${projectId}/scan`,
+      headers: auth,
+      payload: { contents },
+    });
+    expect(response.statusCode).toBe(200);
+    const body = response.json<{
+      findings: {
+        type: string;
+        name: string;
+        environment?: string;
+        line: number;
+        preview: string;
+      }[];
+      scannedEnvironments: number;
+      scannedSecrets: number;
+    }>();
+
+    expect(body.scannedEnvironments).toBe(3);
+    expect(body.scannedSecrets).toBe(1);
+
+    const stored = body.findings.find(
+      (finding) => finding.type === "stored-secret" && finding.name === "SCAN_TOKEN",
+    );
+    expect(stored).toMatchObject({ environment: "dev", line: 2 });
+    expect(stored?.preview).not.toContain(secretValue);
+
+    const aws = body.findings.find(
+      (finding) => finding.type === "pattern" && finding.name === "AWS access key",
+    );
+    expect(aws).toBeTruthy();
+    expect(JSON.stringify(body.findings)).not.toContain(secretValue);
+
+    const empty = await app.inject({
+      method: "POST",
+      url: `/api/projects/${projectId}/scan`,
+      headers: auth,
+      payload: { contents: "" },
+    });
+    expect(empty.statusCode).toBe(400);
+
+    const identity = await app.inject({
+      method: "POST",
+      url: `/api/projects/${projectId}/identities`,
+      headers: auth,
+      payload: { name: "scanner", role: "viewer", environmentIds: [session.devId] },
+    });
+    const credentials = identity.json<{
+      identity: { clientId: string; clientSecret: string };
+    }>().identity;
+    const tokenResponse = await app.inject({
+      method: "POST",
+      url: "/api/auth/token",
+      payload: { clientId: credentials.clientId, clientSecret: credentials.clientSecret },
+    });
+    const machineToken = tokenResponse.json<{ accessToken: string }>().accessToken;
+
+    const machineScan = await app.inject({
+      method: "POST",
+      url: `/api/projects/${projectId}/scan`,
+      headers: { authorization: `Bearer ${machineToken}` },
+      payload: { contents: "whatever" },
+    });
+    expect(machineScan.statusCode).toBe(403);
+
+    const audit = await app.inject({
+      method: "GET",
+      url: `/api/audit?projectId=${projectId}`,
+      headers: auth,
+    });
+    expect(
+      audit
+        .json<{ logs: { action: string }[] }>()
+        .logs.some((log) => log.action === "secret.scan"),
+    ).toBe(true);
+  });
 }

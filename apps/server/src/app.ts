@@ -14,6 +14,7 @@ import { registerIdentityRoutes } from "./routes/identities.js";
 import { registerAuditRoutes } from "./routes/audit.js";
 import { registerApprovalRoutes } from "./routes/approvals.js";
 import { registerOidcRoutes } from "./routes/oidc.js";
+import { registerScanRoutes } from "./routes/scan.js";
 import type { Deps } from "./types.js";
 
 export async function buildApp(deps: Deps): Promise<FastifyInstance> {
@@ -62,6 +63,7 @@ export async function buildApp(deps: Deps): Promise<FastifyInstance> {
   registerAuditRoutes(app, deps);
   registerApprovalRoutes(app, deps);
   registerOidcRoutes(app, deps);
+  registerScanRoutes(app, deps);
 
   app.setErrorHandler((error, request, reply) => {
     if (error instanceof AppError) {

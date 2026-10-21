@@ -18,6 +18,8 @@ identities. MIT licensed, single service, Postgres-backed.
   one; existing keys get a new version.
 - **SSO (OIDC)** — authorization code + PKCE against any OIDC provider, with invite-based
   or automatic organization provisioning.
+- **Secret scanning** — check pasted text or files for project secrets and common credential
+  patterns; every UI surface is built with Tailwind CSS v4 and shadcn-style components.
 - **Machine identities** — client credentials, 15-minute tokens, environment scopes,
   `viewer` / `member` roles.
 - **Audit** — all mutations and secret reads are recorded, values never included.
@@ -115,6 +117,7 @@ token from `POST /api/auth/login`, or machine token from `POST /api/auth/token`)
 | GET/POST | `/projects/:id/environments` | environments |
 | GET/POST | `/projects/:id/secrets` | list (decrypted) / write new version |
 | POST | `/projects/:id/secrets/import` | bulk import .env or JSON |
+| POST | `/projects/:id/scan` | scan text for leaked secrets |
 | GET/DELETE | `/projects/:id/secrets/:key` | read / soft-delete |
 | GET | `/projects/:id/secrets/:key/versions` | version history |
 | POST | `/projects/:id/secrets/:key/rollback` | roll back to a version |
@@ -200,6 +203,19 @@ is disabled). Existing accounts keep their organization.
 Example for Google: add `https://your-host/api/auth/oidc/callback` as an authorized redirect
 URI and use `https://accounts.google.com` as the issuer.
 
+## Secret scanning
+
+The **Scan** tab checks pasted text or an uploaded file for:
+
+- values that match secrets stored anywhere in the project (reported by key, environment,
+  path, and line),
+- common credential patterns: AWS access keys, GitHub/Slack/Stripe/Google tokens, private
+  key headers, and JWTs.
+
+Matches are masked in the response, and neither the submitted text nor the secret values are
+stored or written to the audit log. Scans run as a user session (machine identities cannot
+scan), cover every environment in the project, and resolve imports and references first.
+
 ## Deployment (Kubernetes)
 
 ```bash
@@ -249,8 +265,7 @@ KMS yet.
 
 ## Roadmap
 
-v1: SAML SSO, dynamic database credentials, secret scanning, key rotation, webhook/CI
-integrations.
+v1: SAML SSO, dynamic database credentials, key rotation, webhook/CI integrations.
 
 ## License
 
