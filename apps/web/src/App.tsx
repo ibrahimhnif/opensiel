@@ -87,6 +87,8 @@ export function App() {
   const inviteToken = params.get("invite");
   const acceptToken = params.get("token") ?? inviteToken;
   const ssoError = params.get("sso_error") ?? undefined;
+  const nextParam = params.get("next") ?? "";
+  const redirectTarget = nextParam.startsWith("/app") ? nextParam : "/app";
 
   return (
     <Routes>
@@ -104,14 +106,14 @@ export function App() {
         path="/login"
         element={
           user ? (
-            <Navigate to="/app" replace />
+            <Navigate to={redirectTarget} replace />
           ) : (
             <Login
               config={config}
               initialError={ssoError}
               onLogin={(nextUser) => {
                 setUser(nextUser);
-                navigate("/app", { replace: true });
+                navigate(redirectTarget, { replace: true });
               }}
             />
           )
@@ -129,7 +131,10 @@ export function App() {
               }}
             />
           ) : (
-            <Navigate to="/login" replace />
+            <Navigate
+              to={`/login?next=${encodeURIComponent(location.pathname + location.search)}`}
+              replace
+            />
           )
         }
       />

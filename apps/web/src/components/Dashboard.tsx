@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
+import { useSearchParams } from "react-router-dom";
 import type { ProjectDto, UserDto } from "@opensiel/shared";
 import { FolderPlus, Loader2, LogOut, Plus } from "lucide-react";
 import { api, errorMessage } from "../api";
@@ -35,8 +36,7 @@ const TABS: { value: Tab; label: string }[] = [
 
 export function Dashboard({ user, onSignedOut }: { user: UserDto; onSignedOut: () => void }) {
   const [projects, setProjects] = useState<ProjectDto[]>([]);
-  const [projectId, setProjectId] = useState("");
-  const [env, setEnv] = useState("dev");
+  const [searchParams, setSearchParams] = useSearchParams();
   const [tab, setTab] = useState<Tab>("secrets");
   const [error, setError] = useState("");
   const [creating, setCreating] = useState(false);
@@ -47,10 +47,6 @@ export function Dashboard({ user, onSignedOut }: { user: UserDto; onSignedOut: (
     try {
       const result = await api.get<{ projects: ProjectDto[] }>("/api/projects");
       setProjects(result.projects);
-      setProjectId((current) => {
-        if (current && result.projects.some((project) => project.id === current)) return current;
-        return result.projects[0]?.id ?? "";
-      });
       setError("");
     } catch (err) {
       setError(errorMessage(err));
@@ -63,15 +59,49 @@ export function Dashboard({ user, onSignedOut }: { user: UserDto; onSignedOut: (
     void loadProjects();
   }, [loadProjects]);
 
-  const project = projects.find((candidate) => candidate.id === projectId);
+  const projectIdParam = searchParams.get("project") ?? "";
+  const envParam = searchParams.get("env") ?? "";
+  const project = projects.find((candidate) => candidate.id === projectIdParam) ?? projects[0];
+  const projectId = project?.id ?? "";
+  const env = project?.environments.some((candidate) => candidate.slug === envParam)
+    ? envParam
+    : (project?.environments[0]?.slug ?? "dev");
   const canManage = user.role === "owner" || user.role === "admin";
 
   useEffect(() => {
     if (!project) return;
-    if (!project.environments.some((candidate) => candidate.slug === env)) {
-      setEnv(project.environments[0]?.slug ?? "dev");
+    const next = new URLSearchParams(searchParams);
+    let changed = false;
+    if (next.get("project") !== project.id) {
+      next.set("project", project.id);
+      changed = true;
     }
-  }, [project, env]);
+    if (next.get("env") !== env) {
+      next.set("env", env);
+      changed = true;
+    }
+    if (changed) setSearchParams(next, { replace: true });
+  }, [project, env, searchParams, setSearchParams]);
+
+  function selectProject(id: string) {
+    const target = projects.find((candidate) => candidate.id === id);
+    const next = new URLSearchParams(searchParams);
+    next.set("project", id);
+    next.set(
+      "env",
+      target?.environments.some((candidate) => candidate.slug === envParam)
+        ? envParam
+        : (target?.environments[0]?.slug ?? "dev"),
+    );
+    setSearchParams(next);
+  }
+
+  function selectEnv(slug: string) {
+    const next = new URLSearchParams(searchParams);
+    next.set("project", projectId);
+    next.set("env", slug);
+    setSearchParams(next);
+  }
 
   async function createProject(event: React.FormEvent) {
     event.preventDefault();
@@ -83,7 +113,10 @@ export function Dashboard({ user, onSignedOut }: { user: UserDto; onSignedOut: (
       setNewProjectName("");
       setCreating(false);
       await loadProjects();
-      setProjectId(result.project.id);
+      setSearchParams({
+        project: result.project.id,
+        env: result.project.environments[0]?.slug ?? "dev",
+      });
     } catch (err) {
       setError(errorMessage(err));
     }
@@ -147,7 +180,7 @@ export function Dashboard({ user, onSignedOut }: { user: UserDto; onSignedOut: (
                   "h-auto w-full justify-between px-3 py-2 font-normal",
                   candidate.id === projectId && "font-medium",
                 )}
-                onClick={() => setProjectId(candidate.id)}
+                onClick={() => selectProject(candidate.id)}
               >
                 <span className="truncate">{candidate.name}</span>
                 <span className="text-xs text-muted-foreground">
@@ -184,7 +217,7 @@ export function Dashboard({ user, onSignedOut }: { user: UserDto; onSignedOut: (
           <Logo />
           <div className="flex items-center gap-2">
             {projects.length > 0 && (
-              <Select value={projectId} onValueChange={setProjectId}>
+              <Select value={projectId} onValueChange={selectProject}>
                 <SelectTrigger className="h-8 w-40">
                   <SelectValue placeholder="Project" />
                 </SelectTrigger>
@@ -259,7 +292,7 @@ export function Dashboard({ user, onSignedOut }: { user: UserDto; onSignedOut: (
                       size="sm"
                       variant={environment.slug === env ? "default" : "outline"}
                       className="font-mono"
-                      onClick={() => setEnv(environment.slug)}
+                      onClick={() => selectEnv(environment.slug)}
                     >
                       {environment.slug}
                     </Button>
