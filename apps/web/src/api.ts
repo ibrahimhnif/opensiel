@@ -26,26 +26,16 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
 
 const jsonHeaders = { "content-type": "application/json" };
 
+function jsonRequest(method: string, body?: unknown): RequestInit {
+  if (body === undefined) return { method };
+  return { method, headers: jsonHeaders, body: JSON.stringify(body) };
+}
+
 export const api = {
   get: <T>(path: string) => request<T>(path),
-  post: <T>(path: string, body?: unknown) =>
-    request<T>(path, {
-      method: "POST",
-      headers: jsonHeaders,
-      body: body === undefined ? undefined : JSON.stringify(body),
-    }),
-  patch: <T>(path: string, body?: unknown) =>
-    request<T>(path, {
-      method: "PATCH",
-      headers: jsonHeaders,
-      body: body === undefined ? undefined : JSON.stringify(body),
-    }),
-  put: <T>(path: string, body?: unknown) =>
-    request<T>(path, {
-      method: "PUT",
-      headers: jsonHeaders,
-      body: body === undefined ? undefined : JSON.stringify(body),
-    }),
+  post: <T>(path: string, body?: unknown) => request<T>(path, jsonRequest("POST", body)),
+  patch: <T>(path: string, body?: unknown) => request<T>(path, jsonRequest("PATCH", body)),
+  put: <T>(path: string, body?: unknown) => request<T>(path, jsonRequest("PUT", body)),
   del: <T>(path: string) => request<T>(path, { method: "DELETE" }),
 };
 
