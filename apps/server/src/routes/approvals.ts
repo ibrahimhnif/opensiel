@@ -1,11 +1,11 @@
 import { and, eq } from "drizzle-orm";
 import type { FastifyInstance } from "fastify";
 import type { ChangeRequestStatus } from "@opensiel/shared";
-import { changeRequestDecisionSchema, environmentPolicySchema } from "@opensiel/shared";
+import { changeRequestDecisionSchema, environmentImportSchema, environmentPolicySchema } from "@opensiel/shared";
 import { requireActor, requireUser } from "../auth.js";
 import { assertCanAdmin, loadProject } from "../access.js";
 import { badRequest, forbidden, notFound, parse } from "../errors.js";
-import { environments } from "../db/schema.js";
+import { environmentImports, environments } from "../db/schema.js";
 import {
   cancelChangeRequest,
   decideChangeRequest,
@@ -82,6 +82,97 @@ export function registerApprovalRoutes(app: FastifyInstance, deps: Deps): void {
       changeRequest: await cancelChangeRequest(deps, actor, project.id, requestId, request.ip),
     };
   });
+
+  app.get("/api/projects/:projectId/environment-imports", async (request) => {
+    const actor = await requireActor(deps, request);
+    assertCanAdmin(actor);
+    const { projectId } = request.params as { projectId: string };
+    const project = await loadProject(deps, actor, projectId);
+
+    const rows = await deps.db
+      .select({
+        targetEnvironmentId: environmentImports.targetEnvironmentId,
+        sourceEnvironmentId: environmentImports.sourceEnvironmentId,
+        sourceSlug: environments.slug,
+      })
+      .from(environmentImports)
+      .innerJoin(environments, eq(environments.id, environmentImports.sourceEnvironmentId))
+      .where(eq(environments.projectId, project.id));
+
+    return { imports: rows };
+  });
+
+  app.put(
+    "/api/projects/:projectId/environments/:environmentId/imports",
+    async (request) => {
+      const actor = await requireActor(deps, request);
+      assertCanAdmin(actor);
+      const { projectId, environmentId } = request.params as {
+        projectId: string;
+        environmentId: string;
+      };
+      const project = await loadProject(deps, actor, projectId);
+      const input = parse(environmentImportSchema, request.body);
+
+      const targetRows = await deps.db
+        .select()
+        .from(environments)
+        .where(and(eq(environments.id, environmentId), eq(environments.projectId, project.id)))
+        .limit(1);
+      const target = targetRows[0];
+      if (!target) throw notFound("environment not found");
+
+      if (input.sourceEnvironmentId === null) {
+        await deps.db
+          .delete(environmentImports)
+          .where(eq(environmentImports.targetEnvironmentId, target.id));
+      } else {
+        if (input.sourceEnvironmentId === target.id) {
+          throw badRequest("an environment cannot import from itself");
+        }
+        const sourceRows = await deps.db
+          .select()
+          .from(environments)
+          .where(
+            and(
+              eq(environments.id, input.sourceEnvironmentId),
+              eq(environments.projectId, project.id),
+            ),
+          )
+          .limit(1);
+        if (!sourceRows[0]) throw badRequest("source environment does not belong to this project");
+
+        await deps.db
+          .insert(environmentImports)
+          .values({
+            targetEnvironmentId: target.id,
+            sourceEnvironmentId: input.sourceEnvironmentId,
+          })
+          .onConflictDoUpdate({
+            target: environmentImports.targetEnvironmentId,
+            set: { sourceEnvironmentId: input.sourceEnvironmentId },
+          });
+      }
+
+      await writeAudit(deps, {
+        orgId: actor.orgId,
+        projectId: project.id,
+        actorType: actor.type,
+        actorId: actor.id,
+        actorName: actor.name,
+        action: "environment.import",
+        resourceType: "environment",
+        resourceId: target.id,
+        metadata: {
+          environment: target.slug,
+          sourceEnvironmentId: input.sourceEnvironmentId,
+        },
+        ip: request.ip,
+      });
+
+      return { ok: true };
+    },
+  );
 
   app.patch(
     "/api/projects/:projectId/environments/:environmentId/policy",

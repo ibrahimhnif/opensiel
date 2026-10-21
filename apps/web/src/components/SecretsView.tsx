@@ -221,6 +221,9 @@ export function SecretsView({ project, env }: Props) {
                   <td>
                     <code>{row.key}</code>
                     {row.path !== "/" && <div className="muted small">{row.path}</div>}
+                    {row.importedFrom && (
+                      <span className="pill">imported from {row.importedFrom}</span>
+                    )}
                   </td>
                   <td className="value-cell">
                     <span className={isRevealed ? "value" : "value masked"}>

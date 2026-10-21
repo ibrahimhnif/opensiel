@@ -112,7 +112,7 @@ spec:
               echo "build finished"
           env:
             - name: SOURCE_REV
-              value: "3"
+              value: "4"
             - name: GIT_TOKEN
               valueFrom:
                 secretKeyRef:

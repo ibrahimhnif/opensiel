@@ -192,6 +192,18 @@ export interface SecretDto {
   version: number;
   createdAt: string;
   updatedAt: string;
+  importedFrom?: string;
+}
+
+export const environmentImportSchema = z.object({
+  sourceEnvironmentId: z.string().uuid().nullable(),
+});
+export type EnvironmentImportInput = z.infer<typeof environmentImportSchema>;
+
+export interface EnvironmentImportDto {
+  targetEnvironmentId: string;
+  sourceEnvironmentId: string;
+  sourceSlug: string;
 }
 
 export interface SecretVersionDto {

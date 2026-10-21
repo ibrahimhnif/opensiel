@@ -1,5 +1,11 @@
 import { useCallback, useEffect, useState } from "react";
-import type { ChangeRequestDto, ChangeRequestStatus, EnvironmentDto, ProjectDto } from "@opensiel/shared";
+import type {
+  ChangeRequestDto,
+  ChangeRequestStatus,
+  EnvironmentDto,
+  EnvironmentImportDto,
+  ProjectDto,
+} from "@opensiel/shared";
 import { api, errorMessage } from "../api";
 
 interface Props {
@@ -17,10 +23,31 @@ export function ApprovalsView({ project, currentUserId, canApprove }: Props) {
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const [busy, setBusy] = useState(false);
+  const [imports, setImports] = useState<Record<string, string>>({});
 
   useEffect(() => {
     setEnvs(project.environments);
   }, [project.environments]);
+
+  const loadImports = useCallback(async () => {
+    if (!canApprove) return;
+    try {
+      const result = await api.get<{ imports: EnvironmentImportDto[] }>(
+        `/api/projects/${project.id}/environment-imports`,
+      );
+      setImports(
+        Object.fromEntries(
+          result.imports.map((entry) => [entry.targetEnvironmentId, entry.sourceEnvironmentId]),
+        ),
+      );
+    } catch (err) {
+      setError(errorMessage(err));
+    }
+  }, [project.id, canApprove]);
+
+  useEffect(() => {
+    void loadImports();
+  }, [loadImports]);
 
   const load = useCallback(async () => {
     try {
@@ -90,6 +117,29 @@ export function ApprovalsView({ project, currentUserId, canApprove }: Props) {
     }
   }
 
+  async function saveImport(environment: EnvironmentDto, sourceEnvironmentId: string | null) {
+    try {
+      await api.put(`/api/projects/${project.id}/environments/${environment.id}/imports`, {
+        sourceEnvironmentId,
+      });
+      setImports((current) => {
+        const next = { ...current };
+        if (sourceEnvironmentId) next[environment.id] = sourceEnvironmentId;
+        else delete next[environment.id];
+        return next;
+      });
+      setNotice(
+        sourceEnvironmentId
+          ? `${environment.slug} now imports from ${
+              envs.find((candidate) => candidate.id === sourceEnvironmentId)?.slug ?? "?"
+            }`
+          : `${environment.slug} no longer imports secrets`,
+      );
+    } catch (err) {
+      setError(errorMessage(err));
+    }
+  }
+
   return (
     <section className="view">
       <div className="toolbar">
@@ -133,27 +183,60 @@ export function ApprovalsView({ project, currentUserId, canApprove }: Props) {
       )}
 
       {canApprove && (
-        <div className="card table-card">
-          <table>
-            <thead>
-              <tr>
-                <th>Environment</th>
-                <th>Require approval</th>
-                <th>Approvals needed</th>
-                <th className="right">Actions</th>
-              </tr>
-            </thead>
-            <tbody>
-              {envs.map((environment) => (
-                <PolicyRow
-                  key={environment.id}
-                  environment={environment}
-                  onSave={(next) => void savePolicy(environment, next)}
-                />
-              ))}
-            </tbody>
-          </table>
-        </div>
+        <>
+          <p className="muted small">
+            Enable approvals per environment. Changes then need the configured number of
+            approvals from owners or admins.
+          </p>
+          <div className="card table-card">
+            <table>
+              <thead>
+                <tr>
+                  <th>Environment</th>
+                  <th>Require approval</th>
+                  <th>Approvals needed</th>
+                  <th className="right">Actions</th>
+                </tr>
+              </thead>
+              <tbody>
+                {envs.map((environment) => (
+                  <PolicyRow
+                    key={environment.id}
+                    environment={environment}
+                    onSave={(next) => void savePolicy(environment, next)}
+                  />
+                ))}
+              </tbody>
+            </table>
+          </div>
+
+          <p className="muted small">
+            Environment imports merge another environment&apos;s secrets at read time. Values
+            defined in the environment itself win over imported ones.
+          </p>
+          <div className="card table-card">
+            <table>
+              <thead>
+                <tr>
+                  <th>Environment</th>
+                  <th>Imports from</th>
+                  <th className="right">Actions</th>
+                </tr>
+              </thead>
+              <tbody>
+                {envs.map((environment) => (
+                  <ImportRow
+                    key={environment.id}
+                    environment={environment}
+                    options={envs.filter((candidate) => candidate.id !== environment.id)}
+                    current={imports[environment.id] ?? null}
+                    onSave={(sourceId) => void saveImport(environment, sourceId)}
+                  />
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </>
       )}
 
       <div className="card table-card">
@@ -301,6 +384,51 @@ function PolicyRow({
           className="small"
           onClick={() => onSave({ approvalRequired: required, requiredApprovals: count })}
         >
+          save
+        </button>
+      </td>
+    </tr>
+  );
+}
+
+function ImportRow({
+  environment,
+  options,
+  current,
+  onSave,
+}: {
+  environment: EnvironmentDto;
+  options: EnvironmentDto[];
+  current: string | null;
+  onSave: (sourceEnvironmentId: string | null) => void;
+}) {
+  const [source, setSource] = useState(current ?? "");
+
+  useEffect(() => {
+    setSource(current ?? "");
+  }, [current]);
+
+  return (
+    <tr>
+      <td>
+        <span className="pill">{environment.slug}</span>
+      </td>
+      <td>
+        <select
+          className="role-select"
+          value={source}
+          onChange={(event) => setSource(event.target.value)}
+        >
+          <option value="">none</option>
+          {options.map((candidate) => (
+            <option key={candidate.id} value={candidate.id}>
+              {candidate.slug}
+            </option>
+          ))}
+        </select>
+      </td>
+      <td className="right actions">
+        <button className="small" onClick={() => onSave(source || null)}>
           save
         </button>
       </td>

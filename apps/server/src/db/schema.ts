@@ -131,6 +131,16 @@ export const environments = pgTable(
   (table) => [uniqueIndex("environments_project_slug_uq").on(table.projectId, table.slug)],
 );
 
+export const environmentImports = pgTable("environment_imports", {
+  targetEnvironmentId: uuid("target_environment_id")
+    .primaryKey()
+    .references(() => environments.id, { onDelete: "cascade" }),
+  sourceEnvironmentId: uuid("source_environment_id")
+    .notNull()
+    .references(() => environments.id, { onDelete: "cascade" }),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
 export const secrets = pgTable(
   "secrets",
   {

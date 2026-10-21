@@ -9,14 +9,13 @@ import {
   loadEnvironment,
   loadProject,
   normalizePath,
-  projectDek,
 } from "../access.js";
-import { decryptValue, secretAad } from "../crypto.js";
 import { notFound, parse } from "../errors.js";
 import { secretVersions, secrets } from "../db/schema.js";
-import type { ProjectRow, SecretRow, SecretVersionRow } from "../db/schema.js";
+import type { SecretRow } from "../db/schema.js";
 import { writeAudit } from "../audit.js";
 import { createChangeRequest } from "../approvals-service.js";
+import { loadEnvironmentSecrets } from "../secret-read.js";
 import {
   applySecretDelete,
   applySecretRollback,
@@ -47,20 +46,6 @@ function matchesPath(candidate: string, target: string, recursive: boolean): boo
   return candidate.startsWith(prefix);
 }
 
-function decryptRow(
-  deps: Deps,
-  project: ProjectRow,
-  secret: SecretRow,
-  version: SecretVersionRow,
-): string {
-  const dek = projectDek(deps, project);
-  return decryptValue(
-    dek,
-    { ciphertext: version.ciphertext, iv: version.iv, tag: version.tag },
-    secretAad(secret.id, version.version),
-  );
-}
-
 async function findSecret(
   deps: Deps,
   projectId: string,
@@ -84,25 +69,6 @@ async function findSecret(
   const secret = rows[0];
   if (!secret) throw notFound("secret not found");
   return secret;
-}
-
-async function latestVersion(
-  deps: Deps,
-  secret: SecretRow,
-): Promise<SecretVersionRow> {
-  const rows = await deps.db
-    .select()
-    .from(secretVersions)
-    .where(
-      and(
-        eq(secretVersions.secretId, secret.id),
-        eq(secretVersions.version, secret.latestVersion),
-      ),
-    )
-    .limit(1);
-  const version = rows[0];
-  if (!version) throw notFound("secret version not found");
-  return version;
 }
 
 function auditRead(
@@ -140,34 +106,25 @@ export function registerSecretRoutes(app: FastifyInstance, deps: Deps): void {
     const path = normalizePath(query.path);
     const recursive = query.recursive === "true";
 
-    const rows = await deps.db
-      .select({ secret: secrets, version: secretVersions })
-      .from(secrets)
-      .innerJoin(
-        secretVersions,
-        and(
-          eq(secretVersions.secretId, secrets.id),
-          eq(secretVersions.version, secrets.latestVersion),
-        ),
-      )
-      .where(
-        and(
-          eq(secrets.projectId, project.id),
-          eq(secrets.environmentId, environment.id),
-          isNull(secrets.deletedAt),
-        ),
-      )
-      .orderBy(secrets.path, secrets.key);
+    const loaded = await loadEnvironmentSecrets(
+      deps,
+      project,
+      environment,
+      actor.type === "machine" ? { allowedEnvironmentIds: actor.envIds } : {},
+    );
 
-    const filtered = rows.filter((row) => matchesPath(row.secret.path, path, recursive));
-    const values = filtered.map((row) => ({
-      key: row.secret.key,
-      value: decryptRow(deps, project, row.secret, row.version),
-      path: row.secret.path,
-      version: row.version.version,
-      createdAt: row.version.createdAt.toISOString(),
-      updatedAt: row.secret.updatedAt.toISOString(),
-    }));
+    const values = loaded
+      .filter((secret) => matchesPath(secret.path, path, recursive))
+      .sort((a, b) => a.path.localeCompare(b.path) || a.key.localeCompare(b.key))
+      .map((secret) => ({
+        key: secret.key,
+        value: secret.value,
+        path: secret.path,
+        version: secret.version,
+        createdAt: secret.createdAt.toISOString(),
+        updatedAt: secret.updatedAt.toISOString(),
+        importedFrom: secret.importedFrom,
+      }));
 
     await auditRead(deps, actor, project.id, environment.slug, path, values.length, request.ip);
     return { secrets: values };
@@ -182,19 +139,25 @@ export function registerSecretRoutes(app: FastifyInstance, deps: Deps): void {
     if (actor.type === "machine") assertEnvScope(actor, environment.id);
 
     const path = normalizePath(query.path);
-    const secret = await findSecret(deps, project.id, environment.id, path, key);
-    const version = await latestVersion(deps, secret);
-    const value = decryptRow(deps, project, secret, version);
+    const loaded = await loadEnvironmentSecrets(
+      deps,
+      project,
+      environment,
+      actor.type === "machine" ? { allowedEnvironmentIds: actor.envIds } : {},
+    );
+    const secret = loaded.find((candidate) => candidate.path === path && candidate.key === key);
+    if (!secret) throw notFound("secret not found");
 
     await auditRead(deps, actor, project.id, environment.slug, path, 1, request.ip);
     return {
       secret: {
         key: secret.key,
-        value,
+        value: secret.value,
         path: secret.path,
-        version: version.version,
-        createdAt: version.createdAt.toISOString(),
+        version: secret.version,
+        createdAt: secret.createdAt.toISOString(),
         updatedAt: secret.updatedAt.toISOString(),
+        importedFrom: secret.importedFrom,
       },
     };
   });
@@ -396,31 +359,17 @@ export function registerSecretRoutes(app: FastifyInstance, deps: Deps): void {
     const environment = await loadEnvironment(deps, project.id, query.env);
     if (actor.type === "machine") assertEnvScope(actor, environment.id);
 
-    const rows = await deps.db
-      .select({ secret: secrets, version: secretVersions })
-      .from(secrets)
-      .innerJoin(
-        secretVersions,
-        and(
-          eq(secretVersions.secretId, secrets.id),
-          eq(secretVersions.version, secrets.latestVersion),
-        ),
-      )
-      .where(
-        and(
-          eq(secrets.projectId, project.id),
-          eq(secrets.environmentId, environment.id),
-          isNull(secrets.deletedAt),
-        ),
-      )
-      .orderBy(secrets.path, secrets.key);
+    const loaded = await loadEnvironmentSecrets(
+      deps,
+      project,
+      environment,
+      actor.type === "machine" ? { allowedEnvironmentIds: actor.envIds } : {},
+    );
 
-    const entries = rows
-      .filter((row) => row.secret.path === "/")
-      .map((row) => ({
-        key: row.secret.key,
-        value: decryptRow(deps, project, row.secret, row.version),
-      }));
+    const entries = loaded
+      .filter((secret) => secret.path === "/")
+      .sort((a, b) => a.key.localeCompare(b.key))
+      .map((secret) => ({ key: secret.key, value: secret.value }));
 
     await auditRead(deps, actor, project.id, environment.slug, "/", entries.length, request.ip);
 

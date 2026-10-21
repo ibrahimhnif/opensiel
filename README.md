@@ -12,6 +12,8 @@ identities. MIT licensed, single service, Postgres-backed.
   owner-only escalation, and last-owner protection.
 - **Approvals** — opt-in per environment: writes become change requests that need
   `requiredApprovals` approvals from owners/admins before they are applied.
+- **References & imports** — `${KEY}` / `${/path/KEY}` resolution and cross-environment
+  imports, resolved at read time.
 - **Machine identities** — client credentials, 15-minute tokens, environment scopes,
   `viewer` / `member` roles.
 - **Audit** — all mutations and secret reads are recorded, values never included.
@@ -109,6 +111,8 @@ token from `POST /api/auth/login`, or machine token from `POST /api/auth/token`)
 | GET | `/projects/:id/change-requests?status=` | list change requests |
 | POST | `/projects/:id/change-requests/:rid/approve\|reject\|cancel` | decide |
 | PATCH | `/projects/:id/environments/:eid/policy` | require approvals / threshold |
+| GET | `/projects/:id/environment-imports` | list import links |
+| PUT | `/projects/:id/environments/:eid/imports` | set or clear an import source |
 | GET | `/projects/:id/export?env=&format=dotenv\|json` | export |
 | GET/POST | `/projects/:id/identities` | machine identities |
 | POST | `/projects/:id/identities/:id/revoke` | revoke |
@@ -129,6 +133,24 @@ anything.
   changes get the same protection as saved secrets.
 
 The CLI prints "submitted for approval (…)" instead of the usual confirmation.
+
+## Secret references and imports
+
+Values may reference other secrets in the same environment. References are resolved when
+secrets are read or injected (`list`, `get`, `export`, `opensiel run`); stored values stay
+unchanged.
+
+- `${KEY}` — a key at the environment root
+- `${/backend/KEY}` — a key inside a folder
+- `\${KEY}` — a literal `${KEY}`
+
+Missing references and cycles are left as written. Resolution happens after imports are
+merged, so imported values can reference other secrets too.
+
+An owner or admin can make one environment import another in the **Approvals** tab
+(`PUT /projects/:id/environments/:eid/imports`). Values defined in the environment itself
+win over imported ones, imported rows carry `importedFrom`, and machine identities only see
+imports from environments they are scoped to.
 
 ## Deployment (Kubernetes)
 
@@ -178,8 +200,8 @@ contain values. No SSO, approvals, dynamic secrets, PKI, or KMS yet.
 
 ## Roadmap
 
-v1: OIDC/SAML SSO, dynamic database credentials, secret scanning, secret references, key
-rotation, webhook/CI integrations.
+v1: OIDC/SAML SSO, dynamic database credentials, secret scanning, key rotation,
+webhook/CI integrations.
 
 ## License
 

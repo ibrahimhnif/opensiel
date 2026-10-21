@@ -35,6 +35,7 @@ if (!databaseUrl) {
     token: string;
     projectId: string;
     devId: string;
+    stagingId: string;
     prodId: string;
   }
 
@@ -58,6 +59,7 @@ if (!databaseUrl) {
       token: body.token,
       projectId: body.projectId,
       devId: project.environments.find((e) => e.slug === "dev")!.id,
+      stagingId: project.environments.find((e) => e.slug === "staging")!.id,
       prodId: project.environments.find((e) => e.slug === "prod")!.id,
     };
   }
@@ -248,6 +250,129 @@ if (!databaseUrl) {
       payload: { clientId: identity.clientId, clientSecret: identity.clientSecret },
     });
     expect(afterRevoke.statusCode).toBe(401);
+  });
+
+  it("resolves secret references and leaves cycles alone", async () => {
+    const session = await signup(`refs-${Date.now()}@test.dev`);
+    const auth = { authorization: `Bearer ${session.token}` };
+    const url = `/api/projects/${session.projectId}/secrets`;
+
+    const set = async (key: string, value: string, path?: string) => {
+      const response = await app.inject({
+        method: "POST",
+        url,
+        headers: auth,
+        payload: { key, value, env: "dev", path },
+      });
+      expect(response.statusCode).toBe(201);
+    };
+
+    await set("FOO", "bar");
+    await set("DB_URL", "postgres://${FOO}@host");
+    await set("TOKEN", "tok", "/backend");
+    await set("NESTED", "${/backend/TOKEN}-x");
+    await set("A", "${B}");
+    await set("B", "${A}");
+    await set("LITERAL", "\\${FOO}");
+    await set("MISSING", "${DOES_NOT_EXIST}");
+
+    const list = await app.inject({ method: "GET", url: `${url}?env=dev`, headers: auth });
+    const values = Object.fromEntries(
+      list.json<{ secrets: { key: string; value: string }[] }>().secrets.map((row) => [
+        row.key,
+        row.value,
+      ]),
+    );
+
+    expect(values.DB_URL).toBe("postgres://bar@host");
+    expect(values.NESTED).toBe("tok-x");
+    expect(values.A).toBe("${B}");
+    expect(values.B).toBe("${A}");
+    expect(values.LITERAL).toBe("${FOO}");
+    expect(values.MISSING).toBe("${DOES_NOT_EXIST}");
+
+    const single = await app.inject({
+      method: "GET",
+      url: `${url}/DB_URL?env=dev`,
+      headers: auth,
+    });
+    expect(single.json<{ secret: { value: string } }>().secret.value).toBe("postgres://bar@host");
+  });
+
+  it("imports secrets from another environment", async () => {
+    const session = await signup(`imports-${Date.now()}@test.dev`);
+    const auth = { authorization: `Bearer ${session.token}` };
+    const url = `/api/projects/${session.projectId}/secrets`;
+
+    const set = async (env: string, key: string, value: string) => {
+      const response = await app.inject({
+        method: "POST",
+        url,
+        headers: auth,
+        payload: { key, value, env },
+      });
+      expect(response.statusCode).toBe(201);
+    };
+
+    await set("dev", "FOO", "devvalue");
+    await set("dev", "SHARED", "from-dev");
+
+    const linked = await app.inject({
+      method: "PUT",
+      url: `/api/projects/${session.projectId}/environments/${session.stagingId}/imports`,
+      headers: auth,
+      payload: { sourceEnvironmentId: session.devId },
+    });
+    expect(linked.statusCode).toBe(200);
+
+    await set("staging", "SHARED", "from-staging");
+
+    const staging = await app.inject({
+      method: "GET",
+      url: `${url}?env=staging`,
+      headers: auth,
+    });
+    const rows = staging.json<{
+      secrets: { key: string; value: string; importedFrom?: string }[];
+    }>().secrets;
+    const foo = rows.find((row) => row.key === "FOO");
+    const shared = rows.find((row) => row.key === "SHARED");
+    expect(foo).toMatchObject({ value: "devvalue", importedFrom: "dev" });
+    expect(shared).toMatchObject({ value: "from-staging" });
+    expect(shared?.importedFrom).toBeUndefined();
+
+    const importsList = await app.inject({
+      method: "GET",
+      url: `/api/projects/${session.projectId}/environment-imports`,
+      headers: auth,
+    });
+    expect(importsList.statusCode).toBe(200);
+    expect(
+      importsList.json<{ imports: { targetEnvironmentId: string }[] }>().imports,
+    ).toHaveLength(1);
+
+    const identity = await app.inject({
+      method: "POST",
+      url: `/api/projects/${session.projectId}/identities`,
+      headers: auth,
+      payload: { name: "staging-reader", role: "viewer", environmentIds: [session.stagingId] },
+    });
+    const created = identity.json<{ identity: { clientId: string; clientSecret: string } }>().identity;
+    const tokenResponse = await app.inject({
+      method: "POST",
+      url: "/api/auth/token",
+      payload: { clientId: created.clientId, clientSecret: created.clientSecret },
+    });
+    const machineToken = tokenResponse.json<{ accessToken: string }>().accessToken;
+
+    const machineView = await app.inject({
+      method: "GET",
+      url: `${url}?env=staging`,
+      headers: { authorization: `Bearer ${machineToken}` },
+    });
+    const machineRows = machineView.json<{ secrets: { key: string }[] }>().secrets;
+    expect(machineRows.find((row) => row.key === "SHARED")).toBeTruthy();
+    expect(machineRows.find((row) => row.key === "FOO")).toBeUndefined();
   });
 
   it("writes audit entries without secret values", async () => {

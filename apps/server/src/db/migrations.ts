@@ -210,4 +210,15 @@ create table change_request_approvals (
 );
 `,
   },
+  {
+    name: "0004_secret_references",
+    sql: `
+create table environment_imports (
+  target_environment_id uuid primary key references environments(id) on delete cascade,
+  source_environment_id uuid not null references environments(id) on delete cascade,
+  created_at timestamptz not null default now(),
+  constraint environment_imports_distinct check (target_environment_id <> source_environment_id)
+);
+`,
+  },
 ];
