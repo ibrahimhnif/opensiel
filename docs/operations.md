@@ -60,6 +60,26 @@ Keep the old key until step 4. Projects on an unknown key version fail closed wi
 When using AWS KMS, wrap the new master key with KMS and update
 `OPENSIEL_KMS_WRAPPED_MASTER_KEY` after rewrapping projects.
 
+## Secret rotation
+
+The API runs a rotation scheduler every 60 seconds (advisory-locked across replicas).
+
+```sql
+select id, secret_key, provider, enabled, last_status, last_error,
+       failure_count, last_run_at, next_run_at, previous_revoke_after
+from rotation_policies
+order by next_run_at;
+```
+
+- A failed rotation keeps the current secret value and backs off exponentially (max one hour).
+- `previous_revoke_after` shows when the retired credential will be revoked. To force it now,
+  set the timestamp to the past and wait for the next tick.
+- Manual runs: `POST /api/projects/:id/rotations/:rotationId/rotate` (owner/admin).
+- PostgreSQL rotation needs an admin connection that can `ALTER ROLE`; both roles should have
+  the same grants, and the application reads whichever username is currently in the secret.
+- HTTP rotation endpoints receive `{ projectId, environment, path, key }` and must return
+  `{ value }` or `{ username, password }`; revoke receives the stored credential.
+
 ## Dynamic credential leases
 
 - The API drops roles at expiry with a sweep every 60 seconds.

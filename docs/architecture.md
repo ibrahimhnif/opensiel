@@ -133,6 +133,30 @@ Owners/admins approve or reject; requesters cannot approve their own request. On
 required number of distinct approvals is reached, the payload is decrypted and applied, and
 an audit entry records the approver.
 
+## Static secret rotation
+
+`rotation_policies` schedules rotation for a single secret at `(environment, path, key)`.
+
+- Providers: `postgres` (rotate a password for one of two named roles and render the secret
+  through `valueTemplate`) and `http` (call a `createUrl`, optionally `revokeUrl`).
+- Dual-phase: each successful run writes a new secret version, keeps the credential that was
+  active in an encrypted `previous` slot with `previousRevokeAfter = now + graceSeconds`, and
+  revokes it when the grace window ends. The `current` credential is stored encrypted so the
+  next run can demote it.
+- Config and credentials are encrypted with the project DEK under
+  `AAD = rotation:<id>:(config|current|previous)`.
+- The scheduler runs every 60 seconds, takes a `pg_try_advisory_xact_lock` so replicas do not
+  double-run, revokes due credentials, and rotates due policies. `intervalSeconds` must be
+  greater than `graceSeconds`.
+- Failures are recorded on the policy with exponential backoff (capped at one hour) and leave
+  the current credential and secret value untouched.
+- `POST /api/projects/:id/rotations/:rotationId/rotate` runs a rotation immediately.
+
+The HTTP provider posts `{ projectId, environment, path, key }` to `createUrl` and expects
+`{ value }` or `{ username, password }`; the stored credential is posted to `revokeUrl`.
+The PostgreSQL provider runs `ALTER ROLE … PASSWORD` through the admin connection and
+randomizes the retired role's password on revocation.
+
 ## Version diff and point-in-time restore
 
 `GET /projects/:id/secrets/:key/diff` decrypts two versions and returns them masked unless
