@@ -1,11 +1,11 @@
 # SDK
 
-`@opensiel/sdk` is a typed, dependency-free Node client, published to npm.
+`@liostech/opensiel-sdk` is a typed, dependency-free Node client, published to npm.
 
 ## Install
 
 ```bash
-npm install @opensiel/sdk
+npm install @liostech/opensiel-sdk
 ```
 
 Requires Node.js 20+.
@@ -14,14 +14,14 @@ To work on the SDK in this repository, build the workspace package and install i
 checkout:
 
 ```bash
-pnpm --filter @opensiel/sdk build
+pnpm --filter @liostech/opensiel-sdk build
 npm install /path/to/opensiel/packages/sdk
 ```
 
 ## Quick start
 
 ```ts
-import { OpensielClient } from "@opensiel/sdk";
+import { OpensielClient } from "@liostech/opensiel-sdk";
 
 const client = new OpensielClient({ apiUrl: "http://localhost:8787" });
 
@@ -82,7 +82,7 @@ Tokens live for 15 minutes. Call `loginWithClientCredentials` again to renew.
 ## Errors
 
 ```ts
-import { OpensielError } from "@opensiel/sdk";
+import { OpensielError } from "@liostech/opensiel-sdk";
 
 try {
   await client.getSecret(projectId, "prod", "DATABASE_URL");

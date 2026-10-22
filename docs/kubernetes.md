@@ -145,7 +145,7 @@ Notes:
   from your app if you need on-demand reads.
 - For long-running workloads that need fresh secrets, run a sidecar that refreshes the file or
   call the SDK with a renewed token.
-- Node.js apps can skip the CLI and use `@opensiel/sdk` at startup.
+- Node.js apps can skip the CLI and use `@liostech/opensiel-sdk` at startup.
 
 ## Scaling and availability
 

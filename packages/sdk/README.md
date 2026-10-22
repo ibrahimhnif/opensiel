@@ -1,4 +1,4 @@
-# @opensiel/sdk
+# @liostech/opensiel-sdk
 
 Typed, dependency-free Node client for [opensiel](https://github.com/ibrahimhnif/opensiel), a
 self-hosted secrets manager with approvals, versioning, SSO, dynamic credentials, and audit
@@ -9,11 +9,11 @@ Requires Node.js 20+.
 ## Install
 
 ```bash
-npm install @opensiel/sdk
+npm install @liostech/opensiel-sdk
 ```
 
 ```ts
-import { OpensielClient } from "@opensiel/sdk";
+import { OpensielClient } from "@liostech/opensiel-sdk";
 
 const client = new OpensielClient({ apiUrl: "https://opensiel.example.com" });
 await client.login("you@example.com", "password");
@@ -61,7 +61,7 @@ requires approvals.
 ## Errors
 
 ```ts
-import { OpensielError } from "@opensiel/sdk";
+import { OpensielError } from "@liostech/opensiel-sdk";
 
 try {
   await client.getSecret(projectId, "prod", "DATABASE_URL");

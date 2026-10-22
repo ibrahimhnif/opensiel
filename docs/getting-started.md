@@ -103,7 +103,7 @@ the child process. See [CLI](cli.md) for every command.
 ## 5. Use the SDK
 
 ```ts
-import { OpensielClient } from "@opensiel/sdk";
+import { OpensielClient } from "@liostech/opensiel-sdk";
 
 const client = new OpensielClient({ apiUrl: "http://localhost:8787" });
 await client.loginWithClientCredentials(clientId, clientSecret);

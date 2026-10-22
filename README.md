@@ -72,7 +72,7 @@ Hosted docs: <https://opensiel.liostech.id/docs/> (the same pages are in [`docs/
 | **Webhooks**                | HMAC-SHA256 signed event deliveries with retries and delivery status.                                                                                   |
 | **Master key rotation**     | Rewrap project data keys to a new KEK without re-encrypting secrets; optional AWS KMS.                                                                  |
 | **Audit log**               | Writes, reads, rollbacks, SSO logins, leases, and webhooks — values are never recorded.                                                                 |
-| **CLI & SDK**               | `opensiel run --env dev -- npm run dev`, `opensiel secrets import .env`, and `@opensiel/sdk`.                                                           |
+| **CLI & SDK**               | `opensiel run --env dev -- npm run dev`, `opensiel secrets import .env`, and `@liostech/opensiel-sdk`.                                                  |
 
 ## Quickstart
 
@@ -124,11 +124,11 @@ opensiel run --env dev -- npm run dev
 ### SDK
 
 ```bash
-npm install @opensiel/sdk
+npm install @liostech/opensiel-sdk
 ```
 
 ```ts
-import { OpensielClient } from "@opensiel/sdk";
+import { OpensielClient } from "@liostech/opensiel-sdk";
 
 const client = new OpensielClient({ apiUrl: "http://localhost:8787" });
 await client.loginWithClientCredentials(clientId, clientSecret);

@@ -1,5 +1,5 @@
 {
-  "name": "@opensiel/sdk",
+  "name": "@liostech/opensiel-sdk",
   "version": "0.1.0",
   "description": "Typed Node client for opensiel, a self-hosted secrets manager with approvals, versioning, and SSO.",
   "keywords": [

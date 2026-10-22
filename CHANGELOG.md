@@ -20,7 +20,7 @@ All notable changes to this project are documented here. The format is based on
 - HMAC-signed webhooks with retries and delivery status.
 - Master key rotation with versioned project DEKs and optional AWS KMS.
 - Audit log for reads, writes, rollbacks, SSO logins, leases, and webhooks.
-- `opensiel` CLI (`login`, `init`, `secrets`, `import`, `export`, `run`) and `@opensiel/sdk`.
+- `opensiel` CLI (`login`, `init`, `secrets`, `import`, `export`, `run`) and `@liostech/opensiel-sdk`.
 - Docker Compose and Kubernetes deployment manifests.
 
 [0.1.0]: https://github.com/ibrahimhnif/opensiel/releases/tag/v0.1.0

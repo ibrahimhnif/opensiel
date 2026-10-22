@@ -44,8 +44,8 @@ jobs:
           cache: pnpm
           registry-url: https://registry.npmjs.org
       - run: pnpm install --frozen-lockfile
-      - run: pnpm --filter @opensiel/sdk build
-      - name: Publish @opensiel/sdk
+      - run: pnpm --filter @liostech/opensiel-sdk build
+      - name: Publish @liostech/opensiel-sdk
         working-directory: packages/sdk
         run: npm publish --access public --provenance
         env:
