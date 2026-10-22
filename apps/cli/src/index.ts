@@ -158,7 +158,7 @@ const program = new Command();
 program
   .name("opensiel")
   .description("opensiel — self-hosted secrets manager CLI")
-  .version("0.1.0")
+  .version("0.1.1")
   .option("--api-url <url>", "opensiel server URL")
   .option("--token <token>", "session or machine token");
 

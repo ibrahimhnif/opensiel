@@ -1,6 +1,6 @@
 {
   "name": "opensiel",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "private": true,
   "license": "MIT",
   "description": "Self-hosted, MIT-licensed secrets manager with approvals, versioning, SSO, dynamic credentials, webhooks, and audit logs.",
