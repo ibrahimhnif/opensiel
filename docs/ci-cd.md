@@ -141,20 +141,18 @@ jobs:
         run: ./deploy.sh
 ```
 
-To use the CLI instead, build it in the job:
+To use the CLI instead:
 
 ```yaml
-- uses: pnpm/action-setup@v4
 - uses: actions/setup-node@v4
   with:
     node-version: 22
-- run: pnpm install --frozen-lockfile
-- run: pnpm --filter @opensiel/cli build
+- run: npm install -g @liostech/opensiel-cli
 - name: Run with secrets
   run: |
     TOKEN=$(curl -fsS -X POST "$OPENSIEL_API/api/auth/token" ... | jq -r .accessToken)
     OPENSIEL_TOKEN="$TOKEN" \
-      node apps/cli/dist/index.js --api-url "$OPENSIEL_API" \
+      opensiel --api-url "$OPENSIEL_API" \
       run --projectId "$OPENSIEL_PROJECT_ID" --env prod -- ./deploy.sh
 ```
 

@@ -38,9 +38,6 @@ importers:
 
   apps/cli:
     dependencies:
-      '@opensiel/shared':
-        specifier: workspace:*
-        version: link:../../packages/shared
       commander:
         specifier: ^13.1.0
         version: 13.1.0

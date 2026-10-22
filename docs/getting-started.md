@@ -88,8 +88,7 @@ In the UI:
 ## 4. Use the CLI
 
 ```bash
-pnpm --filter @opensiel/cli build
-export PATH="$PWD/apps/cli/dist:$PATH"
+npm install -g @liostech/opensiel-cli
 
 opensiel login --api-url http://localhost:8787
 opensiel init --project web-app --env dev

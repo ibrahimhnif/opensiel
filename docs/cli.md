@@ -1,19 +1,28 @@
 # CLI
 
-The `opensiel` CLI fetches secrets and injects them into a child process. It is part of this
-repository and is not published to npm.
+The `opensiel` CLI fetches secrets and injects them into a child process. It is published as
+`@liostech/opensiel-cli`.
 
 ## Install
 
 ```bash
-pnpm install
-pnpm --filter @opensiel/cli build
-export PATH="$PWD/apps/cli/dist:$PATH"
-
+npm install -g @liostech/opensiel-cli
 opensiel --version
 ```
 
-You can also symlink `apps/cli/dist/index.js` into `~/.local/bin/opensiel`.
+Without a global install:
+
+```bash
+npx @liostech/opensiel-cli --help
+```
+
+To work on the CLI from this repository:
+
+```bash
+pnpm install
+pnpm --filter @liostech/opensiel-cli build
+export PATH="$PWD/apps/cli/dist:$PATH"
+```
 
 ## Configuration files
 

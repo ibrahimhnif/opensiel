@@ -60,6 +60,32 @@ jobs:
           fi
           npm publish --access public --provenance
 
+  cli:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+          registry-url: https://registry.npmjs.org
+      - run: npm install -g npm@^11.16.0
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm --filter @liostech/opensiel-cli build
+      - name: Publish @liostech/opensiel-cli
+        working-directory: apps/cli
+        run: |
+          VERSION="$(node -p "require('./package.json').version")"
+          if npm view "@liostech/opensiel-cli@$VERSION" version >/dev/null 2>&1; then
+            echo "@liostech/opensiel-cli@$VERSION is already published; skipping"
+            exit 0
+          fi
+          npm publish --access public --provenance
+
   chart:
     runs-on: ubuntu-latest
     permissions:
@@ -93,7 +119,7 @@ jobs:
           if-no-files-found: error
 
   release:
-    needs: [image, chart, sdk]
+    needs: [image, chart, sdk, cli]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4

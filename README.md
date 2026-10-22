@@ -112,8 +112,7 @@ The first account becomes the instance owner. Then turn off open signup (see
 ### CLI
 
 ```bash
-pnpm --filter @opensiel/cli build
-export PATH="$PWD/apps/cli/dist:$PATH"
+npm install -g @liostech/opensiel-cli
 
 opensiel login --api-url http://localhost:8787
 opensiel init --project default --env dev
@@ -210,9 +209,9 @@ See [docs/architecture.md](docs/architecture.md) for the data model, flows, and 
 
 ## Self-hosting
 
-The published image is `ghcr.io/<owner>/opensiel`. Manifests in [`deploy/k8s`](deploy/k8s)
-cover the namespace, PostgreSQL, the app, and an ingress. Replace the `OWNER` placeholders and
-create the secrets out of band:
+The published image is `ghcr.io/ibrahimhnif/opensiel`. The Helm chart is the recommended
+Kubernetes path; raw manifests in [`deploy/k8s`](deploy/k8s) work without Helm. See
+[Kubernetes](docs/kubernetes.md) for both.
 
 ```bash
 kubectl apply -f deploy/k8s/namespace.yaml
