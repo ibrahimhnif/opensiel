@@ -22,8 +22,8 @@ spec:
           type: RuntimeDefault
       containers:
         - name: opensiel
-          # Replace OWNER with the GitHub user or organization that published the image.
-          image: ghcr.io/OWNER/opensiel:latest
+          # Pin a release tag in production.
+          image: ghcr.io/ibrahimhnif/opensiel:latest
           imagePullPolicy: Always
           ports:
             - name: http

@@ -1,9 +1,75 @@
 # Kubernetes
 
-The manifests in [`deploy/k8s`](https://github.com/ibrahimhnif/opensiel/tree/main/deploy/k8s) run the API and a single PostgreSQL instance.
+Two deployment paths:
+
+- **Helm chart (recommended)** — one command, generated secrets, optional bundled PostgreSQL.
+- **Raw manifests** — `kubectl apply` if you do not use Helm.
+
 The API serves both `/api/*` and the web UI.
 
-## Deploy
+## Helm
+
+The release workflow publishes the chart to GHCR and attaches `opensiel-<version>.tgz` to each
+GitHub release. The container image must be public, or the cluster needs an image pull secret.
+
+```bash
+helm install opensiel oci://ghcr.io/ibrahimhnif/charts/opensiel \
+  --version 0.1.0 \
+  --namespace opensiel --create-namespace
+```
+
+With ingress:
+
+```bash
+helm install opensiel oci://ghcr.io/ibrahimhnif/charts/opensiel \
+  --version 0.1.0 \
+  --namespace opensiel --create-namespace \
+  --set ingress.enabled=true \
+  --set ingress.className=traefik \
+  --set ingress.hosts[0].host=opensiel.example.com \
+  --set ingress.tls[0].secretName=opensiel-tls \
+  --set ingress.tls[0].hosts[0]=opensiel.example.com
+```
+
+If the OCI package is not public, install the release asset instead:
+
+```bash
+helm install opensiel \
+  https://github.com/ibrahimhnif/opensiel/releases/download/v0.1.0/opensiel-0.1.0.tgz \
+  --namespace opensiel --create-namespace
+```
+
+Helm generates `OPENSIEL_MASTER_KEY`, `OPENSIEL_JWT_SECRET`, the database password, and
+`DATABASE_URL` in a Secret, and preserves them on upgrade. Back up the master key separately:
+
+```bash
+kubectl -n opensiel get secret opensiel \
+  -o jsonpath='{.data.OPENSIEL_MASTER_KEY}' | base64 -d
+```
+
+The chart values cover the image tag, replicas, resources, ingress, storage, and an external
+database. The full list is in
+[`deploy/helm/opensiel/README.md`](https://github.com/ibrahimhnif/opensiel/blob/main/deploy/helm/opensiel/README.md).
+
+Upgrade:
+
+```bash
+helm upgrade opensiel oci://ghcr.io/ibrahimhnif/charts/opensiel \
+  --version 0.1.1 --namespace opensiel --reuse-values
+helm test opensiel -n opensiel
+```
+
+After creating the owner account, close signup:
+
+```bash
+helm upgrade opensiel oci://ghcr.io/ibrahimhnif/charts/opensiel \
+  --namespace opensiel --reuse-values --set env.OPENSIEL_ALLOW_SIGNUP=false
+```
+
+## Raw manifests
+
+The manifests in [`deploy/k8s`](https://github.com/ibrahimhnif/opensiel/tree/main/deploy/k8s)
+run the API and a single PostgreSQL instance.
 
 ```bash
 kubectl apply -f deploy/k8s/namespace.yaml

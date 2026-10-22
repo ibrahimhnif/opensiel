@@ -5,10 +5,11 @@ Maintainer checklist for a public release. The release workflow runs on tags mat
 ## 1. Preconditions
 
 - [ ] The repository is public.
-- [ ] The GHCR package is public: **GitHub → your profile → Packages → opensiel → Package
-      settings → Change visibility → Public**. The one-command installer pulls
-      `ghcr.io/ibrahimhnif/opensiel:<tag>`; while the package is private, `docker compose pull`
-      fails.
+- [ ] The GHCR container package is public: **GitHub → your profile → Packages → opensiel →
+      Package settings → Change visibility → Public**. The one-command installer and the Helm
+      chart pull `ghcr.io/ibrahimhnif/opensiel:<tag>`; while the package is private, pulls fail.
+- [ ] The GHCR chart package (`charts/opensiel`) is public if you want OCI installs. The chart
+      is also attached to the GitHub release, which works without a public OCI package.
 - [ ] The npm organization `liostech` exists and your account can publish to it. Create it at
       <https://www.npmjs.com/org/create> if needed. `@liostech/opensiel-sdk` is scoped, so publishing
       without the org fails.
@@ -42,9 +43,11 @@ git push origin v0.1.0
 The tag runs `.github/workflows/release.yml`:
 
 1. `image` builds and pushes `ghcr.io/<owner>/opensiel:v0.1.0` and `:latest`.
-2. `sdk` publishes `@liostech/opensiel-sdk` to npm with provenance using OIDC trusted
+2. `chart` lints, packages, pushes `oci://ghcr.io/<owner>/charts/opensiel:0.1.0`, and uploads
+   the chart artifact.
+3. `sdk` publishes `@liostech/opensiel-sdk` to npm with provenance using OIDC trusted
    publishing (no npm token).
-3. `release` creates the GitHub release with generated notes.
+4. `release` attaches the chart `.tgz` and creates the GitHub release with generated notes.
 
 If `sdk` fails with `ENEEDAUTH`, check the trusted publisher fields (repository, workflow
 filename, and `id-token: write`). If it reports the version already exists, the publish was
@@ -87,6 +90,9 @@ npm view @liostech/opensiel-sdk dist-tags
 
 docker pull ghcr.io/ibrahimhnif/opensiel:v0.1.0
 
+helm show chart oci://ghcr.io/ibrahimhnif/charts/opensiel --version 0.1.0
+helm template opensiel oci://ghcr.io/ibrahimhnif/charts/opensiel --version 0.1.0
+
 curl -fsSL https://opensiel.liostech.id/install.sh | bash -s -- --version v0.1.0
 ```
 
@@ -121,5 +127,5 @@ curl -fsSL https://opensiel.liostech.id/install.sh | bash -s -- --version v0.1.0
 - [ ] Trusted publisher configured for the next version
 - [ ] Versions and changelog updated
 - [ ] Tag pushed
-- [ ] `image`, `sdk`, and `release` jobs green
-- [ ] `npm view`, `docker pull`, and installer smoke test pass
+- [ ] `image`, `chart`, `sdk`, and `release` jobs green
+- [ ] `npm view`, `docker pull`, `helm show chart`, and installer smoke test pass

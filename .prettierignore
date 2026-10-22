@@ -9,3 +9,4 @@ apps/web/public/screenshots
 .env.*
 docs/.vitepress/dist
 docs/.vitepress/cache
+deploy/helm/**/templates/

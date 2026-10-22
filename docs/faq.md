@@ -80,8 +80,10 @@ backup cannot be decrypted. See [Operations](operations.md#backups).
 
 ### Is there a Kubernetes operator or Helm chart?
 
-Not yet. The repository ships Kubernetes manifests; secret injection into pods uses an init
-container with the CLI or the SDK. See [Kubernetes](kubernetes.md).
+There is a Helm chart (`oci://ghcr.io/ibrahimhnif/charts/opensiel`) published by the release
+workflow and attached to each GitHub release. It can bundle PostgreSQL or use an external
+database. There is no operator yet; secret injection into pods uses an init container with the
+CLI or the SDK. See [Kubernetes](kubernetes.md).
 
 ### Can I run it in production?
 
