@@ -447,4 +447,30 @@ create table role_grants (
 create index role_grants_user_idx on role_grants (user_id, org_id);
 `,
   },
+  {
+    name: "0016_secret_syncs",
+    sql: `
+create table secret_syncs (
+  id uuid primary key default gen_random_uuid(),
+  project_id uuid not null references projects(id) on delete cascade,
+  environment_id uuid not null references environments(id) on delete cascade,
+  path text not null default '/',
+  provider text not null,
+  config_ciphertext text not null,
+  config_iv text not null,
+  config_tag text not null,
+  enabled boolean not null default true,
+  interval_seconds integer not null default 300,
+  next_run_at timestamptz not null default now(),
+  last_run_at timestamptz,
+  last_status text,
+  last_error text,
+  failure_count integer not null default 0,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+create index secret_syncs_due_idx on secret_syncs (enabled, next_run_at);
+`,
+  },
 ];

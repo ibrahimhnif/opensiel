@@ -60,6 +60,24 @@ Keep the old key until step 4. Projects on an unknown key version fail closed wi
 When using AWS KMS, wrap the new master key with KMS and update
 `OPENSIEL_KMS_WRAPPED_MASTER_KEY` after rewrapping projects.
 
+## Secret syncs
+
+The API runs a sync scheduler every 60 seconds (advisory-locked across replicas).
+
+```sql
+select id, provider, environment_id, path, enabled, last_status, last_error,
+       failure_count, last_run_at, next_run_at
+from secret_syncs
+order by next_run_at;
+```
+
+- Manual run: `POST /api/projects/:id/syncs/:syncId/run` (owner/admin).
+- A failed run keeps the previous provider state and backs off exponentially (max one hour).
+- Only secrets at the configured path are pushed; removing a secret locally does not delete the
+  remote copy.
+- Provider tokens are encrypted at rest; rotate them by updating the sync config (delete and
+  recreate the sync) until config editing is added.
+
 ## Secret rotation
 
 The API runs a rotation scheduler every 60 seconds (advisory-locked across replicas).

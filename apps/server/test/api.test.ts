@@ -61,6 +61,8 @@ if (!databaseUrl) {
   const rotationCalls: { created: Record<string, unknown>[]; revoked: Record<string, unknown>[] } =
     { created: [], revoked: [] };
   let rotationCreateCount = 0;
+  const syncBodies: Record<string, unknown>[] = [];
+  let syncFail = false;
 
   function nextHook(timeoutMs = 3000): Promise<ReceivedHook> {
     const queued = hookQueue.shift();
@@ -391,6 +393,11 @@ if (!databaseUrl) {
     });
     hookReceiver.post("/rotate/revoke", async (request, reply) => {
       rotationCalls.revoked.push(JSON.parse(request.body as string) as Record<string, unknown>);
+      return reply.send({ ok: true });
+    });
+    hookReceiver.post("/sync-target", async (request, reply) => {
+      if (syncFail) return reply.code(500).send({ ok: false });
+      syncBodies.push(JSON.parse(request.body as string) as Record<string, unknown>);
       return reply.send({ ok: true });
     });
     await hookReceiver.listen({ port: 0, host: "127.0.0.1" });
@@ -1857,6 +1864,82 @@ if (!databaseUrl) {
       payload: { key: "RBAC_KEY", value: "y", env: "dev" },
     });
     expect(expired.statusCode).toBe(403);
+  });
+
+  it("syncs environment secrets to a webhook provider and records failures", async () => {
+    const session = await signup(`sync-${Date.now()}@test.dev`);
+    const auth = { authorization: `Bearer ${session.token}` };
+    const base = `/api/projects/${session.projectId}`;
+    const hookBase = hookUrl.replace(/\/hook$/, "");
+    syncBodies.length = 0;
+    syncFail = false;
+
+    await app.inject({
+      method: "POST",
+      url: `${base}/secrets`,
+      headers: auth,
+      payload: { key: "ROOT_KEY", value: "root-value", env: "dev" },
+    });
+    await app.inject({
+      method: "POST",
+      url: `${base}/secrets`,
+      headers: auth,
+      payload: { key: "FOLDER_KEY", value: "folder-value", env: "dev", path: "/backend" },
+    });
+
+    const created = await app.inject({
+      method: "POST",
+      url: `${base}/syncs`,
+      headers: auth,
+      payload: {
+        env: "dev",
+        path: "/",
+        provider: "webhook",
+        config: { url: `${hookBase}/sync-target` },
+        intervalSeconds: 300,
+      },
+    });
+    expect(created.statusCode).toBe(201);
+    const sync = created.json<{ sync: { id: string } }>().sync;
+
+    const run = await app.inject({
+      method: "POST",
+      url: `${base}/syncs/${sync.id}/run`,
+      headers: auth,
+    });
+    expect(run.statusCode).toBe(200);
+    expect(run.json<{ result: { status: string; count: number } }>().result).toMatchObject({
+      status: "success",
+      count: 1,
+    });
+    expect(syncBodies).toHaveLength(1);
+    expect(syncBodies[0]).toMatchObject({
+      environment: "dev",
+      path: "/",
+      secrets: { ROOT_KEY: "root-value" },
+    });
+    expect(JSON.stringify(syncBodies[0])).not.toContain("folder-value");
+
+    syncFail = true;
+    const failed = await app.inject({
+      method: "POST",
+      url: `${base}/syncs/${sync.id}/run`,
+      headers: auth,
+    });
+    expect(failed.json<{ result: { status: string } }>().result.status).toBe("error");
+    syncFail = false;
+
+    const rows = await database.sql<
+      { failure_count: number; last_status: string; last_error: string }[]
+    >`select failure_count, last_status, last_error from secret_syncs where id = ${sync.id}`;
+    expect(rows[0]).toMatchObject({ failure_count: 1, last_status: "error" });
+
+    const listed = await app.inject({
+      method: "GET",
+      url: `${base}/syncs`,
+      headers: auth,
+    });
+    expect(listed.json<{ syncs: { lastStatus: string }[] }>().syncs[0].lastStatus).toBe("error");
   });
 
   it("invites teammates into the same organization", async () => {

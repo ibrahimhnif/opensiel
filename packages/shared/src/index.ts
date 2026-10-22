@@ -356,6 +356,69 @@ export interface RoleGrantDto {
   createdAt: string;
 }
 
+export const syncWebhookConfigSchema = z.object({
+  url: z.string().url().max(2000),
+  headers: z.record(z.string()).optional(),
+});
+export type SyncWebhookConfig = z.infer<typeof syncWebhookConfigSchema>;
+
+export const syncVercelConfigSchema = z.object({
+  token: z.string().min(1).max(500),
+  vercelProjectId: z.string().min(1).max(200),
+  teamId: z.string().min(1).max(200).optional(),
+  target: z
+    .array(z.enum(["production", "preview", "development"]))
+    .min(1)
+    .default(["production"]),
+});
+export type SyncVercelConfig = z.infer<typeof syncVercelConfigSchema>;
+
+export const syncCloudflareConfigSchema = z.object({
+  token: z.string().min(1).max(500),
+  accountId: z.string().min(1).max(200),
+  scriptName: z.string().min(1).max(200),
+});
+export type SyncCloudflareConfig = z.infer<typeof syncCloudflareConfigSchema>;
+
+export const syncGithubConfigSchema = z.object({
+  token: z.string().min(1).max(500),
+  owner: z.string().min(1).max(200),
+  repo: z.string().min(1).max(200),
+  environment: z.string().min(1).max(200).optional(),
+});
+export type SyncGithubConfig = z.infer<typeof syncGithubConfigSchema>;
+
+export const createSecretSyncSchema = z.object({
+  env: slugSchema,
+  path: secretPathSchema.optional(),
+  provider: z.enum(["webhook", "vercel", "cloudflare", "github"]),
+  config: z.record(z.unknown()),
+  intervalSeconds: z.number().int().min(60).max(86_400).default(300),
+  enabled: z.boolean().optional(),
+});
+export type CreateSecretSyncInput = z.infer<typeof createSecretSyncSchema>;
+
+export const updateSecretSyncSchema = z.object({
+  enabled: z.boolean().optional(),
+  intervalSeconds: z.number().int().min(60).max(86_400).optional(),
+});
+export type UpdateSecretSyncInput = z.infer<typeof updateSecretSyncSchema>;
+
+export interface SecretSyncDto {
+  id: string;
+  environmentSlug: string;
+  path: string;
+  provider: string;
+  enabled: boolean;
+  intervalSeconds: number;
+  nextRunAt: string;
+  lastRunAt: string | null;
+  lastStatus: string | null;
+  lastError: string | null;
+  failureCount: number;
+  createdAt: string;
+}
+
 export const inviteMemberSchema = z.object({
   email: emailSchema,
   role: roleSchema.default("member"),

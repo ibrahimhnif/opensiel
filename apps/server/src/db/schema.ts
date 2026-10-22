@@ -508,6 +508,36 @@ export const roleGrants = pgTable(
 export type CustomRoleRow = typeof customRoles.$inferSelect;
 export type RoleGrantRow = typeof roleGrants.$inferSelect;
 
+export const secretSyncs = pgTable(
+  "secret_syncs",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    projectId: uuid("project_id")
+      .notNull()
+      .references(() => projects.id, { onDelete: "cascade" }),
+    environmentId: uuid("environment_id")
+      .notNull()
+      .references(() => environments.id, { onDelete: "cascade" }),
+    path: text("path").notNull().default("/"),
+    provider: text("provider").notNull(),
+    configCiphertext: text("config_ciphertext").notNull(),
+    configIv: text("config_iv").notNull(),
+    configTag: text("config_tag").notNull(),
+    enabled: boolean("enabled").notNull().default(true),
+    intervalSeconds: integer("interval_seconds").notNull().default(300),
+    nextRunAt: timestamp("next_run_at", { withTimezone: true }).notNull().defaultNow(),
+    lastRunAt: timestamp("last_run_at", { withTimezone: true }),
+    lastStatus: text("last_status"),
+    lastError: text("last_error"),
+    failureCount: integer("failure_count").notNull().default(0),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [index("secret_syncs_due_idx").on(table.enabled, table.nextRunAt)],
+);
+
+export type SecretSyncRow = typeof secretSyncs.$inferSelect;
+
 export type UserRow = typeof users.$inferSelect;
 export type OrgRow = typeof orgs.$inferSelect;
 export type ProjectRow = typeof projects.$inferSelect;

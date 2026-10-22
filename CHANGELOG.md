@@ -38,6 +38,8 @@ All notable changes to this project are documented here. The format is based on
   optional expiry) with revoke.
 - Web UI: sonner toasts replace transient inline notices, and destructive actions confirm
   through a shadcn alert dialog instead of `window.confirm`.
+- Secret syncs: scheduled delivery to webhooks, Vercel, Cloudflare Workers, and GitHub Actions
+  secrets with encrypted provider configs, per-run status, manual runs, and backoff.
 
 ### Changed
 

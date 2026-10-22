@@ -151,6 +151,24 @@ Owners/admins approve or reject; requesters cannot approve their own request. On
 required number of distinct approvals is reached, the payload is decrypted and applied, and
 an audit entry records the approver.
 
+## Secret syncs
+
+`secret_syncs` pushes the secrets at one environment/path to an external provider.
+
+- Providers: `webhook` (POST `{ projectId, environment, path, secrets }`), `vercel` (project env
+  variables with `upsert=true`), `cloudflare` (Worker secrets), and `github` (Actions secrets,
+  sealed with the repository public key via libsodium).
+- Provider configs contain tokens and are encrypted with the project DEK under
+  `AAD = sync:<id>:config`.
+- A scheduler runs every 60 seconds, takes a `pg_try_advisory_xact_lock` so replicas do not
+  double-run, and processes due syncs in order. `intervalSeconds` is between 60s and 24h.
+- Each run resolves the environment (including imports and references), keeps only keys at the
+  configured path, and sends them. Every key is upserted; removing a secret locally does not
+  delete it remotely.
+- Failures are recorded on the sync with exponential backoff (capped at one hour) and audited
+  as `sync.fail`; successful runs are audited as `sync.run` with a key count, never values.
+- `POST /api/projects/:id/syncs/:syncId/run` triggers a run immediately.
+
 ## Static secret rotation
 
 `rotation_policies` schedules rotation for a single secret at `(environment, path, key)`.
