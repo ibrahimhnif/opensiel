@@ -31,6 +31,7 @@ import { WebhooksView } from "./WebhooksView";
 import { MfaCard } from "./MfaCard";
 import { RotationsView } from "./RotationsView";
 import { RolesView } from "./RolesView";
+import { SyncsView } from "./SyncsView";
 
 type Tab =
   | "secrets"
@@ -43,7 +44,8 @@ type Tab =
   | "audit"
   | "security"
   | "rotations"
-  | "access";
+  | "access"
+  | "syncs";
 
 const TABS: { value: Tab; label: string }[] = [
   { value: "secrets", label: "Secrets" },
@@ -55,6 +57,7 @@ const TABS: { value: Tab; label: string }[] = [
   { value: "identities", label: "Identities" },
   { value: "audit", label: "Audit" },
   { value: "rotations", label: "Rotations" },
+  { value: "syncs", label: "Syncs" },
   { value: "access", label: "Access" },
   { value: "security", label: "Security" },
 ];
@@ -349,6 +352,7 @@ export function Dashboard({ user, onSignedOut }: { user: UserDto; onSignedOut: (
                     (entry.value !== "dynamic" &&
                       entry.value !== "webhooks" &&
                       entry.value !== "rotations" &&
+                      entry.value !== "syncs" &&
                       entry.value !== "access") ||
                     canManage,
                 ).map((entry) => (
@@ -389,6 +393,9 @@ export function Dashboard({ user, onSignedOut }: { user: UserDto; onSignedOut: (
               </TabsContent>
               <TabsContent value="rotations">
                 <RotationsView project={project} canManage={canManage} />
+              </TabsContent>
+              <TabsContent value="syncs">
+                <SyncsView project={project} canManage={canManage} />
               </TabsContent>
               <TabsContent value="access">
                 <RolesView project={project} />

@@ -163,8 +163,11 @@ an audit entry records the approver.
 `secret_syncs` pushes the secrets at one environment/path to an external provider.
 
 - Providers: `webhook` (POST `{ projectId, environment, path, secrets }`), `vercel` (project env
-  variables with `upsert=true`), `cloudflare` (Worker secrets), and `github` (Actions secrets,
-  sealed with the repository public key via libsodium).
+  variables with `upsert=true`), `cloudflare` (Worker secrets), `github` (Actions secrets,
+  sealed with the repository public key via libsodium), `aws` (Secrets Manager, one secret per
+  key with an optional prefix), `gcp` (Secret Manager with a new version per run), `azure`
+  (Key Vault secrets), and `kubernetes` (create or update a Secret through the cluster API).
+- Secret names are provider-safe: underscores become dashes.
 - Provider configs contain tokens and are encrypted with the project DEK under
   `AAD = sync:<id>:config`.
 - A scheduler runs every 60 seconds, takes a `pg_try_advisory_xact_lock` so replicas do not

@@ -3,8 +3,12 @@ import { eq } from "drizzle-orm";
 import type { FastifyInstance } from "fastify";
 import {
   createSecretSyncSchema,
+  syncAwsConfigSchema,
+  syncAzureConfigSchema,
   syncCloudflareConfigSchema,
+  syncGcpConfigSchema,
   syncGithubConfigSchema,
+  syncKubernetesConfigSchema,
   syncVercelConfigSchema,
   syncWebhookConfigSchema,
   updateSecretSyncSchema,
@@ -48,7 +52,11 @@ function parseConfig(provider: string, config: Record<string, unknown>) {
   if (provider === "webhook") return parse(syncWebhookConfigSchema, config);
   if (provider === "vercel") return parse(syncVercelConfigSchema, config);
   if (provider === "cloudflare") return parse(syncCloudflareConfigSchema, config);
-  return parse(syncGithubConfigSchema, config);
+  if (provider === "github") return parse(syncGithubConfigSchema, config);
+  if (provider === "aws") return parse(syncAwsConfigSchema, config);
+  if (provider === "gcp") return parse(syncGcpConfigSchema, config);
+  if (provider === "azure") return parse(syncAzureConfigSchema, config);
+  return parse(syncKubernetesConfigSchema, config);
 }
 
 export function registerSyncRoutes(app: FastifyInstance, deps: Deps): void {

@@ -65,6 +65,7 @@ if (!databaseUrl) {
   let rotationCreateCount = 0;
   const syncBodies: Record<string, unknown>[] = [];
   let syncFail = false;
+  const kubeSecrets = new Map<string, Record<string, string>>();
 
   function nextHook(timeoutMs = 3000): Promise<ReceivedHook> {
     const queued = hookQueue.shift();
@@ -411,6 +412,28 @@ if (!databaseUrl) {
     hookReceiver.post("/sync-target", async (request, reply) => {
       if (syncFail) return reply.code(500).send({ ok: false });
       syncBodies.push(JSON.parse(request.body as string) as Record<string, unknown>);
+      return reply.send({ ok: true });
+    });
+    hookReceiver.get("/api/v1/namespaces/:namespace/secrets/:name", async (request, reply) => {
+      const { name } = request.params as { name: string };
+      const data = kubeSecrets.get(name);
+      if (!data) return reply.code(404).send({ error: "not found" });
+      return reply.send({ metadata: { name, resourceVersion: "1" }, data });
+    });
+    hookReceiver.post("/api/v1/namespaces/:namespace/secrets", async (request, reply) => {
+      const body = JSON.parse(request.body as string) as {
+        metadata: { name: string };
+        data: Record<string, string>;
+      };
+      kubeSecrets.set(body.metadata.name, body.data);
+      return reply.code(201).send({ ok: true });
+    });
+    hookReceiver.put("/api/v1/namespaces/:namespace/secrets/:name", async (request, reply) => {
+      const { name } = request.params as { name: string };
+      const body = JSON.parse(request.body as string) as {
+        data: Record<string, string>;
+      };
+      kubeSecrets.set(name, body.data);
       return reply.send({ ok: true });
     });
     await hookReceiver.listen({ port: 0, host: "127.0.0.1" });
@@ -2058,6 +2081,55 @@ if (!databaseUrl) {
       headers: auth,
     });
     expect(listed.json<{ syncs: { lastStatus: string }[] }>().syncs[0].lastStatus).toBe("error");
+  });
+
+  it("syncs secrets to a Kubernetes Secret", async () => {
+    const session = await signup(`sync-kube-${Date.now()}@test.dev`);
+    const auth = { authorization: `Bearer ${session.token}` };
+    const base = `/api/projects/${session.projectId}`;
+    const hookBase = hookUrl.replace(/\/hook$/, "");
+    kubeSecrets.clear();
+
+    await app.inject({
+      method: "POST",
+      url: `${base}/secrets`,
+      headers: auth,
+      payload: { key: "K8S_KEY", value: "kube-value", env: "dev" },
+    });
+
+    const created = await app.inject({
+      method: "POST",
+      url: `${base}/syncs`,
+      headers: auth,
+      payload: {
+        env: "dev",
+        path: "/",
+        provider: "kubernetes",
+        config: {
+          apiUrl: hookBase,
+          token: "test-token",
+          namespace: "apps",
+          secretName: "app-secrets",
+        },
+        intervalSeconds: 300,
+      },
+    });
+    expect(created.statusCode).toBe(201);
+    const sync = created.json<{ sync: { id: string } }>().sync;
+
+    const run = await app.inject({
+      method: "POST",
+      url: `${base}/syncs/${sync.id}/run`,
+      headers: auth,
+    });
+    expect(run.json<{ result: { status: string; count: number } }>().result).toMatchObject({
+      status: "success",
+      count: 1,
+    });
+
+    const stored = kubeSecrets.get("app-secrets");
+    expect(stored).toBeTruthy();
+    expect(Buffer.from(stored!.K8S_KEY, "base64").toString("utf8")).toBe("kube-value");
   });
 
   it("invites teammates into the same organization", async () => {
