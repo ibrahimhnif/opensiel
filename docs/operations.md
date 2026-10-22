@@ -94,6 +94,24 @@ delete from audit_logs where created_at < now() - interval '90 days';
 
 Run it deliberately; audit history is part of the product.
 
+### Shipping audit logs
+
+Set `OPENSIEL_AUDIT_SINK` to `http`, `splunk`, `datadog`, or `s3` (see
+[Configuration](configuration.md#audit-sink)). The worker starts with the API and delivers new
+rows every `OPENSIEL_AUDIT_SINK_INTERVAL_SECONDS`.
+
+Check progress and failures:
+
+```sql
+select id, last_seq, failure_count, last_error, last_success_at, next_attempt_at
+from audit_sink_state;
+```
+
+A non-zero `failure_count` with a future `next_attempt_at` means the sink is in backoff; the
+same message is written to the server log. Fix the endpoint and wait for the backoff to expire
+(or reset `next_attempt_at`). The checkpoint never advances past a failed batch, so events are
+not lost.
+
 ## Disaster recovery checklist
 
 - [ ] `OPENSIEL_MASTER_KEY` (or KMS key + wrapped blob) available offline.

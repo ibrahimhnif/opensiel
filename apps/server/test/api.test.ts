@@ -10,6 +10,7 @@ import { buildApp } from "../src/app.js";
 import { createDb } from "../src/db/client.js";
 import type { Database } from "../src/db/client.js";
 import { runMigrations } from "../src/db/migrate.js";
+import { runAuditSinkOnce } from "../src/audit-sink.js";
 import { generateMasterKey, parseMasterKey, sha256 } from "../src/crypto.js";
 import type { Env } from "../src/env.js";
 
@@ -53,6 +54,8 @@ if (!databaseUrl) {
   }
   const hookQueue: ReceivedHook[] = [];
   const hookWaiters: ((hook: ReceivedHook) => void)[] = [];
+  const auditQueue: string[] = [];
+  let auditFail = false;
 
   function nextHook(timeoutMs = 3000): Promise<ReceivedHook> {
     const queued = hookQueue.shift();
@@ -362,6 +365,11 @@ if (!databaseUrl) {
       const waiter = hookWaiters.shift();
       if (waiter) waiter(received);
       else hookQueue.push(received);
+      return reply.code(200).send({ ok: true });
+    });
+    hookReceiver.post("/audit", async (request, reply) => {
+      if (auditFail) return reply.code(500).send({ ok: false });
+      auditQueue.push(request.body as string);
       return reply.code(200).send({ ok: true });
     });
     await hookReceiver.listen({ port: 0, host: "127.0.0.1" });
@@ -978,6 +986,92 @@ if (!databaseUrl) {
       headers: { authorization: `Bearer ${other.token}` },
     });
     expect(otherCsv.body).not.toContain("EXPORTED");
+  });
+
+  it("delivers audit events to the configured sink with a checkpoint", async () => {
+    const session = await signup(`audit-sink-${Date.now()}@test.dev`);
+    const auth = { authorization: `Bearer ${session.token}` };
+    const sinkEnv: Env = {
+      ...env,
+      auditSink: {
+        type: "http",
+        url: hookUrl.replace(/\/hook$/, "/audit"),
+        intervalSeconds: 60,
+        batchSize: 500,
+      },
+    };
+    const sinkDeps = { env: sinkEnv, db: database.db, sql: database.sql };
+    await database.sql`
+      update audit_sink_state
+      set next_attempt_at = null, failure_count = 0, last_error = null
+      where id = 'default'
+    `;
+
+    for (let attempt = 0; attempt < 50; attempt += 1) {
+      const drained = await runAuditSinkOnce(sinkDeps);
+      if (drained.sent === 0) break;
+    }
+    auditQueue.length = 0;
+
+    await app.inject({
+      method: "POST",
+      url: `/api/projects/${session.projectId}/secrets`,
+      headers: auth,
+      payload: { key: "SINK_KEY", value: "sink-secret-value", env: "dev" },
+    });
+
+    const delivered = await runAuditSinkOnce(sinkDeps);
+    expect(delivered.sent).toBe(1);
+    expect(auditQueue).toHaveLength(1);
+    const payload = JSON.parse(auditQueue[0]) as {
+      events: { action: string; metadata: unknown }[];
+    };
+    expect(payload.events.map((event) => event.action)).toEqual(["secret.write"]);
+    expect(payload.events).toHaveLength(1);
+    expect(auditQueue[0]).not.toContain("sink-secret-value");
+
+    const idle = await runAuditSinkOnce(sinkDeps);
+    expect(idle.sent).toBe(0);
+  });
+
+  it("backs off after a sink delivery failure", async () => {
+    const session = await signup(`audit-sink-fail-${Date.now()}@test.dev`);
+    const auth = { authorization: `Bearer ${session.token}` };
+    const sinkEnv: Env = {
+      ...env,
+      auditSink: {
+        type: "http",
+        url: hookUrl.replace(/\/hook$/, "/audit"),
+        intervalSeconds: 60,
+        batchSize: 500,
+      },
+    };
+    const sinkDeps = { env: sinkEnv, db: database.db, sql: database.sql };
+
+    await app.inject({
+      method: "POST",
+      url: `/api/projects/${session.projectId}/secrets`,
+      headers: auth,
+      payload: { key: "SINK_RETRY", value: "retry-value", env: "dev" },
+    });
+
+    auditFail = true;
+    try {
+      const failed = await runAuditSinkOnce(sinkDeps);
+      expect(failed.sent).toBe(0);
+      expect(failed.error).toContain("500");
+
+      const skipped = await runAuditSinkOnce(sinkDeps);
+      expect(skipped.sent).toBe(0);
+      expect(skipped.skipped).toBe("backoff");
+    } finally {
+      auditFail = false;
+      await database.sql`
+        update audit_sink_state
+        set next_attempt_at = null, failure_count = 0, last_error = null
+        where id = 'default'
+      `;
+    }
   });
 
   it("encrypts and decrypts payloads with project transit keys", async () => {

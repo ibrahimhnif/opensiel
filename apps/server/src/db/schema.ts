@@ -1,5 +1,6 @@
 import { sql } from "drizzle-orm";
 import {
+  bigint,
   boolean,
   index,
   integer,
@@ -352,6 +353,9 @@ export const auditLogs = pgTable(
   "audit_logs",
   {
     id: uuid("id").primaryKey().defaultRandom(),
+    seq: bigint("seq", { mode: "number" })
+      .notNull()
+      .default(sql`nextval('audit_logs_seq')`),
     orgId: uuid("org_id")
       .notNull()
       .references(() => orgs.id, { onDelete: "cascade" }),
@@ -408,3 +412,15 @@ export type DynamicSecretLeaseRow = typeof dynamicSecretLeases.$inferSelect;
 export type WebhookRow = typeof webhooks.$inferSelect;
 export type AuditLogRow = typeof auditLogs.$inferSelect;
 export type TransitKeyRow = typeof transitKeys.$inferSelect;
+
+export const auditSinkState = pgTable("audit_sink_state", {
+  id: text("id").primaryKey(),
+  lastSeq: bigint("last_seq", { mode: "number" }).notNull().default(0),
+  failureCount: integer("failure_count").notNull().default(0),
+  nextAttemptAt: timestamp("next_attempt_at", { withTimezone: true }),
+  lastError: text("last_error"),
+  lastSuccessAt: timestamp("last_success_at", { withTimezone: true }),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+export type AuditSinkStateRow = typeof auditSinkState.$inferSelect;
