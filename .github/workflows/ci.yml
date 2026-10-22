@@ -40,6 +40,8 @@ jobs:
           grep -q '^OPENSIEL_MASTER_KEY=' "$tmp/.env"
           grep -q '^OPENSIEL_JWT_SECRET=' "$tmp/.env"
           rm -rf "$tmp"
+      - run: node --check scripts/opensiel-action.mjs
+      - run: pnpm test:action
       - run: pnpm typecheck
       - run: pnpm build
       - run: pnpm test

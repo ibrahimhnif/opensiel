@@ -136,6 +136,22 @@ await client.loginWithClientCredentials(clientId, clientSecret);
 const { secrets } = await client.listSecrets(projectId, "dev");
 ```
 
+### GitHub Actions
+
+```yaml
+- uses: ibrahimhnif/opensiel@v0.1.0
+  with:
+    api-url: https://opensiel.example.com
+    project: web-app
+    env: prod
+    client-id: ${{ secrets.OPENSIEL_CLIENT_ID }}
+    client-secret: ${{ secrets.OPENSIEL_CLIENT_SECRET }}
+```
+
+Exports root-folder secrets to `GITHUB_ENV`, with values masked in the log. Set `output-file`
+if a dotenv file is needed.
+See [CI/CD](docs/ci-cd.md#reusable-github-action) for the inputs and outputs.
+
 ## Screenshots
 
 | Dashboard                                    | Approvals                                    |

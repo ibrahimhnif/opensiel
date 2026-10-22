@@ -49,6 +49,10 @@ The tag runs `.github/workflows/release.yml`:
    publishing (no npm token).
 4. `release` attaches the chart `.tgz` and creates the GitHub release with generated notes.
 
+The tag also makes the repository root `action.yml` usable as
+`uses: ibrahimhnif/opensiel@v0.1.0`. Pin the release tag in workflows. Optionally, publish the
+action to the GitHub Marketplace from the release page.
+
 If `sdk` fails with `ENEEDAUTH`, check the trusted publisher fields (repository, workflow
 filename, and `id-token: write`). If it reports the version already exists, the publish was
 already done; that is expected for a re-run.
@@ -129,3 +133,4 @@ curl -fsSL https://opensiel.liostech.id/install.sh | bash -s -- --version v0.1.0
 - [ ] Tag pushed
 - [ ] `image`, `chart`, `sdk`, and `release` jobs green
 - [ ] `npm view`, `docker pull`, `helm show chart`, and installer smoke test pass
+- [ ] `uses: ibrahimhnif/opensiel@v<version>` works in a scratch workflow

@@ -44,7 +44,70 @@ set +a
 `export` includes root-folder secrets only. Tokens expire after 15 minutes; request another
 one for long jobs.
 
-## GitHub Actions
+## Reusable GitHub Action
+
+The repository ships a composite action, so a workflow does not need curl or the CLI:
+
+```yaml
+- uses: ibrahimhnif/opensiel@v0.1.0
+  with:
+    api-url: https://opensiel.example.com
+    project: web-app
+    env: prod
+    client-id: ${{ secrets.OPENSIEL_CLIENT_ID }}
+    client-secret: ${{ secrets.OPENSIEL_CLIENT_SECRET }}
+```
+
+The action resolves the project (ID or slug), fetches the environment, masks values in the log,
+and exports every root-folder secret to `GITHUB_ENV` for subsequent steps.
+
+To run a command with the secrets directly:
+
+```yaml
+- uses: ibrahimhnif/opensiel@v0.1.0
+  with:
+    api-url: https://opensiel.example.com
+    project: web-app
+    env: prod
+    client-id: ${{ secrets.OPENSIEL_CLIENT_ID }}
+    client-secret: ${{ secrets.OPENSIEL_CLIENT_SECRET }}
+    command: npm run deploy
+```
+
+### Inputs
+
+| Input           | Required | Default | Description                                         |
+| --------------- | -------- | ------- | --------------------------------------------------- |
+| `api-url`       | yes      | –       | Instance base URL.                                  |
+| `project`       | yes      | –       | Project ID or slug.                                 |
+| `env`           | yes      | –       | Environment slug (`dev`, `prod`, …).                |
+| `client-id`     | *        | –       | Machine identity client ID.                         |
+| `client-secret` | *        | –       | Machine identity client secret.                     |
+| `token`         | *        | –       | Existing token; skips the credentials exchange.     |
+| `output-file`   | no       | `""`    | Optional dotenv path, e.g. `.env.opensiel`.         |
+| `export-env`    | no       | `true`  | Export to `GITHUB_ENV`.                             |
+| `mask`          | no       | `true`  | Mask values in the workflow log.                    |
+| `command`       | no       | `""`    | Command to run with the secrets in its environment. |
+
+\* provide `token`, or both `client-id` and `client-secret`.
+
+### Outputs
+
+| Output         | Description                       |
+| -------------- | --------------------------------- |
+| `env-file`     | Absolute path of the dotenv file. |
+| `project-id`   | Resolved project UUID.            |
+| `secret-count` | Number of exported secrets.       |
+
+Notes:
+
+- Pin a release tag (`@v0.1.0`), not `@main`. The repository must be public for `uses:`.
+- The runner needs Node.js 20+; GitHub-hosted runners include it.
+- Use a `viewer` machine identity scoped to the environment the job needs.
+- The action exports root-folder secrets only. If you set `output-file`, add it to `.gitignore`
+  and never upload it as an artifact.
+
+## GitHub Actions (manual)
 
 ```yaml
 name: deploy

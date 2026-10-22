@@ -38,7 +38,8 @@
     "db:down": "docker compose -f deploy/docker-compose.yml down",
     "docs:dev": "vitepress dev docs --port 5174",
     "docs:build": "vitepress build docs",
-    "docs:preview": "vitepress preview docs --port 4173"
+    "docs:preview": "vitepress preview docs --port 4173",
+    "test:action": "node --test scripts/opensiel-action.test.mjs"
   },
   "pnpm": {
     "onlyBuiltDependencies": [
