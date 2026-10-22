@@ -56,6 +56,7 @@ const schema = z.object({
   OPENSIEL_AUDIT_SINK_ENDPOINT: z.string().url().optional(),
   OPENSIEL_AUDIT_SINK_ACCESS_KEY_ID: z.string().optional(),
   OPENSIEL_AUDIT_SINK_SECRET_ACCESS_KEY: z.string().optional(),
+  OPENSIEL_AWS_STS_ENDPOINT: z.string().url().default("https://sts.amazonaws.com"),
 });
 
 export interface KmsConfig {
@@ -122,6 +123,7 @@ export interface Env {
   oidc?: OidcConfig;
   saml?: SamlConfig;
   auditSink?: AuditSinkConfig;
+  awsStsEndpoint: string;
 }
 
 export function loadEnv(source: NodeJS.ProcessEnv = process.env): Env {
@@ -288,5 +290,6 @@ export function loadEnv(source: NodeJS.ProcessEnv = process.env): Env {
     oidc,
     saml,
     auditSink,
+    awsStsEndpoint: s.OPENSIEL_AWS_STS_ENDPOINT,
   };
 }

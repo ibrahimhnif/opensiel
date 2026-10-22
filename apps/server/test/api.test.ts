@@ -36,6 +36,7 @@ if (!databaseUrl) {
     rateLimit: false,
     isProd: false,
     secureCookies: false,
+    awsStsEndpoint: "https://sts.amazonaws.com",
   };
 
   let app: FastifyInstance;
@@ -46,6 +47,7 @@ if (!databaseUrl) {
   let idpName = "";
   let idpPrivateKey: Awaited<ReturnType<typeof generateKeyPair>>["privateKey"];
   let idpJwk: Record<string, unknown>;
+  let stsArn = "arn:aws:iam::123456789012:role/ci-deploy";
   const idpCodes = new Map<string, { nonce: string; email: string; name: string }>();
 
   let hookReceiver: FastifyInstance;
@@ -326,6 +328,16 @@ if (!databaseUrl) {
       return reply.redirect(url.toString());
     });
     idp.get("/jwks", async () => ({ keys: [idpJwk] }));
+    idp.post("/sts", async (request, reply) => {
+      if (!request.headers.authorization) {
+        return reply.code(403).send({ error: "missing authorization" });
+      }
+      return reply
+        .type("text/xml")
+        .send(
+          `<GetCallerIdentityResponse><GetCallerIdentityResult><Arn>${stsArn}</Arn></GetCallerIdentityResult></GetCallerIdentityResponse>`,
+        );
+    });
     idp.post("/token", async (request, reply) => {
       const body = request.body as Record<string, string>;
       if (body.client_id !== "test-client" || body.client_secret !== "test-secret") {
@@ -361,6 +373,7 @@ if (!databaseUrl) {
     const address = idp.server.address();
     const idpPort = typeof address === "object" && address ? address.port : 0;
     idpIssuer = `http://127.0.0.1:${idpPort}`;
+    env.awsStsEndpoint = `${idpIssuer}/sts`;
 
     hookReceiver = Fastify();
     hookReceiver.addContentTypeParser(
@@ -1596,6 +1609,111 @@ if (!databaseUrl) {
       headers: auth,
     });
     expect(listed.json<{ methods: unknown[] }>().methods).toHaveLength(1);
+  });
+
+  it("exchanges AWS signed requests for machine tokens", async () => {
+    const session = await signup(`aws-identity-${Date.now()}@test.dev`);
+    const auth = { authorization: `Bearer ${session.token}` };
+    const base = `/api/projects/${session.projectId}/identities`;
+
+    const created = await app.inject({
+      method: "POST",
+      url: base,
+      headers: auth,
+      payload: { name: "aws", role: "viewer", environmentIds: [session.devId] },
+    });
+    expect(created.statusCode).toBe(201);
+    const identity = created.json<{
+      identity: { id: string; clientId: string; clientSecret: string };
+    }>().identity;
+
+    const method = await app.inject({
+      method: "POST",
+      url: `${base}/${identity.id}/auth-methods`,
+      headers: auth,
+      payload: {
+        type: "aws",
+        allowedArns: ["arn:aws:iam::123456789012:role/ci-deploy"],
+      },
+    });
+    expect(method.statusCode).toBe(201);
+    expect(method.json<{ method: { allowedArns: string[] } }>().method.allowedArns).toEqual([
+      "arn:aws:iam::123456789012:role/ci-deploy",
+    ]);
+
+    const amzDate = (offsetMs = 0) =>
+      new Date(Date.now() + offsetMs)
+        .toISOString()
+        .replace(/\.\d{3}Z$/, "Z")
+        .replace(/[-:]/g, "");
+    const authorizationHeader = (signature: string) =>
+      `AWS4-HMAC-SHA256 Credential=AKIAEXAMPLE/${new Date()
+        .toISOString()
+        .slice(0, 10)
+        .replace(
+          /-/g,
+          "",
+        )}/us-east-1/sts/aws4_request, SignedHeaders=host;x-amz-date, Signature=${signature}`;
+
+    stsArn = "arn:aws:sts::123456789012:assumed-role/ci-deploy/session-1";
+    const signature = "a".repeat(64);
+    const payload = {
+      clientId: identity.clientId,
+      authorization: authorizationHeader(signature),
+      amzDate: amzDate(),
+    };
+
+    const first = await app.inject({
+      method: "POST",
+      url: "/api/auth/token/aws",
+      payload,
+    });
+    expect(first.statusCode).toBe(200);
+    const machineToken = first.json<{ accessToken: string }>().accessToken;
+
+    const read = await app.inject({
+      method: "GET",
+      url: `/api/projects/${session.projectId}/secrets?env=dev`,
+      headers: { authorization: `Bearer ${machineToken}` },
+    });
+    expect(read.statusCode).toBe(200);
+
+    const replay = await app.inject({
+      method: "POST",
+      url: "/api/auth/token/aws",
+      payload,
+    });
+    expect(replay.statusCode).toBe(401);
+
+    const stale = await app.inject({
+      method: "POST",
+      url: "/api/auth/token/aws",
+      payload: {
+        clientId: identity.clientId,
+        authorization: authorizationHeader("b".repeat(64)),
+        amzDate: amzDate(-10 * 60_000),
+      },
+    });
+    expect(stale.statusCode).toBe(401);
+
+    stsArn = "arn:aws:iam::999999999999:role/other";
+    const denied = await app.inject({
+      method: "POST",
+      url: "/api/auth/token/aws",
+      payload: {
+        clientId: identity.clientId,
+        authorization: authorizationHeader("c".repeat(64)),
+        amzDate: amzDate(),
+      },
+    });
+    expect(denied.statusCode).toBe(401);
+
+    const universal = await app.inject({
+      method: "POST",
+      url: "/api/auth/token/universal",
+      payload: { clientId: identity.clientId, clientSecret: identity.clientSecret },
+    });
+    expect(universal.statusCode).toBe(200);
   });
 
   it("rotates a secret and revokes the previous credential after grace", async () => {

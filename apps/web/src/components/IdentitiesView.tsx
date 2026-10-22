@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import type { IdentityDto, ProjectDto } from "@opensiel/shared";
+import type { IdentityAuthMethodDto, IdentityDto, ProjectDto } from "@opensiel/shared";
 import { Copy, KeyRound, Loader2, Plus, RefreshCw, X } from "lucide-react";
 import { api, errorMessage } from "../api";
 import { cn } from "../lib/utils";
@@ -19,6 +19,7 @@ import { Input } from "./ui/input";
 import { Label } from "./ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "./ui/select";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "./ui/table";
+import { Textarea } from "./ui/textarea";
 import { Pagination } from "./Pagination";
 import { usePagination } from "../hooks/usePagination";
 import { useToastMessage } from "../hooks/useToastMessage";
@@ -41,6 +42,15 @@ export function IdentitiesView({ project }: { project: ProjectDto }) {
   const [envIds, setEnvIds] = useState<string[]>([]);
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState("");
+  const [authIdentity, setAuthIdentity] = useState<IdentityDto | null>(null);
+  const [authMethods, setAuthMethods] = useState<IdentityAuthMethodDto[]>([]);
+  const [authType, setAuthType] = useState<"jwt" | "aws">("jwt");
+  const [jwtIssuer, setJwtIssuer] = useState("");
+  const [jwtAudience, setJwtAudience] = useState("");
+  const [jwtJwks, setJwtJwks] = useState("");
+  const [jwtSubjects, setJwtSubjects] = useState("");
+  const [awsArns, setAwsArns] = useState("");
+  const [authBusy, setAuthBusy] = useState(false);
   useToastMessage("success", notice, setNotice);
   useToastMessage("error", error, setError);
 
@@ -131,6 +141,94 @@ export function IdentitiesView({ project }: { project: ProjectDto }) {
 
   function envName(id: string): string {
     return project.environments.find((environment) => environment.id === id)?.slug ?? id;
+  }
+
+  async function openAuth(identity: IdentityDto) {
+    setAuthIdentity(identity);
+    setAuthMethods([]);
+    try {
+      const result = await api.get<{ methods: IdentityAuthMethodDto[] }>(
+        `/api/projects/${project.id}/identities/${identity.id}/auth-methods`,
+      );
+      setAuthMethods(result.methods);
+    } catch (err) {
+      setError(errorMessage(err));
+    }
+  }
+
+  async function refreshAuthMethods(identityId: string) {
+    const result = await api.get<{ methods: IdentityAuthMethodDto[] }>(
+      `/api/projects/${project.id}/identities/${identityId}/auth-methods`,
+    );
+    setAuthMethods(result.methods);
+  }
+
+  async function addAuthMethod(event: React.FormEvent) {
+    event.preventDefault();
+    if (!authIdentity) return;
+    setAuthBusy(true);
+    try {
+      const payload =
+        authType === "aws"
+          ? {
+              type: "aws",
+              allowedArns: awsArns
+                .split("\n")
+                .map((value) => value.trim())
+                .filter(Boolean),
+            }
+          : {
+              type: "jwt",
+              issuer: jwtIssuer.trim(),
+              audience: jwtAudience.trim(),
+              jwksUri: jwtJwks.trim(),
+              allowedSubjects: jwtSubjects
+                .split(",")
+                .map((value) => value.trim())
+                .filter(Boolean),
+            };
+      await api.post(
+        `/api/projects/${project.id}/identities/${authIdentity.id}/auth-methods`,
+        payload,
+      );
+      setNotice("auth method added");
+      setJwtIssuer("");
+      setJwtAudience("");
+      setJwtJwks("");
+      setJwtSubjects("");
+      setAwsArns("");
+      await refreshAuthMethods(authIdentity.id);
+    } catch (err) {
+      setError(errorMessage(err));
+    } finally {
+      setAuthBusy(false);
+    }
+  }
+
+  async function removeAuthMethod(method: IdentityAuthMethodDto) {
+    if (!authIdentity) return;
+    if (
+      !(await confirm({
+        title: "Delete auth method?",
+        description: "Clients using it can no longer exchange tokens.",
+        confirmLabel: "delete",
+        destructive: true,
+      }))
+    ) {
+      return;
+    }
+    setAuthBusy(true);
+    try {
+      await api.del(
+        `/api/projects/${project.id}/identities/${authIdentity.id}/auth-methods/${method.id}`,
+      );
+      setNotice("auth method deleted");
+      await refreshAuthMethods(authIdentity.id);
+    } catch (err) {
+      setError(errorMessage(err));
+    } finally {
+      setAuthBusy(false);
+    }
   }
 
   return (
@@ -236,6 +334,14 @@ export function IdentitiesView({ project }: { project: ProjectDto }) {
                     variant="ghost"
                     size="sm"
                     disabled={Boolean(identity.revokedAt)}
+                    onClick={() => void openAuth(identity)}
+                  >
+                    <KeyRound className="size-3.5" /> auth
+                  </Button>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    disabled={Boolean(identity.revokedAt)}
                     className={cn("text-destructive hover:text-destructive")}
                     onClick={() => void revoke(identity)}
                   >
@@ -323,6 +429,140 @@ export function IdentitiesView({ project }: { project: ProjectDto }) {
               <Button type="submit" disabled={busy || envIds.length === 0}>
                 {busy && <Loader2 className="size-4 animate-spin" />}
                 {busy ? "creating…" : "create identity"}
+              </Button>
+            </DialogFooter>
+          </form>
+        </DialogContent>
+      </Dialog>
+      <Dialog
+        open={Boolean(authIdentity)}
+        onOpenChange={(next) => {
+          if (!next) setAuthIdentity(null);
+        }}
+      >
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Trusted authentication · {authIdentity?.name ?? ""}</DialogTitle>
+            <DialogDescription>
+              Exchange a trusted JWT or an AWS signed request for a machine token.
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="space-y-2">
+            {authMethods.length === 0 && (
+              <p className="text-sm text-muted-foreground">No auth methods yet.</p>
+            )}
+            {authMethods.map((method) => (
+              <div
+                key={method.id}
+                className="flex items-start justify-between gap-3 rounded-lg border px-3 py-2"
+              >
+                <div className="min-w-0 space-y-1">
+                  <Badge variant="outline">{method.type}</Badge>
+                  <p className="truncate text-xs text-muted-foreground">
+                    {method.type === "aws"
+                      ? (method.allowedArns ?? []).join(", ")
+                      : `${method.issuer} · ${method.audience}`}
+                  </p>
+                </div>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="text-destructive hover:text-destructive"
+                  disabled={authBusy}
+                  onClick={() => void removeAuthMethod(method)}
+                >
+                  <X className="size-3.5" />
+                </Button>
+              </div>
+            ))}
+          </div>
+
+          <form className="space-y-3" onSubmit={addAuthMethod}>
+            <div className="space-y-2">
+              <Label>Method</Label>
+              <Select
+                value={authType}
+                onValueChange={(value) => setAuthType(value as "jwt" | "aws")}
+              >
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="jwt">jwt (OIDC / Kubernetes)</SelectItem>
+                  <SelectItem value="aws">aws (SigV4)</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+
+            {authType === "jwt" ? (
+              <>
+                <div className="grid gap-3 sm:grid-cols-2">
+                  <div className="space-y-2">
+                    <Label htmlFor="auth-issuer">Issuer</Label>
+                    <Input
+                      id="auth-issuer"
+                      value={jwtIssuer}
+                      placeholder="https://kubernetes.default.svc"
+                      onChange={(event) => setJwtIssuer(event.target.value)}
+                      required
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="auth-audience">Audience</Label>
+                    <Input
+                      id="auth-audience"
+                      value={jwtAudience}
+                      placeholder="opensiel"
+                      onChange={(event) => setJwtAudience(event.target.value)}
+                      required
+                    />
+                  </div>
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="auth-jwks">JWKS URL</Label>
+                  <Input
+                    id="auth-jwks"
+                    value={jwtJwks}
+                    placeholder="https://issuer/openid/v1/jwks"
+                    onChange={(event) => setJwtJwks(event.target.value)}
+                    required
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="auth-subjects">
+                    Allowed subjects{" "}
+                    <span className="font-normal text-muted-foreground">(optional)</span>
+                  </Label>
+                  <Input
+                    id="auth-subjects"
+                    value={jwtSubjects}
+                    placeholder="system:serviceaccount:apps:web"
+                    onChange={(event) => setJwtSubjects(event.target.value)}
+                  />
+                </div>
+              </>
+            ) : (
+              <div className="space-y-2">
+                <Label htmlFor="auth-arns">Allowed ARNs (one per line)</Label>
+                <Textarea
+                  id="auth-arns"
+                  rows={4}
+                  value={awsArns}
+                  placeholder="arn:aws:iam::123456789012:role/ci-deploy"
+                  onChange={(event) => setAwsArns(event.target.value)}
+                  required
+                />
+              </div>
+            )}
+
+            <DialogFooter>
+              <Button type="button" variant="outline" onClick={() => setAuthIdentity(null)}>
+                close
+              </Button>
+              <Button type="submit" disabled={authBusy}>
+                {authBusy && <Loader2 className="size-4 animate-spin" />}
+                add method
               </Button>
             </DialogFooter>
           </form>

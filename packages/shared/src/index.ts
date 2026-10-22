@@ -225,22 +225,41 @@ export const identityJwtTokenSchema = z.object({
 });
 export type IdentityJwtTokenInput = z.infer<typeof identityJwtTokenSchema>;
 
-export const createIdentityAuthMethodSchema = z.object({
-  type: z.literal("jwt").default("jwt"),
+export const createIdentityJwtAuthMethodSchema = z.object({
+  type: z.literal("jwt").optional(),
   issuer: z.string().url().max(500),
   audience: z.string().min(1).max(500),
   jwksUri: z.string().url().max(500),
   allowedSubjects: z.array(z.string().min(1).max(500)).max(50).optional(),
 });
+
+export const createIdentityAwsAuthMethodSchema = z.object({
+  type: z.literal("aws"),
+  allowedArns: z.array(z.string().min(10).max(2048)).min(1).max(50),
+});
+
+export const createIdentityAuthMethodSchema = z.union([
+  createIdentityJwtAuthMethodSchema,
+  createIdentityAwsAuthMethodSchema,
+]);
 export type CreateIdentityAuthMethodInput = z.infer<typeof createIdentityAuthMethodSchema>;
+
+export const identityAwsTokenSchema = z.object({
+  clientId: z.string().min(1).max(200),
+  authorization: z.string().min(20).max(4000),
+  amzDate: z.string().regex(/^\d{8}T\d{6}Z$/, "expected YYYYMMDDTHHMMSSZ"),
+  securityToken: z.string().min(1).max(4000).optional(),
+});
+export type IdentityAwsTokenInput = z.infer<typeof identityAwsTokenSchema>;
 
 export interface IdentityAuthMethodDto {
   id: string;
   type: string;
-  issuer: string;
-  audience: string;
-  jwksUri: string;
+  issuer: string | null;
+  audience: string | null;
+  jwksUri: string | null;
   allowedSubjects: string[] | null;
+  allowedArns: string[] | null;
   createdAt: string;
 }
 

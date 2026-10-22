@@ -97,6 +97,13 @@ logs plaintext; only a truncated hash of the context is audited.
   `clientId` + `jwt`. Auth methods are configured per identity with an issuer, audience, JWKS
   URL, and an optional subject allowlist; signatures are verified against the cached JWKS and
   asymmetric algorithms only.
+- `POST /api/auth/token/aws` accepts a SigV4-signed STS `GetCallerIdentity` request
+  (`clientId`, `authorization`, `amzDate`, optional `securityToken`). The server forwards it to
+  STS, checks the returned ARN against an allowlist (exact or `*` suffix, accepting the
+  assumed-role session ARN or its IAM role ARN), enforces a five-minute clock window, and
+  rejects reused signatures through `aws_auth_nonces`.
+- `POST /api/auth/token/universal` is an alias for the client-credentials endpoint, so clients
+  can use a consistent `/token/:method` shape.
 
 ### OIDC
 
