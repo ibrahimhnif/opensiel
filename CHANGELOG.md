@@ -18,6 +18,8 @@ All notable changes to this project are documented here. The format is based on
 - `PATCH /api/projects/:id/identities/:identityId` to update role, scopes, and token policy.
 - CLI: `opensiel crypto encrypt|decrypt` and `opensiel crypto keys list|create|rotate`.
 - Web UI: version diff and a point-in-time restore panel in the secrets view.
+- Audit sink worker: stream new audit events to HTTP, Splunk HEC, Datadog, or S3 with a
+  monotonic checkpoint and exponential backoff.
 
 ### Changed
 

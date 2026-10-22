@@ -320,4 +320,22 @@ alter table identities add column ip_allowlist jsonb;
 alter table identities add column hourly_token_cap integer;
 `,
   },
+  {
+    name: "0011_audit_sink_state",
+    sql: `
+alter table audit_logs add column seq bigserial;
+
+create table audit_sink_state (
+  id text primary key,
+  last_seq bigint not null default 0,
+  failure_count integer not null default 0,
+  next_attempt_at timestamptz,
+  last_error text,
+  last_success_at timestamptz,
+  updated_at timestamptz not null default now()
+);
+
+insert into audit_sink_state (id) values ('default') on conflict (id) do nothing;
+`,
+  },
 ];

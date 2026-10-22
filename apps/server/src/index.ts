@@ -1,4 +1,5 @@
 import { buildApp } from "./app.js";
+import { startAuditSink } from "./audit-sink.js";
 import { createDb } from "./db/client.js";
 import { runMigrations } from "./db/migrate.js";
 import { revokeExpiredLeases } from "./dynamic.js";
@@ -33,9 +34,12 @@ const reaper =
       }, 60_000);
 reaper?.unref();
 
+const auditSink = startAuditSink(deps);
+
 const shutdown = async (signal: string) => {
   app.log.info({ signal }, "shutting down");
   if (reaper) clearInterval(reaper);
+  if (auditSink) clearInterval(auditSink);
   await app.close();
   await sql.end({ timeout: 5 });
   process.exit(0);
