@@ -1,7 +1,35 @@
 # Getting started
 
-This guide runs opensiel with Docker Compose, creates the owner account, and connects the CLI.
-For a development checkout, see [Local development](local-development.md).
+This guide installs opensiel, creates the owner account, and connects the CLI. The fastest path
+is the one-command installer; the manual Docker Compose path follows. For a development
+checkout, see [Local development](local-development.md).
+
+## One command
+
+```bash
+curl -fsSL https://opensiel.liostech.id/install.sh | bash
+```
+
+The installer writes `~/.opensiel/.env` and `docker-compose.yml`, generates the master key and
+JWT secret, pulls the image, and starts PostgreSQL plus opensiel. Open
+<http://localhost:8787>; the first signup becomes the owner.
+
+Common options (with `curl | bash`, pass them after `bash -s --`):
+
+```bash
+curl -fsSL https://opensiel.liostech.id/install.sh | bash -s -- --port 9000
+curl -fsSL https://opensiel.liostech.id/install.sh | bash -s -- --dir /opt/opensiel
+curl -fsSL https://opensiel.liostech.id/install.sh | bash -s -- --version v0.1.0
+```
+
+Use `--url https://secrets.example.com` when the app is behind TLS so cookies and SSO callbacks
+use the public origin. `--no-start` writes the files without starting containers.
+
+The generated compose file wires the core settings. For OIDC/SAML/KMS, add a
+`docker-compose.override.yml` next to it, or use the manual path below.
+
+To stop the stack: `docker compose -f ~/.opensiel/docker-compose.yml down`. Add `-v` to delete
+the database volume.
 
 ## Requirements
 

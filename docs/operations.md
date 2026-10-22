@@ -10,6 +10,10 @@ leases, and webhooks. The master key (or AWS KMS key) is stored separately.
 docker compose --env-file .env -f deploy/docker-compose.yml exec db \
   pg_dump -U opensiel opensiel | gzip > opensiel-$(date +%F).sql.gz
 
+# one-command installer
+docker compose -f ~/.opensiel/docker-compose.yml exec -T db \
+  pg_dump -U opensiel opensiel | gzip > opensiel-$(date +%F).sql.gz
+
 # Kubernetes
 kubectl -n opensiel exec postgres-0 -- pg_dump -U opensiel opensiel \
   | gzip > opensiel-$(date +%F).sql.gz

@@ -1,5 +1,16 @@
 # FAQ
 
+### How do I install it?
+
+One command:
+
+```bash
+curl -fsSL https://opensiel.liostech.id/install.sh | bash
+```
+
+It starts PostgreSQL and opensiel in `~/.opensiel`. See
+[Getting started](getting-started.md#one-command).
+
 ### Is opensiel free?
 
 Yes. The core is MIT licensed. There is no paid tier, license server, or feature flag. Every

@@ -74,3 +74,7 @@ packages/sdk      typed client
 deploy/           Dockerfile, compose, Kubernetes manifests
 docs/             architecture and screenshots
 ```
+
+## Releasing
+
+Maintainers: see [RELEASING.md](RELEASING.md) for the tag, GHCR, and npm checklist.

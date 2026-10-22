@@ -76,6 +76,24 @@ Hosted docs: <https://opensiel.liostech.id/docs/> (the same pages are in [`docs/
 
 ## Quickstart
 
+### One command
+
+```bash
+curl -fsSL https://opensiel.liostech.id/install.sh | bash
+```
+
+The installer checks Docker, generates the keys, and starts PostgreSQL and opensiel in
+`~/.opensiel`. Open <http://localhost:8787>; the first signup becomes the owner.
+
+Options: `--port`, `--dir`, `--version`, `--url`, `--no-start`. With `curl | bash`, pass them
+after `bash -s --`, for example:
+
+```bash
+curl -fsSL https://opensiel.liostech.id/install.sh | bash -s -- --port 9000
+```
+
+### From source
+
 ```bash
 git clone https://github.com/ibrahimhnif/opensiel.git
 cd opensiel
@@ -104,6 +122,10 @@ opensiel run --env dev -- npm run dev
 ```
 
 ### SDK
+
+```bash
+npm install @opensiel/sdk
+```
 
 ```ts
 import { OpensielClient } from "@opensiel/sdk";

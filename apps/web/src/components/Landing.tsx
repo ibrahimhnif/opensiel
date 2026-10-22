@@ -173,12 +173,10 @@ export function Landing({ authenticated }: { authenticated: boolean }) {
                 </span>
               </div>
               <pre className="overflow-x-auto px-4 py-4 text-xs leading-relaxed text-muted-foreground">
-                <code>{`$ cp .env.example .env
-$ openssl rand -base64 32   # OPENSIEL_MASTER_KEY
-$ docker compose up -d
+                <code>{`$ curl -fsSL https://opensiel.liostech.id/install.sh | bash
 $ open http://localhost:8787
 
-# then
+# then, with the CLI
 $ opensiel init --project default --env dev
 $ opensiel secrets import .env
 $ opensiel run --env dev -- npm run dev`}</code>
@@ -336,10 +334,13 @@ $ opensiel run --env dev -- npm run dev`}</code>
             <div className="rounded-xl border bg-card/60 p-5">
               <ol className="space-y-4 text-sm">
                 {[
-                  ["Clone and configure", "cp .env.example .env, then set the two secrets."],
-                  ["Start the stack", "docker compose -f deploy/docker-compose.yml up -d --build"],
+                  [
+                    "Run the installer",
+                    "curl -fsSL https://opensiel.liostech.id/install.sh | bash",
+                  ],
                   ["Create the owner", "Open the app; the first signup becomes the owner."],
                   ["Connect your app", "opensiel run --env dev -- npm run dev"],
+                  ["Go public", "Set OPENSIEL_PUBLIC_URL and terminate TLS in front."],
                 ].map(([title, body], index) => (
                   <li key={title} className="flex gap-3">
                     <span className="flex size-6 shrink-0 items-center justify-center rounded-full border border-primary/40 bg-primary/10 text-xs font-medium text-primary">

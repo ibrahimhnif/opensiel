@@ -30,6 +30,27 @@ jobs:
             ghcr.io/${{ github.repository_owner }}/opensiel:${{ github.ref_name }}
             ghcr.io/${{ github.repository_owner }}/opensiel:latest
 
+  sdk:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          registry-url: https://registry.npmjs.org
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm --filter @opensiel/sdk build
+      - name: Publish @opensiel/sdk
+        working-directory: packages/sdk
+        run: npm publish --access public --provenance
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
   release:
     needs: image
     runs-on: ubuntu-latest

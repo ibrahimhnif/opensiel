@@ -1,24 +1,22 @@
 # SDK
 
-`@opensiel/sdk` is a typed, dependency-free Node client. It is part of this repository and is
-not published to npm yet.
+`@opensiel/sdk` is a typed, dependency-free Node client, published to npm.
 
 ## Install
 
-Inside the monorepo:
-
 ```bash
-pnpm --filter @opensiel/sdk build
+npm install @opensiel/sdk
 ```
 
-For an external project, install the built package from a checkout:
+Requires Node.js 20+.
+
+To work on the SDK in this repository, build the workspace package and install it from the
+checkout:
 
 ```bash
 pnpm --filter @opensiel/sdk build
 npm install /path/to/opensiel/packages/sdk
 ```
-
-Requires Node.js 20+.
 
 ## Quick start
 

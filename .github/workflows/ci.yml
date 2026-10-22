@@ -32,6 +32,14 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - run: pnpm format:check
       - run: pnpm lint
+      - name: Check installer
+        run: |
+          bash -n apps/web/public/install.sh
+          tmp="$(mktemp -d)"
+          OPENSIEL_HOME="$tmp" bash apps/web/public/install.sh --no-start --port 18787
+          grep -q '^OPENSIEL_MASTER_KEY=' "$tmp/.env"
+          grep -q '^OPENSIEL_JWT_SECRET=' "$tmp/.env"
+          rm -rf "$tmp"
       - run: pnpm typecheck
       - run: pnpm build
       - run: pnpm test

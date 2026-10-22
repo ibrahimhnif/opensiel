@@ -118,6 +118,18 @@ of `403` on purpose.
   logs; restore from a backup if a migration failed midway.
 - Integration tests drop the `public` schema. Never point `TEST_DATABASE_URL` at real data.
 
+## Installer
+
+- `could not pull ghcr.io/...`: the image tag is missing or the GHCR package is still private.
+  Use `--version <tag>` or `OPENSIEL_IMAGE=<ref>`, or build from source.
+- `port is already allocated`: choose another port with `--port 9000`; the installer keeps
+  everything in `~/.opensiel`.
+- `found an existing opensiel database volume but no .env`: the master key and database
+  password were lost. Restore `~/.opensiel/.env`; do not delete the volume.
+- Login loop after putting it behind HTTPS: set `OPENSIEL_PUBLIC_URL=https://...` in
+  `~/.opensiel/.env` and run `docker compose -f ~/.opensiel/docker-compose.yml up -d`.
+- Containers: `docker compose -f ~/.opensiel/docker-compose.yml logs -f app`.
+
 ## Ports
 
 | Port  | Used by        | Conflict fix                                    |
