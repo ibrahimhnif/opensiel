@@ -163,6 +163,24 @@ OPENSIEL_TOKEN="$TOKEN" opensiel run --projectId <uuid> --env prod -- node serve
 
 Machine tokens expire after 15 minutes; request a new one in each job.
 
+### JWT auth (Kubernetes, CI OIDC)
+
+If the identity has a trusted-JWT auth method configured, exchange a workload token (for
+example a projected Kubernetes service-account token) instead of a client secret:
+
+```bash
+TOKEN=$(curl -s -X POST "$OPENSIEL_API/api/auth/token/jwt" \
+  -H 'content-type: application/json' \
+  -d "{\"clientId\":\"$CLIENT_ID\",\"jwt\":\"$WORKLOAD_JWT\"}" \
+  | jq -r .accessToken)
+
+OPENSIEL_TOKEN="$TOKEN" opensiel run --env prod -- node server.js
+```
+
+The token must be issued by the configured issuer for the configured audience and, when an
+allowlist is set, match an allowed subject. See
+[Kubernetes → workload identity](kubernetes.md#workload-identity-with-service-account-tokens).
+
 ## Other commands
 
 ```bash

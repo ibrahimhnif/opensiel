@@ -1,4 +1,4 @@
-import { and, count, eq, gte } from "drizzle-orm";
+import { count, eq } from "drizzle-orm";
 import type { FastifyInstance, FastifyRequest } from "fastify";
 import {
   acceptInviteSchema,
@@ -10,42 +10,31 @@ import {
   clearSessionCookie,
   createSession,
   hashPassword,
-  ipAllowed,
   MFA_CHALLENGE_TTL_SECONDS,
   requireActor,
   requireUser,
   revokeSession,
   setSessionCookie,
-  signMachineToken,
   signMfaChallenge,
   verifyMachineSecret,
   verifyPassword,
   SESSION_COOKIE,
 } from "../auth.js";
 import { sha256 } from "../crypto.js";
+import { AppError, badRequest, conflict, notFound, parse, unauthorized } from "../errors.js";
 import {
-  AppError,
-  badRequest,
-  conflict,
-  forbidden,
-  notFound,
-  parse,
-  unauthorized,
-} from "../errors.js";
-import {
-  auditLogs,
   orgInvites,
   orgMembers,
   orgs,
   users,
   identities,
-  identityScopes,
   projects,
   userMfa,
 } from "../db/schema.js";
 import { createProject, DEFAULT_ENVIRONMENTS } from "../projects-service.js";
 import { slugify, uniqueOrgSlug } from "../access.js";
 import { writeAudit } from "../audit.js";
+import { issueIdentityToken } from "../identity-token.js";
 import type { Actor, Deps } from "../types.js";
 
 function userDto(actor: Extract<Actor, { type: "user" }>) {
@@ -372,84 +361,7 @@ export function registerAuthRoutes(app: FastifyInstance, deps: Deps): void {
       const project = projectRows[0];
       if (!project) throw unauthorized("invalid client credentials");
 
-      if (!ipAllowed(identity.ipAllowlist, request.ip)) {
-        await writeAudit(deps, {
-          orgId: project.orgId,
-          projectId: project.id,
-          actorType: "machine",
-          actorId: identity.id,
-          actorName: identity.name,
-          action: "identity.token.denied",
-          resourceType: "identity",
-          resourceId: identity.id,
-          metadata: { reason: "ip_not_allowed", ip: request.ip },
-          ip: request.ip,
-        });
-        throw forbidden("this identity may not issue tokens from this address");
-      }
-
-      if (identity.hourlyTokenCap !== null) {
-        const since = new Date(Date.now() - 60 * 60 * 1000);
-        const tally = await deps.db
-          .select({ total: count() })
-          .from(auditLogs)
-          .where(
-            and(
-              eq(auditLogs.action, "identity.token"),
-              eq(auditLogs.resourceId, identity.id),
-              gte(auditLogs.createdAt, since),
-            ),
-          );
-        if (Number(tally[0]?.total ?? 0) >= identity.hourlyTokenCap) {
-          throw new AppError(
-            429,
-            "token issuance limit reached for this identity",
-            "token_limit_reached",
-          );
-        }
-      }
-
-      const scopes = await deps.db
-        .select()
-        .from(identityScopes)
-        .where(eq(identityScopes.identityId, identity.id));
-
-      const accessToken = await signMachineToken(
-        deps.env,
-        {
-          identityId: identity.id,
-          name: identity.name,
-          role: identity.role,
-          projectId: identity.projectId,
-          orgId: project.orgId,
-          envIds: scopes.map((scope) => scope.environmentId),
-          tokenVersion: identity.tokenVersion,
-        },
-        identity.tokenTtlSeconds,
-      );
-
-      await writeAudit(deps, {
-        orgId: project.orgId,
-        projectId: project.id,
-        actorType: "machine",
-        actorId: identity.id,
-        actorName: identity.name,
-        action: "identity.token",
-        resourceType: "identity",
-        resourceId: identity.id,
-        metadata: {
-          clientId: sha256(input.clientId).slice(0, 12),
-          ttlSeconds: identity.tokenTtlSeconds,
-          ip: request.ip,
-        },
-        ip: request.ip,
-      });
-
-      return {
-        accessToken,
-        expiresIn: identity.tokenTtlSeconds,
-        tokenType: "Bearer",
-      };
+      return issueIdentityToken(deps, identity, project, request.ip, "universal");
     },
   );
 }

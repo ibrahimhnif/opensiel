@@ -363,4 +363,21 @@ create table user_mfa_recovery_codes (
 );
 `,
   },
+  {
+    name: "0013_identity_auth_methods",
+    sql: `
+create table identity_auth_methods (
+  id uuid primary key default gen_random_uuid(),
+  identity_id uuid not null references identities(id) on delete cascade,
+  type text not null default 'jwt',
+  issuer text not null,
+  audience text not null,
+  jwks_uri text not null,
+  allowed_subjects jsonb,
+  created_at timestamptz not null default now()
+);
+
+create index identity_auth_methods_identity_idx on identity_auth_methods (identity_id);
+`,
+  },
 ];

@@ -219,6 +219,31 @@ export const tokenRequestSchema = z.object({
 });
 export type TokenRequest = z.infer<typeof tokenRequestSchema>;
 
+export const identityJwtTokenSchema = z.object({
+  clientId: z.string().min(1).max(200),
+  jwt: z.string().min(20).max(20_000),
+});
+export type IdentityJwtTokenInput = z.infer<typeof identityJwtTokenSchema>;
+
+export const createIdentityAuthMethodSchema = z.object({
+  type: z.literal("jwt").default("jwt"),
+  issuer: z.string().url().max(500),
+  audience: z.string().min(1).max(500),
+  jwksUri: z.string().url().max(500),
+  allowedSubjects: z.array(z.string().min(1).max(500)).max(50).optional(),
+});
+export type CreateIdentityAuthMethodInput = z.infer<typeof createIdentityAuthMethodSchema>;
+
+export interface IdentityAuthMethodDto {
+  id: string;
+  type: string;
+  issuer: string;
+  audience: string;
+  jwksUri: string;
+  allowedSubjects: string[] | null;
+  createdAt: string;
+}
+
 export const inviteMemberSchema = z.object({
   email: emailSchema,
   role: roleSchema.default("member"),

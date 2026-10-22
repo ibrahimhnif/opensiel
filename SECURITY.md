@@ -44,6 +44,7 @@ suite. It is not used at runtime and must not be trusted anywhere else.
 | ---------------- | ------------------------------------------------------ | ------------------------------------------------------------------------- |
 | User             | argon2id password hash                                 | 32-byte session token, only SHA-256 stored, 7-day expiry, httpOnly cookie |
 | Machine identity | client id + client secret                              | secret stored as SHA-256, exchanged for a 15-minute JWT                   |
+| Machine identity | trusted JWT (Kubernetes SA, CI OIDC)                   | verified against a configured issuer, audience, and JWKS                  |
 | OIDC user        | provider ID token (authorization code + PKCE)          | session cookie as above                                                   |
 | SAML user        | signed assertion validated against the IdP certificate | session cookie as above                                                   |
 
