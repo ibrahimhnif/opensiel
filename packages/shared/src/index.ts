@@ -407,10 +407,56 @@ export const syncGithubConfigSchema = z.object({
 });
 export type SyncGithubConfig = z.infer<typeof syncGithubConfigSchema>;
 
+export const syncAwsConfigSchema = z.object({
+  region: z.string().min(1).max(50),
+  prefix: z.string().max(200).optional(),
+  accessKeyId: z.string().max(500).optional(),
+  secretAccessKey: z.string().max(1000).optional(),
+  endpoint: z.string().url().max(500).optional(),
+});
+export type SyncAwsConfig = z.infer<typeof syncAwsConfigSchema>;
+
+export const syncGcpConfigSchema = z.object({
+  projectId: z.string().min(1).max(200),
+  prefix: z.string().max(200).optional(),
+  credentialsJson: z.string().max(20_000).optional(),
+});
+export type SyncGcpConfig = z.infer<typeof syncGcpConfigSchema>;
+
+export const syncAzureConfigSchema = z.object({
+  vaultUrl: z.string().url().max(500),
+  tenantId: z.string().min(1).max(200),
+  clientId: z.string().min(1).max(200),
+  clientSecret: z.string().min(1).max(1000),
+  prefix: z.string().max(200).optional(),
+});
+export type SyncAzureConfig = z.infer<typeof syncAzureConfigSchema>;
+
+export const syncKubernetesConfigSchema = z.object({
+  apiUrl: z.string().url().max(500),
+  token: z.string().min(1).max(10_000),
+  namespace: z.string().min(1).max(253),
+  secretName: z.string().min(1).max(253),
+  caData: z.string().max(100_000).optional(),
+  skipTlsVerify: z.boolean().optional(),
+});
+export type SyncKubernetesConfig = z.infer<typeof syncKubernetesConfigSchema>;
+
+export const secretSyncProviders = [
+  "webhook",
+  "vercel",
+  "cloudflare",
+  "github",
+  "aws",
+  "gcp",
+  "azure",
+  "kubernetes",
+] as const;
+
 export const createSecretSyncSchema = z.object({
   env: slugSchema,
   path: secretPathSchema.optional(),
-  provider: z.enum(["webhook", "vercel", "cloudflare", "github"]),
+  provider: z.enum(secretSyncProviders),
   config: z.record(z.unknown()),
   intervalSeconds: z.number().int().min(60).max(86_400).default(300),
   enabled: z.boolean().optional(),

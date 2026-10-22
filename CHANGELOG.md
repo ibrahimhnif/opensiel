@@ -40,6 +40,8 @@ All notable changes to this project are documented here. The format is based on
   through a shadcn alert dialog instead of `window.confirm`.
 - Secret syncs: scheduled delivery to webhooks, Vercel, Cloudflare Workers, and GitHub Actions
   secrets with encrypted provider configs, per-run status, manual runs, and backoff.
+- Additional sync providers: AWS Secrets Manager, GCP Secret Manager, Azure Key Vault, and
+  Kubernetes Secrets, plus a Syncs tab in the dashboard.
 - Machine identity AWS auth: exchange a SigV4 `GetCallerIdentity` request for a token with an
   ARN allowlist, a five-minute window, and single-use signatures; add `/api/auth/token/universal`
   as an alias and a UI for managing JWT/AWS auth methods.

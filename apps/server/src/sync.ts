@@ -1,8 +1,21 @@
 import { and, asc, eq, lte } from "drizzle-orm";
 import sodium from "libsodium-wrappers";
+import {
+  CreateSecretCommand,
+  PutSecretValueCommand,
+  SecretsManagerClient,
+} from "@aws-sdk/client-secrets-manager";
+import { ClientSecretCredential } from "@azure/identity";
+import { SecretClient } from "@azure/keyvault-secrets";
+import { SecretManagerServiceClient } from "@google-cloud/secret-manager";
+import { Agent } from "undici";
 import type {
+  SyncAwsConfig,
+  SyncAzureConfig,
   SyncCloudflareConfig,
+  SyncGcpConfig,
   SyncGithubConfig,
+  SyncKubernetesConfig,
   SyncVercelConfig,
   SyncWebhookConfig,
 } from "@opensiel/shared";
@@ -19,7 +32,11 @@ type SyncConfig =
   | SyncWebhookConfig
   | (Omit<SyncVercelConfig, "target"> & { target?: SyncVercelConfig["target"] })
   | SyncCloudflareConfig
-  | SyncGithubConfig;
+  | SyncGithubConfig
+  | SyncAwsConfig
+  | SyncGcpConfig
+  | SyncAzureConfig
+  | SyncKubernetesConfig;
 
 interface SyncPayload {
   projectId: string;
@@ -149,11 +166,169 @@ async function sendGithub(config: SyncGithubConfig, payload: SyncPayload): Promi
   }
 }
 
+export function providerSecretName(key: string): string {
+  return key.replace(/_/g, "-");
+}
+
+async function sendAws(config: SyncAwsConfig, payload: SyncPayload): Promise<void> {
+  const client = new SecretsManagerClient({
+    region: config.region,
+    endpoint: config.endpoint,
+    credentials:
+      config.accessKeyId && config.secretAccessKey
+        ? { accessKeyId: config.accessKeyId, secretAccessKey: config.secretAccessKey }
+        : undefined,
+  });
+
+  for (const [key, value] of Object.entries(payload.secrets)) {
+    const name = `${config.prefix ?? ""}${providerSecretName(key)}`;
+    try {
+      await client.send(new PutSecretValueCommand({ SecretId: name, SecretString: value }));
+    } catch (error) {
+      if ((error as { name?: string }).name !== "ResourceNotFoundException") throw error;
+      await client.send(new CreateSecretCommand({ Name: name, SecretString: value }));
+    }
+  }
+  client.destroy();
+}
+
+async function sendGcp(config: SyncGcpConfig, payload: SyncPayload): Promise<void> {
+  const options: ConstructorParameters<typeof SecretManagerServiceClient>[0] = {};
+  if (config.credentialsJson) {
+    (options as { credentials?: unknown }).credentials = JSON.parse(config.credentialsJson);
+  }
+  const client = new SecretManagerServiceClient(options);
+  const parent = `projects/${config.projectId}`;
+
+  for (const [key, value] of Object.entries(payload.secrets)) {
+    const secretId = `${config.prefix ?? ""}${providerSecretName(key)}`;
+    const name = `${parent}/secrets/${secretId}`;
+    try {
+      await client.createSecret({
+        parent,
+        secretId,
+        secret: { replication: { automatic: {} } },
+      });
+    } catch (error) {
+      if ((error as { code?: number }).code !== 6) throw error;
+    }
+    await client.addSecretVersion({
+      parent: name,
+      payload: { data: Buffer.from(value, "utf8") },
+    });
+  }
+  await client.close();
+}
+
+async function sendAzure(config: SyncAzureConfig, payload: SyncPayload): Promise<void> {
+  const credential = new ClientSecretCredential(
+    config.tenantId,
+    config.clientId,
+    config.clientSecret,
+  );
+  const client = new SecretClient(config.vaultUrl, credential);
+
+  for (const [key, value] of Object.entries(payload.secrets)) {
+    await client.setSecret(`${config.prefix ?? ""}${providerSecretName(key)}`, value);
+  }
+}
+
+function kubeDispatcher(config: SyncKubernetesConfig): Agent | undefined {
+  if (!config.caData && !config.skipTlsVerify) return undefined;
+  return new Agent({
+    connect: {
+      ca: config.caData ? Buffer.from(config.caData, "base64") : undefined,
+      rejectUnauthorized: !config.skipTlsVerify,
+    },
+  });
+}
+
+async function kubeFetch(url: string, init: RequestInit, dispatcher?: Agent): Promise<Response> {
+  return fetch(url, (dispatcher ? { ...init, dispatcher } : init) as RequestInit);
+}
+
+async function sendKubernetes(config: SyncKubernetesConfig, payload: SyncPayload): Promise<void> {
+  const base = config.apiUrl.replace(/\/$/, "");
+  const resource = `${base}/api/v1/namespaces/${encodeURIComponent(config.namespace)}/secrets`;
+  const headers = {
+    authorization: `Bearer ${config.token}`,
+    "content-type": "application/json",
+  };
+  const dispatcher = kubeDispatcher(config);
+  const data = Object.fromEntries(
+    Object.entries(payload.secrets).map(([key, value]) => [
+      key,
+      Buffer.from(value, "utf8").toString("base64"),
+    ]),
+  );
+
+  try {
+    const current = await kubeFetch(
+      `${resource}/${encodeURIComponent(config.secretName)}`,
+      { headers },
+      dispatcher,
+    );
+
+    if (current.status === 404) {
+      const created = await kubeFetch(
+        resource,
+        {
+          method: "POST",
+          headers,
+          body: JSON.stringify({
+            apiVersion: "v1",
+            kind: "Secret",
+            metadata: { name: config.secretName, namespace: config.namespace },
+            type: "Opaque",
+            data,
+          }),
+        },
+        dispatcher,
+      );
+      if (!created.ok) throw new Error(`kubernetes responded ${created.status}`);
+      return;
+    }
+
+    if (!current.ok) throw new Error(`kubernetes responded ${current.status}`);
+
+    const existing = (await current.json()) as {
+      data?: Record<string, string>;
+      metadata?: { resourceVersion?: string };
+    };
+    const updated = await kubeFetch(
+      `${resource}/${encodeURIComponent(config.secretName)}`,
+      {
+        method: "PUT",
+        headers,
+        body: JSON.stringify({
+          apiVersion: "v1",
+          kind: "Secret",
+          metadata: {
+            name: config.secretName,
+            namespace: config.namespace,
+            resourceVersion: existing.metadata?.resourceVersion,
+          },
+          type: "Opaque",
+          data: { ...(existing.data ?? {}), ...data },
+        }),
+      },
+      dispatcher,
+    );
+    if (!updated.ok) throw new Error(`kubernetes responded ${updated.status}`);
+  } finally {
+    await dispatcher?.close();
+  }
+}
+
 async function send(provider: string, config: SyncConfig, payload: SyncPayload): Promise<void> {
   if (provider === "webhook") return sendWebhook(config as SyncWebhookConfig, payload);
   if (provider === "vercel") return sendVercel(config as SyncVercelConfig, payload);
   if (provider === "cloudflare") return sendCloudflare(config as SyncCloudflareConfig, payload);
   if (provider === "github") return sendGithub(config as SyncGithubConfig, payload);
+  if (provider === "aws") return sendAws(config as SyncAwsConfig, payload);
+  if (provider === "gcp") return sendGcp(config as SyncGcpConfig, payload);
+  if (provider === "azure") return sendAzure(config as SyncAzureConfig, payload);
+  if (provider === "kubernetes") return sendKubernetes(config as SyncKubernetesConfig, payload);
   throw new Error(`unsupported provider ${provider}`);
 }
 

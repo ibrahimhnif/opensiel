@@ -72,7 +72,7 @@ Hosted docs: <https://opensiel.liostech.id/docs/> (the same pages are in [`docs/
 | **Secret scanning**         | Scan pasted text or files for stored secrets and common credential patterns, with masked findings.                                                      |
 | **Dynamic credentials**     | Issue short-lived PostgreSQL roles with a TTL; revoke manually or let the reaper drop them at expiry.                                                   |
 | **Secret rotation**         | Schedule static-secret rotation with dual-phase rollover (PostgreSQL roles or an HTTP rotator), grace windows, and retries.                             |
-| **Secret syncs**            | Push an environment to Vercel, Cloudflare Workers, GitHub Actions secrets, or a webhook on a schedule, with per-run status and retries.                 |
+| **Secret syncs**            | Push an environment to AWS/GCP/Azure, Vercel, Cloudflare, GitHub Actions, Kubernetes, or a webhook on a schedule.                                       |
 | **Webhooks**                | HMAC-SHA256 signed event deliveries with retries and delivery status.                                                                                   |
 | **Master key rotation**     | Rewrap project data keys to a new KEK without re-encrypting secrets; optional AWS KMS.                                                                  |
 | **Audit log**               | Writes, reads, rollbacks, SSO logins, leases, and webhooks — values are never recorded.                                                                 |

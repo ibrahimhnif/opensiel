@@ -75,8 +75,12 @@ order by next_run_at;
 - A failed run keeps the previous provider state and backs off exponentially (max one hour).
 - Only secrets at the configured path are pushed; removing a secret locally does not delete the
   remote copy.
-- Provider tokens are encrypted at rest; rotate them by updating the sync config (delete and
-  recreate the sync) until config editing is added.
+- Provider configs are encrypted at rest; rotate credentials by deleting and recreating the
+  sync until config editing is added.
+- Kubernetes needs an API URL, a bearer token, a namespace, and a Secret name; provide
+  `caData` (base64) for a private CA or `skipTlsVerify` for local clusters.
+- AWS/GCP/Azure use the standard SDK credential chain unless explicit credentials are set in
+  the config.
 
 ## Secret rotation
 
