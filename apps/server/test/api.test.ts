@@ -1499,6 +1499,82 @@ if (!databaseUrl) {
     expect(status.json()).toMatchObject({ enabled: true, orgRequired: true });
   });
 
+  it("exchanges trusted JWTs for machine tokens", async () => {
+    const session = await signup(`jwt-identity-${Date.now()}@test.dev`);
+    const auth = { authorization: `Bearer ${session.token}` };
+    const base = `/api/projects/${session.projectId}/identities`;
+
+    const created = await app.inject({
+      method: "POST",
+      url: base,
+      headers: auth,
+      payload: { name: "workload", role: "viewer", environmentIds: [session.devId] },
+    });
+    expect(created.statusCode).toBe(201);
+    const identity = created.json<{ identity: { id: string; clientId: string } }>().identity;
+
+    const method = await app.inject({
+      method: "POST",
+      url: `${base}/${identity.id}/auth-methods`,
+      headers: auth,
+      payload: {
+        issuer: idpIssuer,
+        audience: "opensiel-workload",
+        jwksUri: `${idpIssuer}/jwks`,
+        allowedSubjects: ["workload-1"],
+      },
+    });
+    expect(method.statusCode).toBe(201);
+
+    async function sign(subject: string, audience: string): Promise<string> {
+      return new SignJWT({})
+        .setProtectedHeader({ alg: "RS256", kid: "test-key" })
+        .setSubject(subject)
+        .setIssuer(idpIssuer)
+        .setAudience(audience)
+        .setIssuedAt()
+        .setExpirationTime("5m")
+        .sign(idpPrivateKey);
+    }
+
+    const exchanged = await app.inject({
+      method: "POST",
+      url: "/api/auth/token/jwt",
+      payload: {
+        clientId: identity.clientId,
+        jwt: await sign("workload-1", "opensiel-workload"),
+      },
+    });
+    expect(exchanged.statusCode).toBe(200);
+    const machineToken = exchanged.json<{ accessToken: string }>().accessToken;
+
+    const read = await app.inject({
+      method: "GET",
+      url: `/api/projects/${session.projectId}/secrets?env=dev`,
+      headers: { authorization: `Bearer ${machineToken}` },
+    });
+    expect(read.statusCode).toBe(200);
+
+    for (const candidate of [
+      await sign("workload-1", "other-audience"),
+      await sign("workload-2", "opensiel-workload"),
+    ]) {
+      const denied = await app.inject({
+        method: "POST",
+        url: "/api/auth/token/jwt",
+        payload: { clientId: identity.clientId, jwt: candidate },
+      });
+      expect(denied.statusCode).toBe(401);
+    }
+
+    const listed = await app.inject({
+      method: "GET",
+      url: `${base}/${identity.id}/auth-methods`,
+      headers: auth,
+    });
+    expect(listed.json<{ methods: unknown[] }>().methods).toHaveLength(1);
+  });
+
   it("invites teammates into the same organization", async () => {
     const owner = await signup(`invite-owner-${Date.now()}@test.dev`);
     const auth = { authorization: `Bearer ${owner.token}` };

@@ -232,6 +232,23 @@ export const identityScopes = pgTable(
   (table) => [primaryKey({ columns: [table.identityId, table.environmentId] })],
 );
 
+export const identityAuthMethods = pgTable(
+  "identity_auth_methods",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    identityId: uuid("identity_id")
+      .notNull()
+      .references(() => identities.id, { onDelete: "cascade" }),
+    type: text("type").notNull().default("jwt"),
+    issuer: text("issuer").notNull(),
+    audience: text("audience").notNull(),
+    jwksUri: text("jwks_uri").notNull(),
+    allowedSubjects: jsonb("allowed_subjects").$type<string[]>(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [index("identity_auth_methods_identity_idx").on(table.identityId)],
+);
+
 export const changeRequests = pgTable(
   "change_requests",
   {
@@ -407,6 +424,7 @@ export type EnvironmentRow = typeof environments.$inferSelect;
 export type SecretRow = typeof secrets.$inferSelect;
 export type SecretVersionRow = typeof secretVersions.$inferSelect;
 export type IdentityRow = typeof identities.$inferSelect;
+export type IdentityAuthMethodRow = typeof identityAuthMethods.$inferSelect;
 export type ChangeRequestRow = typeof changeRequests.$inferSelect;
 export type DynamicSecretConfigRow = typeof dynamicSecretConfigs.$inferSelect;
 export type DynamicSecretLeaseRow = typeof dynamicSecretLeases.$inferSelect;

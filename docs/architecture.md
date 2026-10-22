@@ -92,6 +92,11 @@ logs plaintext; only a truncated hash of the context is audited.
   changing its role, scopes, or token policy invalidates outstanding tokens immediately.
 - Optional IP allowlist (addresses or CIDR ranges, checked at issuance) and hourly issuance
   cap; denials produce `identity.token.denied` audit entries.
+- `POST /api/auth/token/jwt` exchanges a trusted JWT (a Kubernetes projected service-account
+  token, a CI OIDC token, or any OIDC-issued JWT) for a machine token using
+  `clientId` + `jwt`. Auth methods are configured per identity with an issuer, audience, JWKS
+  URL, and an optional subject allowlist; signatures are verified against the cached JWKS and
+  asymmetric algorithms only.
 
 ### OIDC
 

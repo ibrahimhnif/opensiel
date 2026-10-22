@@ -24,6 +24,9 @@ All notable changes to this project are documented here. The format is based on
   challenge-based login, replay rejection, and a per-organization `mfa_required` policy.
 - CLI/SDK/web support for MFA: code prompt on `opensiel login`, `MfaRequiredError` +
   `loginMfa` in the SDK, challenge and enrollment flows in the web UI, and a Security tab.
+- Machine identity JWT auth: exchange a trusted JWT (Kubernetes service-account token, CI OIDC
+  token) for a machine token via `/api/auth/token/jwt`, with per-identity issuer, audience,
+  JWKS, and subject allowlists.
 
 ### Changed
 
