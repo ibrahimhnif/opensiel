@@ -417,6 +417,53 @@ export const transitKeys = pgTable(
   ],
 );
 
+export const rotationPolicies = pgTable(
+  "rotation_policies",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    projectId: uuid("project_id")
+      .notNull()
+      .references(() => projects.id, { onDelete: "cascade" }),
+    environmentId: uuid("environment_id")
+      .notNull()
+      .references(() => environments.id, { onDelete: "cascade" }),
+    path: text("path").notNull().default("/"),
+    secretKey: text("secret_key").notNull(),
+    provider: text("provider").notNull(),
+    configCiphertext: text("config_ciphertext").notNull(),
+    configIv: text("config_iv").notNull(),
+    configTag: text("config_tag").notNull(),
+    intervalSeconds: integer("interval_seconds").notNull().default(2592000),
+    graceSeconds: integer("grace_seconds").notNull().default(3600),
+    enabled: boolean("enabled").notNull().default(true),
+    nextRunAt: timestamp("next_run_at", { withTimezone: true }).notNull().defaultNow(),
+    lastRunAt: timestamp("last_run_at", { withTimezone: true }),
+    lastStatus: text("last_status"),
+    lastError: text("last_error"),
+    failureCount: integer("failure_count").notNull().default(0),
+    previousCiphertext: text("previous_ciphertext"),
+    previousIv: text("previous_iv"),
+    previousTag: text("previous_tag"),
+    previousRevokeAfter: timestamp("previous_revoke_after", { withTimezone: true }),
+    currentCiphertext: text("current_ciphertext"),
+    currentIv: text("current_iv"),
+    currentTag: text("current_tag"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    uniqueIndex("rotation_policies_target_uq").on(
+      table.projectId,
+      table.environmentId,
+      table.path,
+      table.secretKey,
+    ),
+    index("rotation_policies_due_idx").on(table.enabled, table.nextRunAt),
+  ],
+);
+
+export type RotationPolicyRow = typeof rotationPolicies.$inferSelect;
+
 export type UserRow = typeof users.$inferSelect;
 export type OrgRow = typeof orgs.$inferSelect;
 export type ProjectRow = typeof projects.$inferSelect;

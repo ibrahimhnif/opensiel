@@ -244,6 +244,71 @@ export interface IdentityAuthMethodDto {
   createdAt: string;
 }
 
+export const rotationHttpConfigSchema = z.object({
+  createUrl: z.string().url().max(2000),
+  revokeUrl: z.string().url().max(2000).optional(),
+  headers: z.record(z.string()).optional(),
+  valueTemplate: z.string().max(2000).optional(),
+});
+export type RotationHttpConfig = z.infer<typeof rotationHttpConfigSchema>;
+
+const roleNameSchema = z
+  .string()
+  .regex(/^[A-Za-z_][A-Za-z0-9_]{0,62}$/, "use a valid PostgreSQL role name");
+
+export const rotationPostgresConfigSchema = z.object({
+  adminUrl: z
+    .string()
+    .max(4000)
+    .refine((value) => /^postgres(ql)?:\/\//.test(value), "must be a postgres:// URL"),
+  username: roleNameSchema,
+  alternateUsername: roleNameSchema,
+  valueTemplate: z.string().max(2000).default("{{username}}:{{password}}"),
+  ssl: z.boolean().optional(),
+});
+export type RotationPostgresConfig = z.infer<typeof rotationPostgresConfigSchema>;
+
+export const createRotationSchema = z
+  .object({
+    key: secretKeySchema,
+    env: slugSchema,
+    path: secretPathSchema.optional(),
+    provider: z.enum(["http", "postgres"]),
+    config: z.record(z.unknown()),
+    intervalSeconds: z.number().int().min(300).max(31_536_000).default(2_592_000),
+    graceSeconds: z.number().int().min(0).max(604_800).default(3600),
+    enabled: z.boolean().optional(),
+  })
+  .refine((value) => value.intervalSeconds > value.graceSeconds, {
+    message: "intervalSeconds must be greater than graceSeconds",
+    path: ["intervalSeconds"],
+  });
+export type CreateRotationInput = z.infer<typeof createRotationSchema>;
+
+export const updateRotationSchema = z.object({
+  enabled: z.boolean().optional(),
+  intervalSeconds: z.number().int().min(300).max(31_536_000).optional(),
+});
+export type UpdateRotationInput = z.infer<typeof updateRotationSchema>;
+
+export interface RotationPolicyDto {
+  id: string;
+  key: string;
+  path: string;
+  environmentSlug: string;
+  provider: string;
+  intervalSeconds: number;
+  graceSeconds: number;
+  enabled: boolean;
+  nextRunAt: string;
+  lastRunAt: string | null;
+  lastStatus: string | null;
+  lastError: string | null;
+  failureCount: number;
+  previousRevokeAfter: string | null;
+  createdAt: string;
+}
+
 export const inviteMemberSchema = z.object({
   email: emailSchema,
   role: roleSchema.default("member"),

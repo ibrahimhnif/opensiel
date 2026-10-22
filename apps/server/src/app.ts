@@ -23,6 +23,7 @@ import { registerHistoryRoutes } from "./routes/history.js";
 import { registerTransitRoutes } from "./routes/transit.js";
 import { registerMfaRoutes } from "./routes/mfa.js";
 import { registerIdentityAuthRoutes } from "./routes/identity-auth.js";
+import { registerRotationRoutes } from "./routes/rotations.js";
 import type { Deps } from "./types.js";
 
 export async function buildApp(deps: Deps): Promise<FastifyInstance> {
@@ -92,6 +93,7 @@ export async function buildApp(deps: Deps): Promise<FastifyInstance> {
   registerTransitRoutes(app, deps);
   registerMfaRoutes(app, deps);
   registerIdentityAuthRoutes(app, deps);
+  registerRotationRoutes(app, deps);
 
   app.setErrorHandler((error, request, reply) => {
     if (error instanceof AppError) {

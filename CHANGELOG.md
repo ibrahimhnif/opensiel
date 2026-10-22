@@ -27,6 +27,9 @@ All notable changes to this project are documented here. The format is based on
 - Machine identity JWT auth: exchange a trusted JWT (Kubernetes service-account token, CI OIDC
   token) for a machine token via `/api/auth/token/jwt`, with per-identity issuer, audience,
   JWKS, and subject allowlists.
+- Static secret rotation: policies with PostgreSQL-role and HTTP providers, encrypted configs,
+  dual-phase current/previous credentials, grace-window revocation, advisory-locked scheduler,
+  manual rotate, and failure backoff.
 
 ### Changed
 

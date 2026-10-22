@@ -11,6 +11,7 @@ import { createDb } from "../src/db/client.js";
 import type { Database } from "../src/db/client.js";
 import { runMigrations } from "../src/db/migrate.js";
 import { runAuditSinkOnce } from "../src/audit-sink.js";
+import { revokeExpiredRotationCredentials } from "../src/rotation.js";
 import { base32Decode, currentTotpStep, totpCode } from "../src/mfa.js";
 import { generateMasterKey, parseMasterKey, sha256 } from "../src/crypto.js";
 import type { Env } from "../src/env.js";
@@ -57,6 +58,9 @@ if (!databaseUrl) {
   const hookWaiters: ((hook: ReceivedHook) => void)[] = [];
   const auditQueue: string[] = [];
   let auditFail = false;
+  const rotationCalls: { created: Record<string, unknown>[]; revoked: Record<string, unknown>[] } =
+    { created: [], revoked: [] };
+  let rotationCreateCount = 0;
 
   function nextHook(timeoutMs = 3000): Promise<ReceivedHook> {
     const queued = hookQueue.shift();
@@ -376,6 +380,18 @@ if (!databaseUrl) {
       if (auditFail) return reply.code(500).send({ ok: false });
       auditQueue.push(request.body as string);
       return reply.code(200).send({ ok: true });
+    });
+    hookReceiver.post("/rotate/create", async (request, reply) => {
+      rotationCreateCount += 1;
+      rotationCalls.created.push(JSON.parse(request.body as string) as Record<string, unknown>);
+      return reply.send({
+        value: `rotated-value-${rotationCreateCount}`,
+        credentialId: `cred-${rotationCreateCount}`,
+      });
+    });
+    hookReceiver.post("/rotate/revoke", async (request, reply) => {
+      rotationCalls.revoked.push(JSON.parse(request.body as string) as Record<string, unknown>);
+      return reply.send({ ok: true });
     });
     await hookReceiver.listen({ port: 0, host: "127.0.0.1" });
     const hookAddress = hookReceiver.server.address();
@@ -1573,6 +1589,185 @@ if (!databaseUrl) {
       headers: auth,
     });
     expect(listed.json<{ methods: unknown[] }>().methods).toHaveLength(1);
+  });
+
+  it("rotates a secret and revokes the previous credential after grace", async () => {
+    const session = await signup(`rotation-${Date.now()}@test.dev`);
+    const auth = { authorization: `Bearer ${session.token}` };
+    const base = `/api/projects/${session.projectId}`;
+    const hookBase = hookUrl.replace(/\/hook$/, "");
+    rotationCalls.created.length = 0;
+    rotationCalls.revoked.length = 0;
+
+    await app.inject({
+      method: "POST",
+      url: `${base}/secrets`,
+      headers: auth,
+      payload: { key: "ROTATE_ME", value: "initial", env: "dev" },
+    });
+
+    const created = await app.inject({
+      method: "POST",
+      url: `${base}/rotations`,
+      headers: auth,
+      payload: {
+        key: "ROTATE_ME",
+        env: "dev",
+        provider: "http",
+        config: {
+          createUrl: `${hookBase}/rotate/create`,
+          revokeUrl: `${hookBase}/rotate/revoke`,
+        },
+        intervalSeconds: 3600,
+        graceSeconds: 300,
+      },
+    });
+    expect(created.statusCode).toBe(201);
+    const rotation = created.json<{ rotation: { id: string } }>().rotation;
+
+    const first = await app.inject({
+      method: "POST",
+      url: `${base}/rotations/${rotation.id}/rotate`,
+      headers: auth,
+    });
+    expect(first.statusCode).toBe(200);
+    expect(first.json<{ result: { status: string } }>().result.status).toBe("success");
+
+    const afterFirst = await app.inject({
+      method: "GET",
+      url: `${base}/secrets/ROTATE_ME?env=dev`,
+      headers: auth,
+    });
+    expect(afterFirst.json<{ secret: { value: string } }>().secret.value).toBe("rotated-value-1");
+    expect(rotationCalls.created[0]).toMatchObject({
+      key: "ROTATE_ME",
+      environment: "dev",
+    });
+    expect(rotationCalls.revoked).toHaveLength(0);
+
+    const second = await app.inject({
+      method: "POST",
+      url: `${base}/rotations/${rotation.id}/rotate`,
+      headers: auth,
+    });
+    expect(second.statusCode).toBe(200);
+    const afterSecond = await app.inject({
+      method: "GET",
+      url: `${base}/secrets/ROTATE_ME?env=dev`,
+      headers: auth,
+    });
+    expect(afterSecond.json<{ secret: { value: string } }>().secret.value).toBe("rotated-value-2");
+    expect(rotationCalls.revoked).toHaveLength(0);
+
+    await database.sql`
+      update rotation_policies
+      set previous_revoke_after = now() - interval '1 second'
+      where id = ${rotation.id}
+    `;
+    const revoked = await revokeExpiredRotationCredentials({
+      env,
+      db: database.db,
+      sql: database.sql,
+    });
+    expect(revoked).toBe(1);
+    expect(rotationCalls.revoked[0]).toMatchObject({ credentialId: "cred-1" });
+  });
+
+  it("rotates a PostgreSQL role password with dual-phase credentials", async () => {
+    const databaseUrl = process.env.TEST_DATABASE_URL!;
+    const session = await signup(`rotation-pg-${Date.now()}@test.dev`);
+    const auth = { authorization: `Bearer ${session.token}` };
+    const base = `/api/projects/${session.projectId}`;
+
+    await database.sql`drop role if exists rot_a`;
+    await database.sql`drop role if exists rot_b`;
+    await database.sql`create role rot_a login password 'initial-a'`;
+    await database.sql`create role rot_b login password 'initial-b'`;
+
+    const connect = async (username: string, password: string) => {
+      const url = new URL(databaseUrl);
+      url.username = username;
+      url.password = password;
+      const client = postgres(url.toString(), { max: 1, onnotice: () => {} });
+      try {
+        await client`select 1`;
+        return true;
+      } finally {
+        await client.end({ timeout: 5 });
+      }
+    };
+
+    try {
+      const created = await app.inject({
+        method: "POST",
+        url: `${base}/rotations`,
+        headers: auth,
+        payload: {
+          key: "PG_CREDENTIAL",
+          env: "dev",
+          provider: "postgres",
+          config: {
+            adminUrl: databaseUrl,
+            username: "rot_a",
+            alternateUsername: "rot_b",
+          },
+          intervalSeconds: 3600,
+          graceSeconds: 300,
+        },
+      });
+      expect(created.statusCode).toBe(201);
+      const rotation = created.json<{ rotation: { id: string } }>().rotation;
+
+      const first = await app.inject({
+        method: "POST",
+        url: `${base}/rotations/${rotation.id}/rotate`,
+        headers: auth,
+      });
+      expect(first.json<{ result: { status: string } }>().result.status).toBe("success");
+
+      const afterFirst = await app.inject({
+        method: "GET",
+        url: `${base}/secrets/PG_CREDENTIAL?env=dev`,
+        headers: auth,
+      });
+      const firstValue = afterFirst.json<{ secret: { value: string } }>().secret.value;
+      const [firstUser, firstPassword] = firstValue.split(":");
+      expect(firstUser).toBe("rot_a");
+      expect(await connect(firstUser, firstPassword)).toBe(true);
+
+      const second = await app.inject({
+        method: "POST",
+        url: `${base}/rotations/${rotation.id}/rotate`,
+        headers: auth,
+      });
+      expect(second.json<{ result: { status: string } }>().result.status).toBe("success");
+
+      const afterSecond = await app.inject({
+        method: "GET",
+        url: `${base}/secrets/PG_CREDENTIAL?env=dev`,
+        headers: auth,
+      });
+      const secondValue = afterSecond.json<{ secret: { value: string } }>().secret.value;
+      const [secondUser, secondPassword] = secondValue.split(":");
+      expect(secondUser).toBe("rot_b");
+      expect(await connect(secondUser, secondPassword)).toBe(true);
+
+      await database.sql`
+        update rotation_policies
+        set previous_revoke_after = now() - interval '1 second'
+        where id = ${rotation.id}
+      `;
+      const revoked = await revokeExpiredRotationCredentials({
+        env,
+        db: database.db,
+        sql: database.sql,
+      });
+      expect(revoked).toBe(1);
+      await expect(connect(firstUser, firstPassword)).rejects.toThrow();
+    } finally {
+      await database.sql`drop role if exists rot_a`;
+      await database.sql`drop role if exists rot_b`;
+    }
   });
 
   it("invites teammates into the same organization", async () => {

@@ -380,4 +380,42 @@ create table identity_auth_methods (
 create index identity_auth_methods_identity_idx on identity_auth_methods (identity_id);
 `,
   },
+  {
+    name: "0014_rotation_policies",
+    sql: `
+create table rotation_policies (
+  id uuid primary key default gen_random_uuid(),
+  project_id uuid not null references projects(id) on delete cascade,
+  environment_id uuid not null references environments(id) on delete cascade,
+  path text not null default '/',
+  secret_key text not null,
+  provider text not null,
+  config_ciphertext text not null,
+  config_iv text not null,
+  config_tag text not null,
+  interval_seconds integer not null default 2592000,
+  grace_seconds integer not null default 3600,
+  enabled boolean not null default true,
+  next_run_at timestamptz not null default now(),
+  last_run_at timestamptz,
+  last_status text,
+  last_error text,
+  failure_count integer not null default 0,
+  previous_ciphertext text,
+  previous_iv text,
+  previous_tag text,
+  previous_revoke_after timestamptz,
+  current_ciphertext text,
+  current_iv text,
+  current_tag text,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+create unique index rotation_policies_target_uq
+  on rotation_policies (project_id, environment_id, path, secret_key);
+
+create index rotation_policies_due_idx on rotation_policies (enabled, next_run_at);
+`,
+  },
 ];
