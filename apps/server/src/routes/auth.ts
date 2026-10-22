@@ -11,11 +11,13 @@ import {
   createSession,
   hashPassword,
   ipAllowed,
+  MFA_CHALLENGE_TTL_SECONDS,
   requireActor,
   requireUser,
   revokeSession,
   setSessionCookie,
   signMachineToken,
+  signMfaChallenge,
   verifyMachineSecret,
   verifyPassword,
   SESSION_COOKIE,
@@ -39,6 +41,7 @@ import {
   identities,
   identityScopes,
   projects,
+  userMfa,
 } from "../db/schema.js";
 import { createProject, DEFAULT_ENVIRONMENTS } from "../projects-service.js";
 import { slugify, uniqueOrgSlug } from "../access.js";
@@ -151,6 +154,39 @@ export function registerAuthRoutes(app: FastifyInstance, deps: Deps): void {
       const row = rows[0];
       const valid = row ? await verifyPassword(row.user.passwordHash, input.password) : false;
       if (!row || !valid) throw unauthorized("invalid email or password");
+
+      const mfaRows = await deps.db
+        .select()
+        .from(userMfa)
+        .where(eq(userMfa.userId, row.user.id))
+        .limit(1);
+      if (mfaRows[0]?.enabled) {
+        const challengeToken = await signMfaChallenge(deps.env, row.user.id, "login");
+        await writeAudit(deps, {
+          orgId: row.org.id,
+          actorType: "user",
+          actorId: row.user.id,
+          actorName: row.user.name,
+          action: "mfa.challenge",
+          resourceType: "user",
+          resourceId: row.user.id,
+          metadata: {},
+          ip: request.ip,
+        });
+        return {
+          mfaRequired: true,
+          challengeToken,
+          expiresIn: MFA_CHALLENGE_TTL_SECONDS,
+        };
+      }
+
+      if (row.org.mfaRequired) {
+        return reply.code(403).send({
+          error: "mfa_enrollment_required",
+          message: "this organization requires MFA; enroll to continue",
+          enrollmentToken: await signMfaChallenge(deps.env, row.user.id, "enroll"),
+        });
+      }
 
       const token = await createSession(deps.db, row.user.id);
       setSessionCookie(reply, token, deps.env.secureCookies);

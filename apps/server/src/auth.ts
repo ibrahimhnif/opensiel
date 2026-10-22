@@ -13,6 +13,9 @@ import type { Actor, Deps, UserActor } from "./types.js";
 export const SESSION_COOKIE = "opensiel_session";
 export const SESSION_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 export const MACHINE_TOKEN_TTL_SECONDS = 15 * 60;
+export const MFA_CHALLENGE_TTL_SECONDS = 5 * 60;
+
+export type MfaChallengePurpose = "login" | "enroll";
 
 export async function hashPassword(password: string): Promise<string> {
   return hash(password, { memoryCost: 19456, timeCost: 2, parallelism: 1 });
@@ -85,6 +88,40 @@ export async function signMachineToken(
     .setIssuedAt()
     .setExpirationTime(`${ttlSeconds}s`)
     .sign(key);
+}
+
+export async function signMfaChallenge(
+  env: Deps["env"],
+  userId: string,
+  purpose: MfaChallengePurpose,
+): Promise<string> {
+  const key = new TextEncoder().encode(env.jwtSecret);
+  return new SignJWT({ typ: "mfa", purpose, nonce: randomToken(8) })
+    .setProtectedHeader({ alg: "HS256" })
+    .setSubject(userId)
+    .setIssuer("opensiel")
+    .setIssuedAt()
+    .setExpirationTime(`${MFA_CHALLENGE_TTL_SECONDS}s`)
+    .sign(key);
+}
+
+export async function verifyMfaChallenge(
+  env: Deps["env"],
+  token: string,
+  purpose: MfaChallengePurpose,
+): Promise<string | null> {
+  try {
+    const key = new TextEncoder().encode(env.jwtSecret);
+    const { payload } = await jwtVerify(token, key, {
+      issuer: "opensiel",
+      algorithms: ["HS256"],
+    });
+    if (payload.typ !== "mfa" || payload.purpose !== purpose) return null;
+    const userId = String(payload.sub ?? "");
+    return userId || null;
+  } catch {
+    return null;
+  }
 }
 
 export function ipAllowed(allowlist: string[] | null | undefined, ip: string): boolean {
@@ -187,6 +224,19 @@ export async function requireActor(deps: Deps, request: FastifyRequest): Promise
 export function requireUser(actor: Actor): UserActor {
   if (actor.type !== "user") throw unauthorized("a user session is required");
   return actor;
+}
+
+export async function loadUserAuthContext(deps: Deps, userId: string) {
+  const rows = await deps.db
+    .select({ user: users, member: orgMembers, org: orgs })
+    .from(users)
+    .innerJoin(orgMembers, eq(orgMembers.userId, users.id))
+    .innerJoin(orgs, eq(orgs.id, orgMembers.orgId))
+    .where(eq(users.id, userId))
+    .limit(1);
+  const row = rows[0];
+  if (!row) throw unauthorized("account not found");
+  return row;
 }
 
 export function verifyMachineSecret(expectedHash: string, providedSecret: string): boolean {

@@ -36,6 +36,22 @@ for (const secret of secrets) {
 }
 ```
 
+## TOTP
+
+```ts
+import { MfaRequiredError } from "@liostech/opensiel-sdk";
+
+try {
+  await client.login(email, password);
+} catch (error) {
+  if (error instanceof MfaRequiredError) {
+    const { token } = await client.loginMfa(error.challengeToken, "123456");
+  }
+}
+```
+
+`loginMfa` accepts a 6-digit TOTP code or one of the recovery codes created at enrollment.
+
 ## Machine identities (recommended for apps and CI)
 
 ```ts
@@ -59,6 +75,7 @@ Tokens live for 15 minutes. Call `loginWithClientCredentials` again to renew.
 | Method                                                       | Purpose                                                   |
 | ------------------------------------------------------------ | --------------------------------------------------------- |
 | `login(email, password)`                                     | User login; stores the session token on the client.       |
+| `loginMfa(challengeToken, code)`                             | Complete a TOTP or recovery-code challenge.               |
 | `loginWithClientCredentials(clientId, clientSecret)`         | Machine identity login; stores a 15-minute JWT.           |
 | `setToken(token)`                                            | Use an existing session or machine token.                 |
 | `me()`                                                       | Current user.                                             |

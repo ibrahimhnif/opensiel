@@ -1,6 +1,6 @@
 import { and, count, desc, eq, gt, isNull } from "drizzle-orm";
 import type { FastifyInstance } from "fastify";
-import { inviteMemberSchema, updateMemberSchema } from "@opensiel/shared";
+import { inviteMemberSchema, mfaPolicySchema, updateMemberSchema } from "@opensiel/shared";
 import { requireActor, requireUser } from "../auth.js";
 import { randomToken, sha256 } from "../crypto.js";
 import { conflict, forbidden, notFound, parse } from "../errors.js";
@@ -67,7 +67,7 @@ export function registerOrgRoutes(app: FastifyInstance, deps: Deps): void {
 
     const rows = await memberRows(deps, org.id);
     return {
-      org: { id: org.id, name: org.name, slug: org.slug },
+      org: { id: org.id, name: org.name, slug: org.slug, mfaRequired: org.mfaRequired },
       members: rows.map((row) => ({
         userId: row.user.id,
         email: row.user.email,
@@ -79,6 +79,28 @@ export function registerOrgRoutes(app: FastifyInstance, deps: Deps): void {
       canManage: actor.role === "owner" || actor.role === "admin",
       isOwner: actor.role === "owner",
     };
+  });
+
+  app.patch("/api/org/mfa", async (request) => {
+    const actor = requireUser(await requireActor(deps, request));
+    if (actor.role !== "owner") throw forbidden("only an owner can change the MFA policy");
+    const input = parse(mfaPolicySchema, request.body);
+
+    await deps.db.update(orgs).set({ mfaRequired: input.required }).where(eq(orgs.id, actor.orgId));
+
+    await writeAudit(deps, {
+      orgId: actor.orgId,
+      actorType: "user",
+      actorId: actor.id,
+      actorName: actor.name,
+      action: "org.mfa_policy",
+      resourceType: "org",
+      resourceId: actor.orgId,
+      metadata: { required: input.required },
+      ip: request.ip,
+    });
+
+    return { required: input.required };
   });
 
   app.post("/api/org/invites", async (request, reply) => {

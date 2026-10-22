@@ -48,6 +48,10 @@ opensiel login --api-url https://opensiel.example.com --token "$TOKEN"
 `opensiel login` stores a session token in the config file. For automation, prefer machine
 identities (see below).
 
+If TOTP is enabled on the account, login prompts for a 6-digit code (or a recovery code)
+before storing the token. Accounts in an organization with a required MFA policy must enroll
+in the web UI first.
+
 ## Link a project
 
 ```bash

@@ -67,6 +67,7 @@ Hosted docs: <https://opensiel.liostech.id/docs/> (the same pages are in [`docs/
 | **References & imports**    | `${KEY}` / `${/path/KEY}` resolution and cross-environment imports, resolved at read time.                                                              |
 | **Bulk import**             | Paste or upload a `.env` (or flat JSON); existing keys get a new version.                                                                               |
 | **SSO**                     | OIDC (authorization code + PKCE) and SAML (signed assertions), with invite-based or automatic organization provisioning.                                |
+| **MFA**                     | TOTP with single-use recovery codes, per-organization enforcement for password logins.                                                                  |
 | **Secret scanning**         | Scan pasted text or files for stored secrets and common credential patterns, with masked findings.                                                      |
 | **Dynamic credentials**     | Issue short-lived PostgreSQL roles with a TTL; revoke manually or let the reaper drop them at expiry.                                                   |
 | **Webhooks**                | HMAC-SHA256 signed event deliveries with retries and delivery status.                                                                                   |

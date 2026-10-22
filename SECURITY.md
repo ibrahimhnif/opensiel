@@ -76,9 +76,22 @@ All writes, rollbacks, identity operations, token issuance, and secret reads pro
 `audit_logs` row with actor, action, resource id, metadata, IP, and timestamp. Stored
 metadata contains key names and paths, never values.
 
+### Multi-factor authentication
+
+- TOTP follows RFC 6238 (SHA-1, 6 digits, 30-second step) and accepts a ±1 step window.
+  A code cannot be reused within its window (`user_mfa.last_used_step`).
+- TOTP secrets are encrypted with the instance master key and `AAD = mfa:<userId>`.
+- Ten single-use recovery codes are stored as SHA-256 hashes; a used code is marked and
+  rejected on reuse.
+- Password logins for enrolled users return a 5-minute challenge instead of a session.
+  Organizations can require MFA: unenrolled users receive an enrollment token that only
+  permits setup and verification.
+- SSO logins rely on the identity provider's MFA; the local TOTP factor applies to password
+  logins.
+
 ## Known limitations (v0)
 
-- No MFA, PKI, SCIM, or provider plugins yet.
+- PKI/SSH certificate issuance, SCIM, and provider plugins are not implemented yet.
 - TLS must be terminated in front of the app (reverse proxy, ingress, or tunnel). Do not
   serve the app directly over plain HTTP on the public internet.
 - The reference deployment uses a single Postgres instance and a single app replica; it is

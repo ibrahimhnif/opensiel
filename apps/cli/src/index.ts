@@ -190,10 +190,25 @@ program
 
     const email = (options.email as string | undefined) ?? (await prompt("email: "));
     const password = (options.password as string | undefined) ?? (await prompt("password: "));
-    const result = await apiRequest<{ token: string; user: { email: string; name: string } }>(
-      "/api/auth/login",
-      { method: "POST", body: { email, password }, apiUrl },
-    );
+    const result = await apiRequest<{
+      token?: string;
+      user: { email: string; name: string };
+      mfaRequired?: boolean;
+      challengeToken?: string;
+    }>("/api/auth/login", { method: "POST", body: { email, password }, apiUrl });
+
+    if (result.mfaRequired && result.challengeToken) {
+      const code = await prompt("MFA code: ");
+      const completed = await apiRequest<{ token: string; user: { email: string; name: string } }>(
+        "/api/auth/mfa/login",
+        { method: "POST", body: { challengeToken: result.challengeToken, code }, apiUrl },
+      );
+      writeConfig({ apiUrl, token: completed.token });
+      console.log(`logged in as ${completed.user.email} (${apiUrl})`);
+      return;
+    }
+
+    if (!result.token) fail("login did not return a token");
     writeConfig({ apiUrl, token: result.token });
     console.log(`logged in as ${result.user.email} (${apiUrl})`);
   });

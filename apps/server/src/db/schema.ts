@@ -37,6 +37,7 @@ export const orgs = pgTable(
     id: uuid("id").primaryKey().defaultRandom(),
     name: text("name").notNull(),
     slug: text("slug").notNull(),
+    mfaRequired: boolean("mfa_required").notNull().default(false),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (table) => [uniqueIndex("orgs_slug_uq").on(table.slug)],
@@ -424,3 +425,31 @@ export const auditSinkState = pgTable("audit_sink_state", {
 });
 
 export type AuditSinkStateRow = typeof auditSinkState.$inferSelect;
+
+export const userMfa = pgTable("user_mfa", {
+  userId: uuid("user_id")
+    .primaryKey()
+    .references(() => users.id, { onDelete: "cascade" }),
+  secretCiphertext: text("secret_ciphertext").notNull(),
+  secretIv: text("secret_iv").notNull(),
+  secretTag: text("secret_tag").notNull(),
+  enabled: boolean("enabled").notNull().default(false),
+  lastUsedStep: bigint("last_used_step", { mode: "number" }),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  enabledAt: timestamp("enabled_at", { withTimezone: true }),
+});
+
+export type UserMfaRow = typeof userMfa.$inferSelect;
+
+export const userMfaRecoveryCodes = pgTable(
+  "user_mfa_recovery_codes",
+  {
+    userId: uuid("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    codeHash: text("code_hash").notNull(),
+    usedAt: timestamp("used_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [primaryKey({ columns: [table.userId, table.codeHash] })],
+);

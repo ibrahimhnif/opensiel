@@ -234,6 +234,42 @@ export const acceptInviteSchema = z.object({
 });
 export type AcceptInviteInput = z.infer<typeof acceptInviteSchema>;
 
+export const mfaSetupSchema = z.object({
+  enrollmentToken: z.string().min(20).max(2000).optional(),
+});
+
+export const mfaVerifySchema = z.object({
+  code: z.string().trim().min(6).max(10),
+  enrollmentToken: z.string().min(20).max(2000).optional(),
+});
+export type MfaVerifyInput = z.infer<typeof mfaVerifySchema>;
+
+export const mfaDisableSchema = z.object({
+  password: z.string().min(1).max(200),
+  code: z.string().trim().min(6).max(20),
+});
+export type MfaDisableInput = z.infer<typeof mfaDisableSchema>;
+
+export const mfaLoginSchema = z.object({
+  challengeToken: z.string().min(20).max(2000),
+  code: z.string().trim().min(6).max(64),
+});
+export type MfaLoginInput = z.infer<typeof mfaLoginSchema>;
+
+export const mfaPolicySchema = z.object({ required: z.boolean() });
+export type MfaPolicyInput = z.infer<typeof mfaPolicySchema>;
+
+export interface MfaStatusDto {
+  enabled: boolean;
+  recoveryCodesRemaining: number;
+  orgRequired: boolean;
+}
+
+export interface MfaSetupDto {
+  secret: string;
+  otpauthUrl: string;
+}
+
 export interface MemberDto {
   userId: string;
   email: string;

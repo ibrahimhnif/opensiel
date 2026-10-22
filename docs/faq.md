@@ -67,6 +67,13 @@ standard AWS chain.
 OIDC (authorization code + PKCE) and SAML (signed assertions). First login joins a pending
 invite or creates an organization, depending on auto-create.
 
+### Does it support MFA?
+
+Yes. Users enroll a TOTP authenticator under **Security** and receive ten single-use recovery
+codes. Owners can require MFA for password logins across the organization; enrolled users get
+a code challenge at login, and unenrolled users are sent through enrollment first. SSO logins
+rely on the identity provider's MFA.
+
 ### Is there high availability?
 
 The API is stateless and can run multiple replicas. The bundled PostgreSQL is a single
@@ -104,7 +111,7 @@ the selected project and environment in the URL (`?project=…&env=…`).
 
 ### What is on the roadmap?
 
-MFA, PKI/SSH certificate issuance, SCIM, and provider plugins. See the
+PKI/SSH certificate issuance, SCIM, and provider plugins. See the
 [changelog](https://github.com/ibrahimhnif/opensiel/blob/main/CHANGELOG.md) for what shipped.
 
 ### How can I contribute?

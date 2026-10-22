@@ -21,6 +21,7 @@ import { registerWebhookRoutes } from "./routes/webhooks.js";
 import { registerSamlRoutes } from "./routes/saml.js";
 import { registerHistoryRoutes } from "./routes/history.js";
 import { registerTransitRoutes } from "./routes/transit.js";
+import { registerMfaRoutes } from "./routes/mfa.js";
 import type { Deps } from "./types.js";
 
 export async function buildApp(deps: Deps): Promise<FastifyInstance> {
@@ -88,6 +89,7 @@ export async function buildApp(deps: Deps): Promise<FastifyInstance> {
   registerSamlRoutes(app, deps);
   registerHistoryRoutes(app, deps);
   registerTransitRoutes(app, deps);
+  registerMfaRoutes(app, deps);
 
   app.setErrorHandler((error, request, reply) => {
     if (error instanceof AppError) {

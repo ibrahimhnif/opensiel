@@ -20,6 +20,10 @@ All notable changes to this project are documented here. The format is based on
 - Web UI: version diff and a point-in-time restore panel in the secrets view.
 - Audit sink worker: stream new audit events to HTTP, Splunk HEC, Datadog, or S3 with a
   monotonic checkpoint and exponential backoff.
+- TOTP multi-factor authentication: enrollment with QR/otpauth, ten single-use recovery codes,
+  challenge-based login, replay rejection, and a per-organization `mfa_required` policy.
+- CLI/SDK/web support for MFA: code prompt on `opensiel login`, `MfaRequiredError` +
+  `loginMfa` in the SDK, challenge and enrollment flows in the web UI, and a Security tab.
 
 ### Changed
 
