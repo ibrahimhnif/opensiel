@@ -29,6 +29,7 @@ import { AuditView } from "./AuditView";
 import { DynamicView } from "./DynamicView";
 import { WebhooksView } from "./WebhooksView";
 import { MfaCard } from "./MfaCard";
+import { RotationsView } from "./RotationsView";
 
 type Tab =
   | "secrets"
@@ -39,7 +40,8 @@ type Tab =
   | "members"
   | "identities"
   | "audit"
-  | "security";
+  | "security"
+  | "rotations";
 
 const TABS: { value: Tab; label: string }[] = [
   { value: "secrets", label: "Secrets" },
@@ -50,6 +52,7 @@ const TABS: { value: Tab; label: string }[] = [
   { value: "members", label: "Members" },
   { value: "identities", label: "Identities" },
   { value: "audit", label: "Audit" },
+  { value: "rotations", label: "Rotations" },
   { value: "security", label: "Security" },
 ];
 
@@ -344,7 +347,11 @@ export function Dashboard({ user, onSignedOut }: { user: UserDto; onSignedOut: (
             <Tabs value={tab} onValueChange={(value) => setTab(value as Tab)}>
               <TabsList className="w-full max-w-full justify-start overflow-x-auto md:w-fit">
                 {TABS.filter(
-                  (entry) => (entry.value !== "dynamic" && entry.value !== "webhooks") || canManage,
+                  (entry) =>
+                    (entry.value !== "dynamic" &&
+                      entry.value !== "webhooks" &&
+                      entry.value !== "rotations") ||
+                    canManage,
                 ).map((entry) => (
                   <TabsTrigger key={entry.value} value={entry.value} className="shrink-0">
                     {entry.label}
@@ -380,6 +387,9 @@ export function Dashboard({ user, onSignedOut }: { user: UserDto; onSignedOut: (
               </TabsContent>
               <TabsContent value="audit">
                 <AuditView project={project} />
+              </TabsContent>
+              <TabsContent value="rotations">
+                <RotationsView project={project} canManage={canManage} />
               </TabsContent>
               <TabsContent value="security">
                 <MfaCard isOwner={user.role === "owner"} />
