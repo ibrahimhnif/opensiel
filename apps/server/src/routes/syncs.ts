@@ -15,7 +15,13 @@ import {
 } from "@opensiel/shared";
 import type { SecretSyncDto } from "@opensiel/shared";
 import { requireActor } from "../auth.js";
-import { assertCanAdmin, loadEnvironment, loadProject, normalizePath } from "../access.js";
+import {
+  assertCanAdmin,
+  assertServerManaged,
+  loadEnvironment,
+  loadProject,
+  normalizePath,
+} from "../access.js";
 import { notFound, parse } from "../errors.js";
 import { environments, secretSyncs } from "../db/schema.js";
 import type { SecretSyncRow } from "../db/schema.js";
@@ -82,6 +88,7 @@ export function registerSyncRoutes(app: FastifyInstance, deps: Deps): void {
     assertCanAdmin(actor);
     const { projectId } = request.params as { projectId: string };
     const project = await loadProject(deps, actor, projectId);
+    assertServerManaged(project);
     const input = parse(createSecretSyncSchema, request.body);
     const environment = await loadEnvironment(deps, project.id, input.env);
     const path = normalizePath(input.path);
@@ -223,6 +230,7 @@ export function registerSyncRoutes(app: FastifyInstance, deps: Deps): void {
         syncId: string;
       };
       const project = await loadProject(deps, actor, projectId);
+      assertServerManaged(project);
 
       const rows = await deps.db
         .select()

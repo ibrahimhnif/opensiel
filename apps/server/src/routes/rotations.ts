@@ -9,7 +9,13 @@ import {
 } from "@opensiel/shared";
 import type { RotationPolicyDto } from "@opensiel/shared";
 import { requireActor } from "../auth.js";
-import { assertCanAdmin, loadEnvironment, loadProject, normalizePath } from "../access.js";
+import {
+  assertCanAdmin,
+  assertServerManaged,
+  loadEnvironment,
+  loadProject,
+  normalizePath,
+} from "../access.js";
 import { badRequest, conflict, notFound, parse } from "../errors.js";
 import { environments, rotationPolicies } from "../db/schema.js";
 import type { RotationPolicyRow } from "../db/schema.js";
@@ -76,6 +82,7 @@ export function registerRotationRoutes(app: FastifyInstance, deps: Deps): void {
     assertCanAdmin(actor);
     const { projectId } = request.params as { projectId: string };
     const project = await loadProject(deps, actor, projectId);
+    assertServerManaged(project);
     const input = parse(createRotationSchema, request.body);
     const environment = await loadEnvironment(deps, project.id, input.env);
     const path = normalizePath(input.path);
@@ -239,6 +246,7 @@ export function registerRotationRoutes(app: FastifyInstance, deps: Deps): void {
         rotationId: string;
       };
       const project = await loadProject(deps, actor, projectId);
+      assertServerManaged(project);
 
       const rows = await deps.db
         .select()

@@ -489,4 +489,36 @@ create table aws_auth_nonces (
 create index aws_auth_nonces_expires_idx on aws_auth_nonces (expires_at);
 `,
   },
+  {
+    name: "0018_e2ee",
+    sql: `
+alter table projects add column encryption_mode text not null default 'server';
+
+alter table secret_versions add column encryption_mode text not null default 'server';
+alter table secret_versions add column key_version integer;
+
+create table user_keys (
+  user_id uuid primary key references users(id) on delete cascade,
+  public_key text not null,
+  wrapped_private_key text not null,
+  private_key_iv text not null,
+  private_key_tag text not null,
+  kdf_salt text not null,
+  kdf_params jsonb not null default '{}'::jsonb,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+create table project_member_keys (
+  project_id uuid not null references projects(id) on delete cascade,
+  user_id uuid not null references users(id) on delete cascade,
+  wrapped_key text not null,
+  iv text not null,
+  tag text not null,
+  key_version integer not null default 1,
+  created_at timestamptz not null default now(),
+  primary key (project_id, user_id)
+);
+`,
+  },
 ];

@@ -117,6 +117,7 @@ export const projects = pgTable(
     dekIv: text("dek_iv").notNull(),
     dekTag: text("dek_tag").notNull(),
     kekVersion: integer("kek_version").notNull().default(1),
+    encryptionMode: text("encryption_mode").notNull().default("server"),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (table) => [uniqueIndex("projects_org_slug_uq").on(table.orgId, table.slug)],
@@ -187,6 +188,8 @@ export const secretVersions = pgTable(
     tag: text("tag").notNull(),
     fingerprint: text("fingerprint").notNull(),
     fingerprintVersion: integer("fingerprint_version").notNull().default(2),
+    encryptionMode: text("encryption_mode").notNull().default("server"),
+    keyVersion: integer("key_version"),
     comment: text("comment"),
     createdByType: text("created_by_type").notNull(),
     createdById: text("created_by_id").notNull(),
@@ -538,6 +541,41 @@ export const secretSyncs = pgTable(
 );
 
 export type SecretSyncRow = typeof secretSyncs.$inferSelect;
+
+export const userKeys = pgTable("user_keys", {
+  userId: uuid("user_id")
+    .primaryKey()
+    .references(() => users.id, { onDelete: "cascade" }),
+  publicKey: text("public_key").notNull(),
+  wrappedPrivateKey: text("wrapped_private_key").notNull(),
+  privateKeyIv: text("private_key_iv").notNull(),
+  privateKeyTag: text("private_key_tag").notNull(),
+  kdfSalt: text("kdf_salt").notNull(),
+  kdfParams: jsonb("kdf_params").$type<Record<string, unknown>>().notNull().default({}),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+export const projectMemberKeys = pgTable(
+  "project_member_keys",
+  {
+    projectId: uuid("project_id")
+      .notNull()
+      .references(() => projects.id, { onDelete: "cascade" }),
+    userId: uuid("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    wrappedKey: text("wrapped_key").notNull(),
+    iv: text("iv").notNull(),
+    tag: text("tag").notNull(),
+    keyVersion: integer("key_version").notNull().default(1),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [primaryKey({ columns: [table.projectId, table.userId] })],
+);
+
+export type UserKeyRow = typeof userKeys.$inferSelect;
+export type ProjectMemberKeyRow = typeof projectMemberKeys.$inferSelect;
 
 export const awsAuthNonces = pgTable(
   "aws_auth_nonces",

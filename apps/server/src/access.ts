@@ -102,6 +102,16 @@ export function assertOwner(actor: Actor): void {
   }
 }
 
+export function assertServerManaged(project: ProjectRow): void {
+  if (project.encryptionMode === "e2ee") {
+    throw new AppError(
+      409,
+      "this project is end-to-end encrypted; use the ciphertext API",
+      "feature_unavailable_in_e2ee",
+    );
+  }
+}
+
 export function assertEnvScope(actor: MachineActor, environmentId: string): void {
   if (!actor.envIds.includes(environmentId)) {
     throw forbidden("identity is not scoped to this environment");

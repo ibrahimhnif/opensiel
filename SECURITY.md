@@ -96,6 +96,18 @@ metadata contains key names and paths, never values.
 - SSO logins rely on the identity provider's MFA; the local TOTP factor applies to password
   logins.
 
+### End-to-end encryption
+
+- Projects can opt into `e2ee` while empty. The server then stores only client-produced
+  ciphertext; it has no project key and cannot decrypt values.
+- User private keys are wrapped with Argon2id under the user's password and stored as an
+  opaque blob. Project keys are wrapped per member with X25519 + HKDF + AES-256-GCM.
+- Secret ciphertext is bound to `project:environment:path:key` through AAD, so it cannot be
+  moved between secrets, environments, or projects.
+- The server still sees metadata: key names, paths, versions, sizes, timestamps, and actors.
+- Not supported in `e2ee` projects: web UI editing, approvals, dynamic credentials,
+  server-side rotation/syncs, and server-resolved references.
+
 ## Known limitations (v0)
 
 - PKI/SSH certificate issuance, SCIM, and provider plugins are not implemented yet.

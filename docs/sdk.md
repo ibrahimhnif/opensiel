@@ -72,27 +72,31 @@ Tokens live for 15 minutes. Call `loginWithClientCredentials` again to renew.
 
 ## Methods
 
-| Method                                                       | Purpose                                                   |
-| ------------------------------------------------------------ | --------------------------------------------------------- |
-| `login(email, password)`                                     | User login; stores the session token on the client.       |
-| `loginMfa(challengeToken, code)`                             | Complete a TOTP or recovery-code challenge.               |
-| `loginWithClientCredentials(clientId, clientSecret)`         | Machine identity login; stores a 15-minute JWT.           |
-| `setToken(token)`                                            | Use an existing session or machine token.                 |
-| `me()`                                                       | Current user.                                             |
-| `listProjects()` / `createProject(name)`                     | Projects.                                                 |
-| `listSecrets(projectId, env, path?, recursive?)`             | Decrypted secrets for an environment.                     |
-| `getSecret(projectId, env, key, path?)`                      | One secret value.                                         |
-| `setSecret(projectId, env, key, value, { path?, comment? })` | New version; returns `{ secret }` or `{ changeRequest }`. |
-| `deleteSecret(projectId, env, key, path?)`                   | Soft delete; may return a change request.                 |
-| `listSecretVersions(projectId, env, key, path?)`             | Version metadata.                                         |
-| `diffSecret(projectId, env, key, { from?, to?, reveal? })`   | Compare two versions; masked unless `reveal`.             |
-| `rollbackSecret(projectId, env, key, version, path?)`        | Roll back to a version.                                   |
-| `previewPointInTime(projectId, env, at)`                     | Preview an environment at an ISO timestamp.               |
-| `restorePointInTime(projectId, env, at, dryRun?)`            | Restore an environment to that timestamp.                 |
-| `encrypt(projectId, plaintext, { key?, context? })`          | Encrypt with a project transit key.                       |
-| `decrypt(projectId, ciphertext, { context? })`               | Decrypt a transit envelope.                               |
-| `listTransitKeys` / `createTransitKey` / `rotateTransitKey`  | Manage transit keys (create and rotate need admin).       |
-| `exportSecrets(projectId, env, "json" \| "dotenv")`          | Object of root-path secrets.                              |
+| Method                                                       | Purpose                                                                       |
+| ------------------------------------------------------------ | ----------------------------------------------------------------------------- |
+| `login(email, password)`                                     | User login; stores the session token on the client.                           |
+| `loginMfa(challengeToken, code)`                             | Complete a TOTP or recovery-code challenge.                                   |
+| `loginWithClientCredentials(clientId, clientSecret)`         | Machine identity login; stores a 15-minute JWT.                               |
+| `setToken(token)`                                            | Use an existing session or machine token.                                     |
+| `me()`                                                       | Current user.                                                                 |
+| `listProjects()` / `createProject(name)`                     | Projects.                                                                     |
+| `listSecrets(projectId, env, path?, recursive?)`             | Decrypted secrets for an environment.                                         |
+| `getSecret(projectId, env, key, path?)`                      | One secret value.                                                             |
+| `setSecret(projectId, env, key, value, { path?, comment? })` | New version; returns `{ secret }` or `{ changeRequest }`.                     |
+| `deleteSecret(projectId, env, key, path?)`                   | Soft delete; may return a change request.                                     |
+| `listSecretVersions(projectId, env, key, path?)`             | Version metadata.                                                             |
+| `diffSecret(projectId, env, key, { from?, to?, reveal? })`   | Compare two versions; masked unless `reveal`.                                 |
+| `rollbackSecret(projectId, env, key, version, path?)`        | Roll back to a version.                                                       |
+| `previewPointInTime(projectId, env, at)`                     | Preview an environment at an ISO timestamp.                                   |
+| `restorePointInTime(projectId, env, at, dryRun?)`            | Restore an environment to that timestamp.                                     |
+| `encrypt(projectId, plaintext, { key?, context? })`          | Encrypt with a project transit key.                                           |
+| `decrypt(projectId, ciphertext, { context? })`               | Decrypt a transit envelope.                                                   |
+| `listTransitKeys` / `createTransitKey` / `rotateTransitKey`  | Manage transit keys (create and rotate need admin).                           |
+| `getUserKeys` / `putUserKeys`                                | Fetch or upload your wrapped identity key.                                    |
+| `getProjectKeys` / `putProjectKeys`                          | Fetch your wrapped project key and members' public keys; upload wrapped keys. |
+| `setEncryptionMode(projectId, "server" \| "e2ee")`           | Switch an empty project to E2EE.                                              |
+| `writeE2eeSecret` / `listE2eeSecrets`                        | Store or fetch ciphertext-only secrets.                                       |
+| `exportSecrets(projectId, env, "json" \| "dotenv")`          | Object of root-path secrets.                                                  |
 
 ### Behavior to know
 
@@ -122,6 +126,66 @@ const { plaintext } = await client.decrypt(projectId, ciphertext, {
 Named keys default to `default` and are created on first use; `createTransitKey` and
 `rotateTransitKey` require an owner or admin. Rotation keeps old key material so previously
 issued ciphertext still decrypts.
+
+## End-to-end encryption
+
+The SDK provides the transport calls; key handling lives in the workspace `@opensiel/shared`
+package (`generateIdentity`, `unlockIdentity`, `generateProjectKey`, `wrapProjectKey`,
+`unwrapProjectKey`, `encryptSecret`, `decryptSecret`, `secretAad`).
+
+```ts
+import {
+  encryptSecret,
+  generateIdentity,
+  generateProjectKey,
+  secretAad,
+  unlockIdentity,
+  unwrapProjectKey,
+  wrapProjectKey,
+} from "@opensiel/shared";
+
+// 1. publish your identity (the private key is wrapped with your password)
+const identity = generateIdentity(password);
+await client.putUserKeys({
+  publicKey: identity.publicKey,
+  wrappedPrivateKey: identity.wrappedPrivateKey.ciphertext,
+  privateKeyIv: identity.wrappedPrivateKey.iv,
+  privateKeyTag: identity.wrappedPrivateKey.tag,
+  kdfSalt: identity.wrappedPrivateKey.salt,
+  kdfParams: identity.wrappedPrivateKey.kdf,
+});
+
+// 2. switch an empty project to e2ee, create a project key, wrap it for members
+await client.setEncryptionMode(projectId, "e2ee");
+const projectKey = generateProjectKey();
+const { members } = await client.getProjectKeys(projectId);
+await client.putProjectKeys(
+  projectId,
+  members.map((member) => ({
+    userId: member.userId,
+    ...wrapProjectKey(projectKey, member.publicKey),
+    keyVersion: 1,
+  })),
+);
+
+// 3. write and read ciphertext
+const aad = secretAad(projectId, "dev", "/", "DATABASE_URL");
+const payload = encryptSecret(projectKey, "postgres://…", aad);
+await client.writeE2eeSecret(projectId, "dev", "DATABASE_URL", payload);
+
+const { secrets } = await client.listE2eeSecrets(projectId, "dev");
+const { privateKey } = unlockIdentity(password, identity.wrappedPrivateKey);
+const wrapped = await client.getProjectKeys(projectId);
+const decrypted = decryptSecret(
+  unwrapProjectKey(privateKey, wrapped.key!),
+  secrets[0],
+  secretAad(projectId, "dev", secrets[0].path, secrets[0].key),
+);
+```
+
+Plaintext APIs return `feature_unavailable_in_e2ee` for these projects, and the server never
+receives the project key or plaintext. The published SDK does not re-export the crypto helpers
+yet; they are available from the workspace `@opensiel/shared` package.
 
 ## Errors
 
