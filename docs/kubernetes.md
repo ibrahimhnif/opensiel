@@ -96,7 +96,7 @@ kubectl -n opensiel create secret generic opensiel-secrets \
 
 Edit `deploy/k8s/app.yaml` and `deploy/k8s/ingress.yaml`:
 
-- replace `ghcr.io/OWNER/opensiel:latest` with your image,
+- pin the image tag instead of `latest` in production,
 - replace `opensiel.example.com` with your hostname,
 - adjust `storageClassName` if `local-path` is not available.
 
@@ -170,7 +170,7 @@ spec:
         fsGroup: 1001
       initContainers:
         - name: fetch-secrets
-          image: ghcr.io/OWNER/opensiel:latest
+          image: ghcr.io/ibrahimhnif/opensiel:latest
           command: ["sh", "-c"]
           args:
             - |
@@ -193,7 +193,7 @@ spec:
             - { name: secrets, mountPath: /secrets }
       containers:
         - name: web
-          image: ghcr.io/OWNER/web:latest
+          image: ghcr.io/your-org/web:latest
           command: ["sh", "-c"]
           args: ["set -a; . /secrets/app.env; set +a; exec node server.js"]
           volumeMounts:
@@ -224,7 +224,7 @@ Notes:
 ## Upgrades
 
 ```bash
-kubectl -n opensiel set image deploy/opensiel opensiel=ghcr.io/OWNER/opensiel:v0.2.0
+kubectl -n opensiel set image deploy/opensiel opensiel=ghcr.io/ibrahimhnif/opensiel:v0.2.0
 kubectl -n opensiel rollout status deploy/opensiel
 ```
 
