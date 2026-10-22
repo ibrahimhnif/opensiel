@@ -2,6 +2,7 @@ import { and, count, eq, isNull } from "drizzle-orm";
 import type { EnvironmentDto, ProjectDto } from "@opensiel/shared";
 import { AppError, badRequest, forbidden, notFound } from "./errors.js";
 import { unwrapDek } from "./crypto.js";
+import { hasPermission } from "./permissions.js";
 import type { Db } from "./db/client.js";
 import { environments, orgs, projects, secrets } from "./db/schema.js";
 import type { EnvironmentRow, ProjectRow } from "./db/schema.js";
@@ -86,17 +87,19 @@ export async function loadEnvironment(
 }
 
 export function assertCanWrite(actor: Actor): void {
-  if (actor.role === "viewer") throw forbidden("role is read-only");
+  if (!hasPermission(actor, "secret:write")) throw forbidden("role is read-only");
 }
 
 export function assertCanAdmin(actor: Actor): void {
-  if (actor.type !== "user" || (actor.role !== "owner" && actor.role !== "admin")) {
+  if (actor.type !== "user" || !hasPermission(actor, "project:create")) {
     throw forbidden("owner or admin role required");
   }
 }
 
 export function assertOwner(actor: Actor): void {
-  if (actor.type !== "user" || actor.role !== "owner") throw forbidden("owner role required");
+  if (actor.type !== "user" || !hasPermission(actor, "org:manage")) {
+    throw forbidden("owner role required");
+  }
 }
 
 export function assertEnvScope(actor: MachineActor, environmentId: string): void {

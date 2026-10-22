@@ -10,13 +10,8 @@ import {
   slugSchema,
 } from "@opensiel/shared";
 import { requireActor } from "../auth.js";
-import {
-  assertCanWrite,
-  assertEnvScope,
-  loadEnvironment,
-  loadProject,
-  normalizePath,
-} from "../access.js";
+import { assertEnvScope, loadEnvironment, loadProject, normalizePath } from "../access.js";
+import { assertSecretPermission } from "../permissions.js";
 import { AppError, badRequest, notFound, parse } from "../errors.js";
 import { secretVersions, secrets } from "../db/schema.js";
 import type { SecretRow } from "../db/schema.js";
@@ -169,7 +164,6 @@ export function registerSecretRoutes(app: FastifyInstance, deps: Deps): void {
 
   app.post("/api/projects/:projectId/secrets", async (request, reply) => {
     const actor = await requireActor(deps, request);
-    assertCanWrite(actor);
     const { projectId } = request.params as { projectId: string };
     const input = parse(setSecretSchema, request.body);
     const project = await loadProject(deps, actor, projectId);
@@ -179,6 +173,12 @@ export function registerSecretRoutes(app: FastifyInstance, deps: Deps): void {
     const path = normalizePath(input.path);
     const key = parse(secretKeySchema, input.key);
     parse(secretPathSchema, path);
+
+    await assertSecretPermission(deps, actor, "secret:write", {
+      projectId: project.id,
+      environmentId: environment.id,
+      path,
+    });
 
     if (environment.approvalRequired) {
       const changeRequest = await createChangeRequest(
@@ -237,7 +237,6 @@ export function registerSecretRoutes(app: FastifyInstance, deps: Deps): void {
 
   app.post("/api/projects/:projectId/secrets/import", async (request, reply) => {
     const actor = await requireActor(deps, request);
-    assertCanWrite(actor);
     const { projectId } = request.params as { projectId: string };
     const input = parse(importSecretsSchema, request.body);
     const project = await loadProject(deps, actor, projectId);
@@ -245,6 +244,11 @@ export function registerSecretRoutes(app: FastifyInstance, deps: Deps): void {
     if (actor.type === "machine") assertEnvScope(actor, environment.id);
 
     const path = normalizePath(input.path);
+    await assertSecretPermission(deps, actor, "secret:write", {
+      projectId: project.id,
+      environmentId: environment.id,
+      path,
+    });
     const entries = parseImportContents(input.contents, input.format ?? "env");
     for (const entry of entries) {
       if (entry.value.length > 100_000) {
@@ -342,7 +346,6 @@ export function registerSecretRoutes(app: FastifyInstance, deps: Deps): void {
 
   app.delete("/api/projects/:projectId/secrets/:key", async (request, reply) => {
     const actor = await requireActor(deps, request);
-    assertCanWrite(actor);
     const { projectId, key } = request.params as { projectId: string; key: string };
     const query = parse(secretQuerySchema, request.query);
     const project = await loadProject(deps, actor, projectId);
@@ -350,6 +353,11 @@ export function registerSecretRoutes(app: FastifyInstance, deps: Deps): void {
     if (actor.type === "machine") assertEnvScope(actor, environment.id);
 
     const path = normalizePath(query.path);
+    await assertSecretPermission(deps, actor, "secret:delete", {
+      projectId: project.id,
+      environmentId: environment.id,
+      path,
+    });
     await findSecret(deps, project.id, environment.id, path, key);
 
     if (environment.approvalRequired) {
@@ -420,7 +428,6 @@ export function registerSecretRoutes(app: FastifyInstance, deps: Deps): void {
 
   app.post("/api/projects/:projectId/secrets/:key/rollback", async (request, reply) => {
     const actor = await requireActor(deps, request);
-    assertCanWrite(actor);
     const { projectId, key } = request.params as { projectId: string; key: string };
     const input = parse(rollbackSchema, request.body);
     const project = await loadProject(deps, actor, projectId);
@@ -428,6 +435,11 @@ export function registerSecretRoutes(app: FastifyInstance, deps: Deps): void {
     if (actor.type === "machine") assertEnvScope(actor, environment.id);
 
     const path = normalizePath(input.path);
+    await assertSecretPermission(deps, actor, "secret:write", {
+      projectId: project.id,
+      environmentId: environment.id,
+      path,
+    });
     const secret = await findSecret(deps, project.id, environment.id, path, key);
     const targetRows = await deps.db
       .select()

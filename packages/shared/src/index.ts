@@ -309,6 +309,53 @@ export interface RotationPolicyDto {
   createdAt: string;
 }
 
+export const grantablePermissions = [
+  "secret:read",
+  "secret:write",
+  "secret:delete",
+  "project:read",
+  "audit:read",
+] as const;
+export type GrantablePermission = (typeof grantablePermissions)[number];
+export const grantablePermissionSchema = z.enum(grantablePermissions);
+
+export const createCustomRoleSchema = z.object({
+  name: nameSchema,
+  permissions: z.array(grantablePermissionSchema).min(1).max(20),
+});
+export type CreateCustomRoleInput = z.infer<typeof createCustomRoleSchema>;
+
+export const createRoleGrantSchema = z.object({
+  userId: z.string().uuid(),
+  roleId: z.string().uuid(),
+  projectId: z.string().uuid().optional(),
+  environmentId: z.string().uuid().optional(),
+  path: secretPathSchema.optional(),
+  expiresAt: z.string().datetime({ offset: true }).optional(),
+});
+export type CreateRoleGrantInput = z.infer<typeof createRoleGrantSchema>;
+
+export interface CustomRoleDto {
+  id: string;
+  name: string;
+  permissions: GrantablePermission[];
+  createdAt: string;
+}
+
+export interface RoleGrantDto {
+  id: string;
+  userId: string;
+  userName: string;
+  roleId: string;
+  roleName: string;
+  permissions: string[];
+  projectId: string | null;
+  environmentId: string | null;
+  path: string | null;
+  expiresAt: string | null;
+  createdAt: string;
+}
+
 export const inviteMemberSchema = z.object({
   email: emailSchema,
   role: roleSchema.default("member"),
