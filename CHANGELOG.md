@@ -32,6 +32,8 @@ All notable changes to this project are documented here. The format is based on
   manual rotate, and failure backoff.
 - Scoped RBAC: one permission matrix for built-in roles, custom roles, and project/environment/
   path grants with optional expiry; secret writes check built-in permission plus active grants.
+- Web UI: rotation policies can be created, paused, rotated, and deleted from the dashboard;
+  status, next run, grace window, and last error are shown inline.
 
 ### Changed
 
