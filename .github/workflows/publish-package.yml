@@ -6,12 +6,19 @@ on:
   workflow_dispatch:
     inputs:
       package:
-        description: Package to stage
+        description: Package to publish
         type: choice
         options:
           - cli
           - sdk
         required: true
+      mode:
+        description: Stage for 2FA approval, or publish directly
+        type: choice
+        options:
+          - stage
+          - publish
+        default: stage
 
 permissions:
   contents: read
@@ -36,13 +43,17 @@ jobs:
           else
             pnpm --filter @liostech/opensiel-sdk build
           fi
-      - name: Stage
+      - name: Publish
         run: |
           if [ "${{ inputs.package }}" = "cli" ]; then
             cd apps/cli
           else
             cd packages/sdk
           fi
-          npm stage publish --access public
+          if [ "${{ inputs.mode }}" = "publish" ]; then
+            npm publish --access public
+          else
+            npm stage publish --access public
+          fi
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
