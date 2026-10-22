@@ -30,6 +30,7 @@ import { DynamicView } from "./DynamicView";
 import { WebhooksView } from "./WebhooksView";
 import { MfaCard } from "./MfaCard";
 import { RotationsView } from "./RotationsView";
+import { RolesView } from "./RolesView";
 
 type Tab =
   | "secrets"
@@ -41,7 +42,8 @@ type Tab =
   | "identities"
   | "audit"
   | "security"
-  | "rotations";
+  | "rotations"
+  | "access";
 
 const TABS: { value: Tab; label: string }[] = [
   { value: "secrets", label: "Secrets" },
@@ -53,6 +55,7 @@ const TABS: { value: Tab; label: string }[] = [
   { value: "identities", label: "Identities" },
   { value: "audit", label: "Audit" },
   { value: "rotations", label: "Rotations" },
+  { value: "access", label: "Access" },
   { value: "security", label: "Security" },
 ];
 
@@ -350,7 +353,8 @@ export function Dashboard({ user, onSignedOut }: { user: UserDto; onSignedOut: (
                   (entry) =>
                     (entry.value !== "dynamic" &&
                       entry.value !== "webhooks" &&
-                      entry.value !== "rotations") ||
+                      entry.value !== "rotations" &&
+                      entry.value !== "access") ||
                     canManage,
                 ).map((entry) => (
                   <TabsTrigger key={entry.value} value={entry.value} className="shrink-0">
@@ -390,6 +394,9 @@ export function Dashboard({ user, onSignedOut }: { user: UserDto; onSignedOut: (
               </TabsContent>
               <TabsContent value="rotations">
                 <RotationsView project={project} canManage={canManage} />
+              </TabsContent>
+              <TabsContent value="access">
+                <RolesView project={project} />
               </TabsContent>
               <TabsContent value="security">
                 <MfaCard isOwner={user.role === "owner"} />

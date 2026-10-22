@@ -34,6 +34,8 @@ All notable changes to this project are documented here. The format is based on
   path grants with optional expiry; secret writes check built-in permission plus active grants.
 - Web UI: rotation policies can be created, paused, rotated, and deleted from the dashboard;
   status, next run, grace window, and last error are shown inline.
+- Web UI: Access tab for custom roles and scoped grants (member, role, environment/path,
+  optional expiry) with revoke.
 
 ### Changed
 
