@@ -240,10 +240,11 @@ export const identityAuthMethods = pgTable(
       .notNull()
       .references(() => identities.id, { onDelete: "cascade" }),
     type: text("type").notNull().default("jwt"),
-    issuer: text("issuer").notNull(),
-    audience: text("audience").notNull(),
-    jwksUri: text("jwks_uri").notNull(),
+    issuer: text("issuer"),
+    audience: text("audience"),
+    jwksUri: text("jwks_uri"),
     allowedSubjects: jsonb("allowed_subjects").$type<string[]>(),
+    config: jsonb("config").$type<Record<string, unknown>>(),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (table) => [index("identity_auth_methods_identity_idx").on(table.identityId)],
@@ -537,6 +538,15 @@ export const secretSyncs = pgTable(
 );
 
 export type SecretSyncRow = typeof secretSyncs.$inferSelect;
+
+export const awsAuthNonces = pgTable(
+  "aws_auth_nonces",
+  {
+    sigHash: text("sig_hash").primaryKey(),
+    expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+  },
+  (table) => [index("aws_auth_nonces_expires_idx").on(table.expiresAt)],
+);
 
 export type UserRow = typeof users.$inferSelect;
 export type OrgRow = typeof orgs.$inferSelect;

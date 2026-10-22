@@ -473,4 +473,20 @@ create table secret_syncs (
 create index secret_syncs_due_idx on secret_syncs (enabled, next_run_at);
 `,
   },
+  {
+    name: "0017_identity_aws_auth",
+    sql: `
+alter table identity_auth_methods alter column issuer drop not null;
+alter table identity_auth_methods alter column audience drop not null;
+alter table identity_auth_methods alter column jwks_uri drop not null;
+alter table identity_auth_methods add column config jsonb;
+
+create table aws_auth_nonces (
+  sig_hash text primary key,
+  expires_at timestamptz not null
+);
+
+create index aws_auth_nonces_expires_idx on aws_auth_nonces (expires_at);
+`,
+  },
 ];

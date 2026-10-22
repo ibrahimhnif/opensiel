@@ -334,34 +334,42 @@ export function registerAuthRoutes(app: FastifyInstance, deps: Deps): void {
     },
   );
 
+  const universalToken = async (request: FastifyRequest) => {
+    const input = parse(tokenRequestSchema, request.body);
+    const rows = await deps.db
+      .select()
+      .from(identities)
+      .where(eq(identities.clientId, input.clientId))
+      .limit(1);
+    const identity = rows[0];
+    if (
+      !identity ||
+      identity.revokedAt ||
+      !verifyMachineSecret(identity.secretHash, input.clientSecret)
+    ) {
+      throw unauthorized("invalid client credentials");
+    }
+
+    const projectRows = await deps.db
+      .select()
+      .from(projects)
+      .where(eq(projects.id, identity.projectId))
+      .limit(1);
+    const project = projectRows[0];
+    if (!project) throw unauthorized("invalid client credentials");
+
+    return issueIdentityToken(deps, identity, project, request.ip, "universal");
+  };
+
   app.post(
     "/api/auth/token",
     { config: { rateLimit: { max: 20, timeWindow: "1 minute" } } },
-    async (request) => {
-      const input = parse(tokenRequestSchema, request.body);
-      const rows = await deps.db
-        .select()
-        .from(identities)
-        .where(eq(identities.clientId, input.clientId))
-        .limit(1);
-      const identity = rows[0];
-      if (
-        !identity ||
-        identity.revokedAt ||
-        !verifyMachineSecret(identity.secretHash, input.clientSecret)
-      ) {
-        throw unauthorized("invalid client credentials");
-      }
+    universalToken,
+  );
 
-      const projectRows = await deps.db
-        .select()
-        .from(projects)
-        .where(eq(projects.id, identity.projectId))
-        .limit(1);
-      const project = projectRows[0];
-      if (!project) throw unauthorized("invalid client credentials");
-
-      return issueIdentityToken(deps, identity, project, request.ip, "universal");
-    },
+  app.post(
+    "/api/auth/token/universal",
+    { config: { rateLimit: { max: 20, timeWindow: "1 minute" } } },
+    universalToken,
   );
 }

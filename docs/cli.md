@@ -181,6 +181,22 @@ The token must be issued by the configured issuer for the configured audience an
 allowlist is set, match an allowed subject. See
 [Kubernetes → workload identity](kubernetes.md#workload-identity-with-service-account-tokens).
 
+### AWS IAM auth
+
+If the identity trusts an AWS principal, sign a `sts:GetCallerIdentity` request (for example
+with the AWS CLI or SDK) and post the signed headers:
+
+```bash
+curl -s -X POST "$OPENSIEL_API/api/auth/token/aws" \
+  -H 'content-type: application/json' \
+  -d "{\"clientId\":\"$CLIENT_ID\",\"authorization\":\"AWS4-HMAC-SHA256 ...\",\"amzDate\":\"20261022T140000Z\",\"securityToken\":\"$SESSION_TOKEN\"}" \
+  | jq -r .accessToken
+```
+
+The signature must be for `POST https://sts.amazonaws.com/` with body
+`Action=GetCallerIdentity&Version=2011-06-15`. Requests older than five minutes or replayed
+with the same signature are rejected, and the caller ARN must match the identity's allowlist.
+
 ## Other commands
 
 ```bash
