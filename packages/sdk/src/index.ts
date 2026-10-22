@@ -81,6 +81,40 @@ export interface TransitEncryptResult {
   algorithm: string;
 }
 
+export interface UserKey {
+  publicKey: string;
+  wrappedPrivateKey: string;
+  privateKeyIv: string;
+  privateKeyTag: string;
+  kdfSalt: string;
+  kdfParams: Record<string, unknown>;
+}
+
+export interface ProjectKeyBundle {
+  wrappedKey: string;
+  iv: string;
+  tag: string;
+  keyVersion: number;
+}
+
+export interface ProjectKeys {
+  mode: "server" | "e2ee";
+  key: ProjectKeyBundle | null;
+  members: { userId: string; publicKey: string }[];
+}
+
+export interface E2eeSecret {
+  key: string;
+  path: string;
+  version: number;
+  ciphertext: string;
+  iv: string;
+  tag: string;
+  keyVersion: number | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
 export interface ChangeRequestSummary {
   id: string;
   status: string;
@@ -331,6 +365,59 @@ export class OpensielClient {
       `/api/projects/${projectId}/crypto/keys/${encodeURIComponent(name)}/rotate`,
       { method: "POST" },
     );
+  }
+
+  async getUserKeys(): Promise<{ key: UserKey | null }> {
+    return this.request("/api/auth/keys");
+  }
+
+  async putUserKeys(key: UserKey): Promise<{ ok: true }> {
+    return this.request("/api/auth/keys", { method: "PUT", body: key });
+  }
+
+  getProjectKeys(projectId: string): Promise<ProjectKeys> {
+    return this.request(`/api/projects/${projectId}/keys`);
+  }
+
+  putProjectKeys(
+    projectId: string,
+    keys: (ProjectKeyBundle & { userId: string })[],
+  ): Promise<{ ok: true }> {
+    return this.request(`/api/projects/${projectId}/keys`, {
+      method: "PUT",
+      body: { keys },
+    });
+  }
+
+  setEncryptionMode(projectId: string, mode: "server" | "e2ee"): Promise<{ mode: string }> {
+    return this.request(`/api/projects/${projectId}/encryption`, {
+      method: "PATCH",
+      body: { mode },
+    });
+  }
+
+  writeE2eeSecret(
+    projectId: string,
+    env: string,
+    key: string,
+    payload: { ciphertext: string; iv: string; tag: string; keyVersion?: number },
+    options: { path?: string; comment?: string } = {},
+  ): Promise<{ secret: { key: string; path: string; version: number } }> {
+    return this.request(`/api/projects/${projectId}/secrets/ciphertext`, {
+      method: "POST",
+      body: { env, key, ...payload, ...options },
+    });
+  }
+
+  listE2eeSecrets(
+    projectId: string,
+    env: string,
+    options: { path?: string; recursive?: boolean } = {},
+  ): Promise<{ mode: "e2ee"; secrets: E2eeSecret[] }> {
+    const query = new URLSearchParams({ env });
+    if (options.path) query.set("path", options.path);
+    if (options.recursive) query.set("recursive", "true");
+    return this.request(`/api/projects/${projectId}/secrets/ciphertext?${query}`);
   }
 
   rollbackSecret(

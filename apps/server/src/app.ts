@@ -26,6 +26,7 @@ import { registerIdentityAuthRoutes } from "./routes/identity-auth.js";
 import { registerRotationRoutes } from "./routes/rotations.js";
 import { registerRoleRoutes } from "./routes/roles.js";
 import { registerSyncRoutes } from "./routes/syncs.js";
+import { registerE2eeRoutes } from "./routes/e2ee.js";
 import type { Deps } from "./types.js";
 
 export async function buildApp(deps: Deps): Promise<FastifyInstance> {
@@ -98,6 +99,7 @@ export async function buildApp(deps: Deps): Promise<FastifyInstance> {
   registerRotationRoutes(app, deps);
   registerRoleRoutes(app, deps);
   registerSyncRoutes(app, deps);
+  registerE2eeRoutes(app, deps);
 
   app.setErrorHandler((error, request, reply) => {
     if (error instanceof AppError) {

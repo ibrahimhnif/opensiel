@@ -782,3 +782,82 @@ export interface AuditLogDto {
   ip: string | null;
   createdAt: string;
 }
+
+export const encryptionModeSchema = z.enum(["server", "e2ee"]);
+export type EncryptionMode = z.infer<typeof encryptionModeSchema>;
+
+export const setEncryptionModeSchema = z.object({ mode: encryptionModeSchema });
+
+export const userKeyUploadSchema = z.object({
+  publicKey: z.string().min(20).max(2000),
+  wrappedPrivateKey: z.string().min(20).max(20_000),
+  privateKeyIv: z.string().min(8).max(200),
+  privateKeyTag: z.string().min(8).max(200),
+  kdfSalt: z.string().min(8).max(200),
+  kdfParams: z.record(z.unknown()),
+});
+export type UserKeyUpload = z.infer<typeof userKeyUploadSchema>;
+
+export interface UserKeyDto {
+  publicKey: string;
+  wrappedPrivateKey: string;
+  privateKeyIv: string;
+  privateKeyTag: string;
+  kdfSalt: string;
+  kdfParams: Record<string, unknown>;
+}
+
+export const projectKeyUploadSchema = z.object({
+  keys: z
+    .array(
+      z.object({
+        userId: z.string().uuid(),
+        wrappedKey: z.string().min(20).max(40_000),
+        iv: z.string().min(8).max(200),
+        tag: z.string().min(8).max(200),
+        keyVersion: z.number().int().min(1).max(1_000_000).optional(),
+      }),
+    )
+    .min(1)
+    .max(500),
+});
+export type ProjectKeyUpload = z.infer<typeof projectKeyUploadSchema>;
+
+export interface ProjectKeyDto {
+  wrappedKey: string;
+  iv: string;
+  tag: string;
+  keyVersion: number;
+}
+
+export interface ProjectKeysDto {
+  mode: EncryptionMode;
+  key: ProjectKeyDto | null;
+  members: { userId: string; publicKey: string }[];
+}
+
+export const e2eeSecretWriteSchema = z.object({
+  env: slugSchema,
+  path: secretPathSchema.optional(),
+  key: secretKeySchema,
+  ciphertext: z.string().min(1).max(300_000),
+  iv: z.string().min(8).max(200),
+  tag: z.string().min(8).max(200),
+  keyVersion: z.number().int().min(1).max(1_000_000).optional(),
+  comment: z.string().max(500).optional(),
+});
+export type E2eeSecretWriteInput = z.infer<typeof e2eeSecretWriteSchema>;
+
+export interface E2eeSecretDto {
+  key: string;
+  path: string;
+  version: number;
+  ciphertext: string;
+  iv: string;
+  tag: string;
+  keyVersion: number | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export * from "./e2ee.js";

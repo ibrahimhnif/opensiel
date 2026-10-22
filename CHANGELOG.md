@@ -45,6 +45,9 @@ All notable changes to this project are documented here. The format is based on
 - Machine identity AWS auth: exchange a SigV4 `GetCallerIdentity` request for a token with an
   ARN allowlist, a five-minute window, and single-use signatures; add `/api/auth/token/universal`
   as an alias and a UI for managing JWT/AWS auth methods.
+- Opt-in end-to-end encryption: user X25519 keys, per-member wrapped project keys, ciphertext-only
+  secret routes, client crypto helpers in `@opensiel/shared`, and plaintext-route guards for
+  e2ee projects.
 
 ### Changed
 

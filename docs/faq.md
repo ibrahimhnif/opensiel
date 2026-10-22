@@ -52,9 +52,10 @@ returns `409`.
 
 ### Is data encrypted end to end?
 
-No. Secrets are encrypted at rest with AES-256-GCM envelope encryption; the server decrypts
-values to serve authorized clients over TLS. The database alone does not reveal secrets, but
-someone with the master key and database can.
+By default, no: secrets use AES-256-GCM envelope encryption and the server decrypts values for
+authorized clients over TLS. You can opt a project into `e2ee` while it is empty; then keys stay
+client-side, the server stores only ciphertext, and plaintext APIs (web UI editing, approvals,
+rotation, syncs) are unavailable for that project.
 
 ### Can I use AWS KMS?
 

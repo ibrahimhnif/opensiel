@@ -9,6 +9,7 @@ import { requireActor, requireUser } from "../auth.js";
 import {
   assertCanAdmin,
   assertEnvScope,
+  assertServerManaged,
   loadEnvironment,
   loadProject,
   normalizePath,
@@ -54,6 +55,7 @@ export function registerHistoryRoutes(app: FastifyInstance, deps: Deps): void {
     const { projectId, key } = request.params as { projectId: string; key: string };
     const query = parse(secretDiffQuerySchema, request.query);
     const project = await loadProject(deps, actor, projectId);
+    assertServerManaged(project);
     const environment = await loadEnvironment(deps, project.id, query.env);
     if (actor.type === "machine") assertEnvScope(actor, environment.id);
 
@@ -140,6 +142,7 @@ export function registerHistoryRoutes(app: FastifyInstance, deps: Deps): void {
     const { projectId } = request.params as { projectId: string };
     const query = parse(pointInTimeQuerySchema, request.query);
     const project = await loadProject(deps, actor, projectId);
+    assertServerManaged(project);
     const environment = await loadEnvironment(deps, project.id, query.env);
     if (actor.type === "machine") assertEnvScope(actor, environment.id);
 
@@ -169,6 +172,7 @@ export function registerHistoryRoutes(app: FastifyInstance, deps: Deps): void {
     const { projectId } = request.params as { projectId: string };
     const input = parse(restorePointInTimeSchema, request.body);
     const project = await loadProject(deps, actor, projectId);
+    assertServerManaged(project);
     const environment = await loadEnvironment(deps, project.id, input.env);
 
     if (environment.approvalRequired) {

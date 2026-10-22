@@ -15,6 +15,16 @@ import { revokeExpiredRotationCredentials } from "../src/rotation.js";
 import { base32Decode, currentTotpStep, totpCode } from "../src/mfa.js";
 import { generateMasterKey, parseMasterKey, sha256 } from "../src/crypto.js";
 import type { Env } from "../src/env.js";
+import {
+  decryptSecret,
+  encryptSecret,
+  generateIdentity,
+  generateProjectKey,
+  secretAad,
+  unlockIdentity,
+  unwrapProjectKey,
+  wrapProjectKey,
+} from "@opensiel/shared";
 
 const databaseUrl = process.env.TEST_DATABASE_URL;
 
@@ -2130,6 +2140,131 @@ if (!databaseUrl) {
     const stored = kubeSecrets.get("app-secrets");
     expect(stored).toBeTruthy();
     expect(Buffer.from(stored!.K8S_KEY, "base64").toString("utf8")).toBe("kube-value");
+  });
+
+  it("stores end-to-end encrypted secrets without server plaintext", async () => {
+    const session = await signup(`e2ee-${Date.now()}@test.dev`);
+    const auth = { authorization: `Bearer ${session.token}` };
+    const base = `/api/projects/${session.projectId}`;
+
+    const mode = await app.inject({
+      method: "PATCH",
+      url: `${base}/encryption`,
+      headers: auth,
+      payload: { mode: "e2ee" },
+    });
+    expect(mode.statusCode).toBe(200);
+
+    const kdf = { t: 1, m: 1024, p: 1, dkLen: 32 };
+    const identity = generateIdentity("e2ee-password-123", kdf);
+    const uploaded = await app.inject({
+      method: "PUT",
+      url: "/api/auth/keys",
+      headers: auth,
+      payload: {
+        publicKey: identity.publicKey,
+        wrappedPrivateKey: identity.wrappedPrivateKey.ciphertext,
+        privateKeyIv: identity.wrappedPrivateKey.iv,
+        privateKeyTag: identity.wrappedPrivateKey.tag,
+        kdfSalt: identity.wrappedPrivateKey.salt,
+        kdfParams: identity.wrappedPrivateKey.kdf,
+      },
+    });
+    expect(uploaded.statusCode).toBe(200);
+
+    const me = await app.inject({ method: "GET", url: "/api/auth/me", headers: auth });
+    const userId = me.json<{ user: { id: string } }>().user.id;
+
+    const projectKey = generateProjectKey();
+    const wrapped = wrapProjectKey(projectKey, identity.publicKey);
+    const keysUpload = await app.inject({
+      method: "PUT",
+      url: `${base}/keys`,
+      headers: auth,
+      payload: { keys: [{ userId, ...wrapped, keyVersion: 1 }] },
+    });
+    expect(keysUpload.statusCode).toBe(200);
+
+    const aad = secretAad(session.projectId, "dev", "/", "E2EE_KEY");
+    const payload = encryptSecret(projectKey, "server-never-sees-this", aad);
+    const written = await app.inject({
+      method: "POST",
+      url: `${base}/secrets/ciphertext`,
+      headers: auth,
+      payload: {
+        env: "dev",
+        key: "E2EE_KEY",
+        ciphertext: payload.ciphertext,
+        iv: payload.iv,
+        tag: payload.tag,
+        keyVersion: 1,
+      },
+    });
+    expect(written.statusCode).toBe(201);
+    expect(written.json<{ secret: { version: number } }>().secret.version).toBe(1);
+
+    const listed = await app.inject({
+      method: "GET",
+      url: `${base}/secrets/ciphertext?env=dev`,
+      headers: auth,
+    });
+    expect(listed.statusCode).toBe(200);
+    const secrets = listed.json<{
+      secrets: { key: string; ciphertext: string; iv: string; tag: string }[];
+    }>().secrets;
+    expect(secrets).toHaveLength(1);
+    expect(secrets[0].key).toBe("E2EE_KEY");
+    expect(secrets[0].ciphertext).not.toContain("server-never-sees-this");
+    expect(
+      decryptSecret(
+        projectKey,
+        { ciphertext: secrets[0].ciphertext, iv: secrets[0].iv, tag: secrets[0].tag },
+        aad,
+      ),
+    ).toBe("server-never-sees-this");
+
+    const keys = await app.inject({
+      method: "GET",
+      url: `${base}/keys`,
+      headers: auth,
+    });
+    const keysBody = keys.json<{
+      mode: string;
+      key: { wrappedKey: string; iv: string; tag: string };
+      members: { userId: string; publicKey: string }[];
+    }>();
+    expect(keysBody.mode).toBe("e2ee");
+    expect(
+      keysBody.members.some(
+        (member) => member.userId === userId && member.publicKey === identity.publicKey,
+      ),
+    ).toBe(true);
+    const unlocked = unlockIdentity("e2ee-password-123", identity.wrappedPrivateKey);
+    expect(unwrapProjectKey(unlocked.privateKey, keysBody.key)).toBe(projectKey);
+
+    const plainRead = await app.inject({
+      method: "GET",
+      url: `${base}/secrets?env=dev`,
+      headers: auth,
+    });
+    expect(plainRead.statusCode).toBe(409);
+    expect(plainRead.json<{ error: string }>().error).toBe("feature_unavailable_in_e2ee");
+
+    const plainWrite = await app.inject({
+      method: "POST",
+      url: `${base}/secrets`,
+      headers: auth,
+      payload: { key: "NOPE", value: "x", env: "dev" },
+    });
+    expect(plainWrite.statusCode).toBe(409);
+
+    const switchBack = await app.inject({
+      method: "PATCH",
+      url: `${base}/encryption`,
+      headers: auth,
+      payload: { mode: "server" },
+    });
+    expect(switchBack.statusCode).toBe(409);
   });
 
   it("invites teammates into the same organization", async () => {

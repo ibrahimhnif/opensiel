@@ -203,6 +203,30 @@ The HTTP provider posts `{ projectId, environment, path, key }` to `createUrl` a
 The PostgreSQL provider runs `ALTER ROLE … PASSWORD` through the admin connection and
 randomizes the retired role's password on revocation.
 
+## End-to-end encryption (opt-in)
+
+A project can switch to `encryption_mode = 'e2ee'` while it has no secrets. In that mode the
+server only stores ciphertext.
+
+- Each user publishes an X25519 identity: the public key plus a private key wrapped with an
+  Argon2id-derived key from their password (`user_keys`).
+- A project key is generated client-side and wrapped for each member's public key
+  (`project_member_keys`, X25519 + HKDF + AES-256-GCM sealed box). The server cannot unwrap it.
+- Secrets are encrypted client-side with the project key and `AAD =
+e2ee:<project>:<environment>:<path>:<key>`, then written through
+  `POST /projects/:id/secrets/ciphertext`. Reads use
+  `GET /projects/:id/secrets/ciphertext`, which never decrypts.
+- The shared package exposes `generateIdentity`, `unlockIdentity`, `generateProjectKey`,
+  `wrapProjectKey`, `unwrapProjectKey`, `encryptSecret`, and `decryptSecret`.
+- Plaintext routes (`/secrets`, export, diff, point-in-time restore, scanning, rotation, and
+  syncs) return `feature_unavailable_in_e2ee` for these projects. Approvals and server-side
+  reference resolution are unavailable; resolve references client-side.
+- The audit log records key names, paths, versions, and key versions, never plaintext or
+  ciphertext.
+- Not available in `e2ee` mode: web UI secret editing, dynamic credentials, server-side
+  rotation/syncs, and shared reference resolution. Use the SDK and the crypto helpers from the
+  workspace `@opensiel/shared` package.
+
 ## Version diff and point-in-time restore
 
 `GET /projects/:id/secrets/:key/diff` decrypts two versions and returns them masked unless
