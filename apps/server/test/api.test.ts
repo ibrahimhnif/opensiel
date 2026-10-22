@@ -1770,6 +1770,95 @@ if (!databaseUrl) {
     }
   });
 
+  it("grants scoped custom-role permissions with temporary access", async () => {
+    const owner = await signup(`rbac-owner-${Date.now()}@test.dev`);
+    const auth = { authorization: `Bearer ${owner.token}` };
+    const viewerEmail = `rbac-viewer-${Date.now()}@test.dev`;
+
+    const invite = await app.inject({
+      method: "POST",
+      url: "/api/org/invites",
+      headers: auth,
+      payload: { email: viewerEmail, role: "viewer" },
+    });
+    expect(invite.statusCode).toBe(201);
+    const accepted = await app.inject({
+      method: "POST",
+      url: "/api/auth/accept-invite",
+      payload: {
+        token: invite.json<{ token: string }>().token,
+        name: "Viewer",
+        password: "viewer-password-123",
+      },
+    });
+    expect(accepted.statusCode).toBe(201);
+    const viewer = accepted.json<{ token: string; user: { id: string } }>();
+    const viewerAuth = { authorization: `Bearer ${viewer.token}` };
+
+    const denied = await app.inject({
+      method: "POST",
+      url: `/api/projects/${owner.projectId}/secrets`,
+      headers: viewerAuth,
+      payload: { key: "RBAC_KEY", value: "x", env: "dev" },
+    });
+    expect(denied.statusCode).toBe(403);
+
+    const roleResponse = await app.inject({
+      method: "POST",
+      url: "/api/org/roles",
+      headers: auth,
+      payload: { name: "dev-writer", permissions: ["secret:write"] },
+    });
+    expect(roleResponse.statusCode).toBe(201);
+    const role = roleResponse.json<{ role: { id: string } }>().role;
+
+    const grant = await app.inject({
+      method: "POST",
+      url: "/api/org/grants",
+      headers: auth,
+      payload: {
+        userId: viewer.user.id,
+        roleId: role.id,
+        environmentId: owner.devId,
+        path: "/",
+      },
+    });
+    expect(grant.statusCode).toBe(201);
+    const grantId = grant.json<{ grant: { id: string } }>().grant.id;
+
+    const allowed = await app.inject({
+      method: "POST",
+      url: `/api/projects/${owner.projectId}/secrets`,
+      headers: viewerAuth,
+      payload: { key: "RBAC_KEY", value: "x", env: "dev" },
+    });
+    expect(allowed.statusCode).toBe(201);
+
+    for (const payload of [
+      { key: "RBAC_KEY", value: "x", env: "prod" },
+      { key: "RBAC_KEY", value: "x", env: "dev", path: "/backend" },
+    ]) {
+      const outside = await app.inject({
+        method: "POST",
+        url: `/api/projects/${owner.projectId}/secrets`,
+        headers: viewerAuth,
+        payload,
+      });
+      expect(outside.statusCode).toBe(403);
+    }
+
+    await database.sql`
+      update role_grants set expires_at = now() - interval '1 minute' where id = ${grantId}
+    `;
+    const expired = await app.inject({
+      method: "POST",
+      url: `/api/projects/${owner.projectId}/secrets`,
+      headers: viewerAuth,
+      payload: { key: "RBAC_KEY", value: "y", env: "dev" },
+    });
+    expect(expired.statusCode).toBe(403);
+  });
+
   it("invites teammates into the same organization", async () => {
     const owner = await signup(`invite-owner-${Date.now()}@test.dev`);
     const auth = { authorization: `Bearer ${owner.token}` };

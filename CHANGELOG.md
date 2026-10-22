@@ -30,6 +30,8 @@ All notable changes to this project are documented here. The format is based on
 - Static secret rotation: policies with PostgreSQL-role and HTTP providers, encrypted configs,
   dual-phase current/previous credentials, grace-window revocation, advisory-locked scheduler,
   manual rotate, and failure backoff.
+- Scoped RBAC: one permission matrix for built-in roles, custom roles, and project/environment/
+  path grants with optional expiry; secret writes check built-in permission plus active grants.
 
 ### Changed
 

@@ -68,6 +68,11 @@ optional IP allowlist (single addresses or CIDR ranges) and an hourly issuance c
 - Users belong to one organization; projects are scoped to the organization.
 - Roles: `owner` (delete project, manage everything), `admin` (projects, environments,
   identities), `member` (read/write secrets), `viewer` (read secrets).
+- Built-in roles map to a single permission matrix (`owner` bypasses nothing implicitly;
+  `org:manage` and `project:delete` are owner-only).
+- Custom roles carry scope-aware permissions and are attached through grants limited to an
+  organization, project, environment, or path. Grants are additive, evaluated per request, and
+  ignored once `expires_at` passes; a grant cannot authorize a different environment or path.
 - Machine identities have `viewer` or `member` and an explicit environment allowlist.
   Cross-environment access returns 403; cross-organization access returns 404.
 

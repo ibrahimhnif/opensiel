@@ -464,6 +464,50 @@ export const rotationPolicies = pgTable(
 
 export type RotationPolicyRow = typeof rotationPolicies.$inferSelect;
 
+export const customRoles = pgTable(
+  "custom_roles",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    orgId: uuid("org_id")
+      .notNull()
+      .references(() => orgs.id, { onDelete: "cascade" }),
+    name: text("name").notNull(),
+    permissions: jsonb("permissions").$type<string[]>().notNull().default([]),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [uniqueIndex("custom_roles_org_name_uq").on(table.orgId, table.name)],
+);
+
+export const roleGrants = pgTable(
+  "role_grants",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    orgId: uuid("org_id")
+      .notNull()
+      .references(() => orgs.id, { onDelete: "cascade" }),
+    roleId: uuid("role_id")
+      .notNull()
+      .references(() => customRoles.id, { onDelete: "cascade" }),
+    userId: uuid("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    projectId: uuid("project_id").references(() => projects.id, { onDelete: "cascade" }),
+    environmentId: uuid("environment_id").references(() => environments.id, {
+      onDelete: "cascade",
+    }),
+    path: text("path"),
+    expiresAt: timestamp("expires_at", { withTimezone: true }),
+    createdBy: uuid("created_by")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [index("role_grants_user_idx").on(table.userId, table.orgId)],
+);
+
+export type CustomRoleRow = typeof customRoles.$inferSelect;
+export type RoleGrantRow = typeof roleGrants.$inferSelect;
+
 export type UserRow = typeof users.$inferSelect;
 export type OrgRow = typeof orgs.$inferSelect;
 export type ProjectRow = typeof projects.$inferSelect;

@@ -122,6 +122,24 @@ OIDC and SAML share `provisionUser`:
 Passwords for SSO-created users are random and unknown, so password login cannot be used
 until a password is set (not implemented in v0).
 
+## Authorization
+
+Permissions are defined once in `permissions.ts` and every access check derives from that
+matrix.
+
+- Built-in roles map to permissions: `owner` (all, including `org:manage` and
+  `project:delete`), `admin` (everything except those two), `member` (secret read/write/delete,
+  project read, audit read), `viewer` (secret read, project read, audit read).
+- Machine identities map to secret read (`viewer`) or secret read/write (`member`) and are
+  additionally restricted by their environment scopes.
+- `custom_roles` hold a set of scope-aware permissions (`secret:read`, `secret:write`,
+  `secret:delete`, `project:read`, `audit:read`).
+- `role_grants` attach a custom role to a user at organization, project, environment, or path
+  scope, optionally with `expires_at`. Grants are additive: they never remove a built-in
+  permission, and a grant for one environment or path cannot authorize another.
+- Secret write, delete, rollback, and import check the built-in permission first, then active
+  grants for the exact project/environment/path. Expired grants are ignored at evaluation time.
+
 ## Secret writes and approvals
 
 `POST /projects/:id/secrets` calls `applySecretWrite`, which finds or revives the secret,

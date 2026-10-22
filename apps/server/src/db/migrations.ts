@@ -418,4 +418,33 @@ create unique index rotation_policies_target_uq
 create index rotation_policies_due_idx on rotation_policies (enabled, next_run_at);
 `,
   },
+  {
+    name: "0015_custom_roles",
+    sql: `
+create table custom_roles (
+  id uuid primary key default gen_random_uuid(),
+  org_id uuid not null references orgs(id) on delete cascade,
+  name text not null,
+  permissions jsonb not null default '[]'::jsonb,
+  created_at timestamptz not null default now()
+);
+
+create unique index custom_roles_org_name_uq on custom_roles (org_id, name);
+
+create table role_grants (
+  id uuid primary key default gen_random_uuid(),
+  org_id uuid not null references orgs(id) on delete cascade,
+  role_id uuid not null references custom_roles(id) on delete cascade,
+  user_id uuid not null references users(id) on delete cascade,
+  project_id uuid references projects(id) on delete cascade,
+  environment_id uuid references environments(id) on delete cascade,
+  path text,
+  expires_at timestamptz,
+  created_by uuid not null references users(id) on delete cascade,
+  created_at timestamptz not null default now()
+);
+
+create index role_grants_user_idx on role_grants (user_id, org_id);
+`,
+  },
 ];
