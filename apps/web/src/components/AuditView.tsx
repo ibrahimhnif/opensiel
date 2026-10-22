@@ -8,11 +8,12 @@ import { Card } from "./ui/card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "./ui/table";
 import { Pagination } from "./Pagination";
 import { usePagination } from "../hooks/usePagination";
-import { Notice } from "./Notice";
+import { useToastMessage } from "../hooks/useToastMessage";
 
 export function AuditView({ project }: { project: ProjectDto }) {
   const [logs, setLogs] = useState<AuditLogDto[]>([]);
   const [error, setError] = useState("");
+  useToastMessage("error", error, setError);
 
   const load = useCallback(async () => {
     try {
@@ -45,8 +46,6 @@ export function AuditView({ project }: { project: ProjectDto }) {
           <RefreshCw className="size-4" /> refresh
         </Button>
       </div>
-
-      {error && <Notice tone="error">{error}</Notice>}
 
       <Card className="overflow-hidden py-0">
         <Table>

@@ -21,7 +21,8 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from ".
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "./ui/table";
 import { Pagination } from "./Pagination";
 import { usePagination } from "../hooks/usePagination";
-import { Notice } from "./Notice";
+import { useToastMessage } from "../hooks/useToastMessage";
+import { useConfirm } from "./ConfirmProvider";
 
 interface CreatedIdentity {
   name: string;
@@ -30,6 +31,7 @@ interface CreatedIdentity {
 }
 
 export function IdentitiesView({ project }: { project: ProjectDto }) {
+  const confirm = useConfirm();
   const [rows, setRows] = useState<IdentityDto[]>([]);
   const [error, setError] = useState("");
   const [created, setCreated] = useState<CreatedIdentity | null>(null);
@@ -39,6 +41,8 @@ export function IdentitiesView({ project }: { project: ProjectDto }) {
   const [envIds, setEnvIds] = useState<string[]>([]);
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState("");
+  useToastMessage("success", notice, setNotice);
+  useToastMessage("error", error, setError);
 
   const load = useCallback(async () => {
     try {
@@ -99,9 +103,12 @@ export function IdentitiesView({ project }: { project: ProjectDto }) {
 
   async function revoke(identity: IdentityDto) {
     if (
-      !window.confirm(
-        `Revoke ${identity.name}? Existing tokens stay valid until they expire (15 min).`,
-      )
+      !(await confirm({
+        title: `Revoke ${identity.name}?`,
+        description: "New tokens stop being issued immediately; existing tokens are rejected.",
+        confirmLabel: "revoke",
+        destructive: true,
+      }))
     )
       return;
     try {
@@ -144,17 +151,6 @@ export function IdentitiesView({ project }: { project: ProjectDto }) {
           </Button>
         </div>
       </div>
-
-      {notice && (
-        <Notice tone="success" onDismiss={() => setNotice("")}>
-          {notice}
-        </Notice>
-      )}
-      {error && (
-        <Notice tone="error" onDismiss={() => setError("")}>
-          {error}
-        </Notice>
-      )}
 
       {created && (
         <div className="border-primary/40 bg-primary/10 text-primary rounded-lg border px-4 py-3 text-sm">

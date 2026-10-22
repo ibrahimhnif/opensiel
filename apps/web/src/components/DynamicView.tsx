@@ -19,7 +19,8 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from ".
 import { Pagination } from "./Pagination";
 import { usePagination } from "../hooks/usePagination";
 import { Textarea } from "./ui/textarea";
-import { Notice } from "./Notice";
+import { useToastMessage } from "../hooks/useToastMessage";
+import { useConfirm } from "./ConfirmProvider";
 
 const DEFAULT_CREATION =
   "CREATE ROLE \"{{username}}\" WITH LOGIN PASSWORD '{{password}}' VALID UNTIL '{{expires}}'";
@@ -35,6 +36,7 @@ interface Credentials {
 }
 
 export function DynamicView({ project }: { project: ProjectDto; canManage: boolean }) {
+  const confirm = useConfirm();
   const [configs, setConfigs] = useState<DynamicConfigDto[]>([]);
   const [leases, setLeases] = useState<DynamicLeaseDto[]>([]);
   const [error, setError] = useState("");
@@ -48,6 +50,8 @@ export function DynamicView({ project }: { project: ProjectDto; canManage: boole
   const [revocationStatement, setRevocationStatement] = useState(DEFAULT_REVOCATION);
   const [busy, setBusy] = useState(false);
   const [leasingConfig, setLeasingConfig] = useState<string | null>(null);
+  useToastMessage("success", notice, setNotice);
+  useToastMessage("error", error, setError);
 
   const load = useCallback(async () => {
     try {
@@ -139,7 +143,15 @@ export function DynamicView({ project }: { project: ProjectDto; canManage: boole
   }
 
   async function revoke(lease: DynamicLeaseDto) {
-    if (!window.confirm(`Revoke ${lease.username}? The database role is dropped.`)) return;
+    if (
+      !(await confirm({
+        title: `Revoke ${lease.username}?`,
+        description: "The database role is dropped.",
+        confirmLabel: "revoke",
+        destructive: true,
+      }))
+    )
+      return;
     try {
       await api.post(`/api/projects/${project.id}/dynamic-secrets/leases/${lease.id}/revoke`);
       setNotice(`lease for ${lease.username} revoked`);
@@ -151,9 +163,12 @@ export function DynamicView({ project }: { project: ProjectDto; canManage: boole
 
   async function removeConfig(config: DynamicConfigDto) {
     if (
-      !window.confirm(
-        `Delete ${config.name}? Existing database roles are not dropped automatically.`,
-      )
+      !(await confirm({
+        title: `Delete ${config.name}?`,
+        description: "Existing database roles are not dropped automatically.",
+        confirmLabel: "delete",
+        destructive: true,
+      }))
     )
       return;
     try {
@@ -193,17 +208,6 @@ export function DynamicView({ project }: { project: ProjectDto; canManage: boole
           </Button>
         </div>
       </div>
-
-      {notice && (
-        <Notice tone="success" onDismiss={() => setNotice("")}>
-          {notice}
-        </Notice>
-      )}
-      {error && (
-        <Notice tone="error" onDismiss={() => setError("")}>
-          {error}
-        </Notice>
-      )}
 
       {created && (
         <div className="border-primary/40 bg-primary/10 text-primary rounded-lg border px-4 py-3 text-sm">

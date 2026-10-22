@@ -17,7 +17,7 @@ import {
 import { Input } from "./ui/input";
 import { Label } from "./ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "./ui/select";
-import { Notice } from "./Notice";
+import { useToastMessage } from "../hooks/useToastMessage";
 import { Logo } from "./Logo";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "./ui/tabs";
 import { SecretsView } from "./SecretsView";
@@ -68,6 +68,7 @@ export function Dashboard({ user, onSignedOut }: { user: UserDto; onSignedOut: (
   const [newProjectName, setNewProjectName] = useState("");
   const [loading, setLoading] = useState(true);
   const [mobileCreateOpen, setMobileCreateOpen] = useState(false);
+  useToastMessage("error", error, setError);
 
   const loadProjects = useCallback(async () => {
     try {
@@ -276,12 +277,6 @@ export function Dashboard({ user, onSignedOut }: { user: UserDto; onSignedOut: (
             </Button>
           </div>
         </div>
-
-        {error && (
-          <Notice tone="error" onDismiss={() => setError("")}>
-            {error}
-          </Notice>
-        )}
 
         {loading && projects.length === 0 ? (
           <div className="grid flex-1 place-items-center py-16">

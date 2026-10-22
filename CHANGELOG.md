@@ -36,6 +36,8 @@ All notable changes to this project are documented here. The format is based on
   status, next run, grace window, and last error are shown inline.
 - Web UI: Access tab for custom roles and scoped grants (member, role, environment/path,
   optional expiry) with revoke.
+- Web UI: sonner toasts replace transient inline notices, and destructive actions confirm
+  through a shadcn alert dialog instead of `window.confirm`.
 
 ### Changed
 

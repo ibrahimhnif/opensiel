@@ -12,7 +12,8 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from ".
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "./ui/table";
 import { Pagination } from "./Pagination";
 import { usePagination } from "../hooks/usePagination";
-import { Notice } from "./Notice";
+import { useToastMessage } from "../hooks/useToastMessage";
+import { useConfirm } from "./ConfirmProvider";
 import { KeyRotationCard } from "./KeyRotationCard";
 
 interface OrgData {
@@ -24,6 +25,7 @@ interface OrgData {
 }
 
 export function MembersView() {
+  const confirm = useConfirm();
   const [data, setData] = useState<OrgData | null>(null);
   const [invites, setInvites] = useState<InviteDto[]>([]);
   const [error, setError] = useState("");
@@ -32,6 +34,8 @@ export function MembersView() {
   const [email, setEmail] = useState("");
   const [role, setRole] = useState<Role>("member");
   const [busy, setBusy] = useState(false);
+  useToastMessage("success", notice, setNotice);
+  useToastMessage("error", error, setError);
 
   const load = useCallback(async () => {
     try {
@@ -94,7 +98,14 @@ export function MembersView() {
   }
 
   async function remove(member: MemberDto) {
-    if (!window.confirm(`Remove ${member.name} from the organization? Their sessions are revoked.`))
+    if (
+      !(await confirm({
+        title: `Remove ${member.name}?`,
+        description: "Their sessions are revoked immediately.",
+        confirmLabel: "remove",
+        destructive: true,
+      }))
+    )
       return;
     try {
       await api.del(`/api/org/members/${member.userId}`);
@@ -143,17 +154,6 @@ export function MembersView() {
           <RefreshCw className="size-4" /> refresh
         </Button>
       </div>
-
-      {notice && (
-        <Notice tone="success" onDismiss={() => setNotice("")}>
-          {notice}
-        </Notice>
-      )}
-      {error && (
-        <Notice tone="error" onDismiss={() => setError("")}>
-          {error}
-        </Notice>
-      )}
 
       {inviteLink && (
         <div className="border-primary/40 bg-primary/10 text-primary rounded-lg border px-4 py-3 text-sm">

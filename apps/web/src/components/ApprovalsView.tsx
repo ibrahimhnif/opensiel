@@ -19,7 +19,8 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from ".
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "./ui/table";
 import { Pagination } from "./Pagination";
 import { usePagination } from "../hooks/usePagination";
-import { Notice } from "./Notice";
+import { useToastMessage } from "../hooks/useToastMessage";
+import { useConfirm } from "./ConfirmProvider";
 
 interface Props {
   project: ProjectDto;
@@ -44,6 +45,7 @@ function statusVariant(status: ChangeRequestStatus) {
 }
 
 export function ApprovalsView({ project, currentUserId, canApprove, onRefresh }: Props) {
+  const confirm = useConfirm();
   const [requests, setRequests] = useState<ChangeRequestDto[]>([]);
   const [filter, setFilter] = useState<ChangeRequestStatus | "all">("pending");
   const [envs, setEnvs] = useState<EnvironmentDto[]>(project.environments);
@@ -54,6 +56,8 @@ export function ApprovalsView({ project, currentUserId, canApprove, onRefresh }:
   const [newEnvName, setNewEnvName] = useState("");
   const [newEnvSlug, setNewEnvSlug] = useState("");
   const [envBusy, setEnvBusy] = useState(false);
+  useToastMessage("success", notice, setNotice);
+  useToastMessage("error", error, setError);
 
   useEffect(() => {
     setEnvs(project.environments);
@@ -199,7 +203,15 @@ export function ApprovalsView({ project, currentUserId, canApprove, onRefresh }:
   }
 
   async function deleteEnvironment(environment: EnvironmentDto) {
-    if (!window.confirm(`Delete environment ${environment.slug}? It must have no secrets.`)) return;
+    if (
+      !(await confirm({
+        title: `Delete environment ${environment.slug}?`,
+        description: "It must have no secrets.",
+        confirmLabel: "delete",
+        destructive: true,
+      }))
+    )
+      return;
     try {
       await api.del(`/api/projects/${project.id}/environments/${environment.id}`);
       setEnvs((current) => current.filter((entry) => entry.id !== environment.id));
@@ -241,17 +253,6 @@ export function ApprovalsView({ project, currentUserId, canApprove, onRefresh }:
           </Button>
         </div>
       </div>
-
-      {notice && (
-        <Notice tone="success" onDismiss={() => setNotice("")}>
-          {notice}
-        </Notice>
-      )}
-      {error && (
-        <Notice tone="error" onDismiss={() => setError("")}>
-          {error}
-        </Notice>
-      )}
 
       {canApprove && (
         <>

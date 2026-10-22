@@ -7,7 +7,7 @@ import { Button } from "./ui/button";
 import { Card, CardContent } from "./ui/card";
 import { Input } from "./ui/input";
 import { Label } from "./ui/label";
-import { Notice } from "./Notice";
+import { useToastMessage } from "../hooks/useToastMessage";
 
 export function MfaCard({ isOwner }: { isOwner: boolean }) {
   const [status, setStatus] = useState<MfaStatusDto | null>(null);
@@ -19,6 +19,8 @@ export function MfaCard({ isOwner }: { isOwner: boolean }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
+  useToastMessage("success", notice, setNotice);
+  useToastMessage("error", error, setError);
 
   async function load() {
     try {
@@ -123,17 +125,6 @@ export function MfaCard({ isOwner }: { isOwner: boolean }) {
             </Badge>
           )}
         </div>
-
-        {notice && (
-          <Notice tone="success" onDismiss={() => setNotice("")}>
-            {notice}
-          </Notice>
-        )}
-        {error && (
-          <Notice tone="error" onDismiss={() => setError("")}>
-            {error}
-          </Notice>
-        )}
 
         {status?.enabled ? (
           <div className="space-y-4">

@@ -12,6 +12,7 @@ import { Pagination } from "./Pagination";
 import { usePagination } from "../hooks/usePagination";
 import { Textarea } from "./ui/textarea";
 import { Notice } from "./Notice";
+import { useToastMessage } from "../hooks/useToastMessage";
 
 export function ScanView({ project }: { project: ProjectDto }) {
   const [contents, setContents] = useState("");
@@ -19,6 +20,7 @@ export function ScanView({ project }: { project: ProjectDto }) {
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
   const [scanId, setScanId] = useState(0);
+  useToastMessage("error", error, setError);
 
   const findingPagination = usePagination(result?.findings ?? [], {
     pageSize: 20,
@@ -60,12 +62,6 @@ export function ScanView({ project }: { project: ProjectDto }) {
           </p>
         </div>
       </div>
-
-      {error && (
-        <Notice tone="error" onDismiss={() => setError("")}>
-          {error}
-        </Notice>
-      )}
 
       {result && (
         <Notice

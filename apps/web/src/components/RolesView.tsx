@@ -19,7 +19,8 @@ import { Input } from "./ui/input";
 import { Label } from "./ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "./ui/select";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "./ui/table";
-import { Notice } from "./Notice";
+import { useToastMessage } from "../hooks/useToastMessage";
+import { useConfirm } from "./ConfirmProvider";
 
 interface CustomRole {
   id: string;
@@ -50,6 +51,7 @@ interface Member {
 }
 
 export function RolesView({ project }: { project: ProjectDto }) {
+  const confirm = useConfirm();
   const [roles, setRoles] = useState<CustomRole[]>([]);
   const [grants, setGrants] = useState<Grant[]>([]);
   const [members, setMembers] = useState<Member[]>([]);
@@ -69,6 +71,8 @@ export function RolesView({ project }: { project: ProjectDto }) {
   const [grantEnv, setGrantEnv] = useState(project.environments[0]?.slug ?? "dev");
   const [grantPath, setGrantPath] = useState("/");
   const [grantExpires, setGrantExpires] = useState("");
+  useToastMessage("success", notice, setNotice);
+  useToastMessage("error", error, setError);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -120,7 +124,15 @@ export function RolesView({ project }: { project: ProjectDto }) {
   }
 
   async function deleteRole(role: CustomRole) {
-    if (!window.confirm(`Delete role ${role.name}? Grants using it are removed.`)) return;
+    if (
+      !(await confirm({
+        title: `Delete role ${role.name}?`,
+        description: "Grants using this role are removed.",
+        confirmLabel: "delete",
+        destructive: true,
+      }))
+    )
+      return;
     setBusy(true);
     try {
       await api.del(`/api/org/roles/${role.id}`);
@@ -173,7 +185,15 @@ export function RolesView({ project }: { project: ProjectDto }) {
   }
 
   async function revokeGrant(grant: Grant) {
-    if (!window.confirm(`Revoke ${grant.roleName} from ${grant.userName}?`)) return;
+    if (
+      !(await confirm({
+        title: `Revoke ${grant.roleName}?`,
+        description: `Remove this grant from ${grant.userName}.`,
+        confirmLabel: "revoke",
+        destructive: true,
+      }))
+    )
+      return;
     setBusy(true);
     try {
       await api.del(`/api/org/grants/${grant.id}`);
@@ -217,17 +237,6 @@ export function RolesView({ project }: { project: ProjectDto }) {
           </Button>
         </div>
       </div>
-
-      {notice && (
-        <Notice tone="success" onDismiss={() => setNotice("")}>
-          {notice}
-        </Notice>
-      )}
-      {error && (
-        <Notice tone="error" onDismiss={() => setError("")}>
-          {error}
-        </Notice>
-      )}
 
       <Card className="overflow-hidden py-0">
         <Table>

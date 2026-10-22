@@ -40,6 +40,8 @@ import { Pagination } from "./Pagination";
 import { usePagination } from "../hooks/usePagination";
 import { Textarea } from "./ui/textarea";
 import { Notice } from "./Notice";
+import { useToastMessage } from "../hooks/useToastMessage";
+import { useConfirm } from "./ConfirmProvider";
 
 interface Props {
   project: ProjectDto;
@@ -91,6 +93,7 @@ interface PitrPreview {
 }
 
 export function SecretsView({ project, env, canManage = false }: Props) {
+  const confirm = useConfirm();
   const [rows, setRows] = useState<SecretDto[]>([]);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
@@ -112,6 +115,8 @@ export function SecretsView({ project, env, canManage = false }: Props) {
   const [importComment, setImportComment] = useState("");
   const [importPreview, setImportPreview] = useState<string[] | null>(null);
   const [importBusy, setImportBusy] = useState(false);
+  useToastMessage("success", notice, setNotice);
+  useToastMessage("error", error, setError);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -189,7 +194,15 @@ export function SecretsView({ project, env, canManage = false }: Props) {
   }
 
   async function remove(row: SecretDto) {
-    if (!window.confirm(`Delete ${row.key} from ${env}? Version history is kept.`)) return;
+    if (
+      !(await confirm({
+        title: `Delete ${row.key}?`,
+        description: `Removes it from ${env}. Version history is kept.`,
+        confirmLabel: "delete",
+        destructive: true,
+      }))
+    )
+      return;
     try {
       const params = new URLSearchParams({ env, path: row.path });
       const result = await api.del<{ ok?: boolean; changeRequest?: { id: string } }>(
@@ -278,12 +291,14 @@ export function SecretsView({ project, env, canManage = false }: Props) {
     const at = new Date(pitrAt);
     if (!pitrPreview || Number.isNaN(at.getTime())) return;
     if (
-      !window.confirm(
-        `Restore ${env} to ${pitrPreview.at}? Changed keys get a new version, deleted keys are revived, and keys created after that time are deleted.`,
-      )
-    ) {
+      !(await confirm({
+        title: `Restore ${env}?`,
+        description: `Restores to ${pitrPreview.at}. Changed keys get a new version, deleted keys are revived, and keys created after that time are deleted.`,
+        confirmLabel: "restore",
+        destructive: true,
+      }))
+    )
       return;
-    }
     setPitrBusy(true);
     setError("");
     try {
@@ -454,17 +469,6 @@ export function SecretsView({ project, env, canManage = false }: Props) {
         <Notice>
           Changes to <code>{env}</code> require {activeEnvironment.requiredApprovals} approval(s)
           before they are applied.
-        </Notice>
-      )}
-
-      {notice && (
-        <Notice tone="success" onDismiss={() => setNotice("")}>
-          {notice}
-        </Notice>
-      )}
-      {error && (
-        <Notice tone="error" onDismiss={() => setError("")}>
-          {error}
         </Notice>
       )}
 

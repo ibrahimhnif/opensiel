@@ -17,7 +17,8 @@ import { Input } from "./ui/input";
 import { Label } from "./ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "./ui/select";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "./ui/table";
-import { Notice } from "./Notice";
+import { useToastMessage } from "../hooks/useToastMessage";
+import { useConfirm } from "./ConfirmProvider";
 
 interface Rotation {
   id: string;
@@ -70,6 +71,7 @@ function emptyForm(env: string): FormState {
 }
 
 export function RotationsView({ project, canManage }: { project: ProjectDto; canManage: boolean }) {
+  const confirm = useConfirm();
   const [rotations, setRotations] = useState<Rotation[]>([]);
   const [loading, setLoading] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -79,6 +81,8 @@ export function RotationsView({ project, canManage }: { project: ProjectDto; can
   const [form, setForm] = useState<FormState>(() =>
     emptyForm(project.environments[0]?.slug ?? "dev"),
   );
+  useToastMessage("success", notice, setNotice);
+  useToastMessage("error", error, setError);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -181,7 +185,15 @@ export function RotationsView({ project, canManage }: { project: ProjectDto; can
   }
 
   async function remove(rotation: Rotation) {
-    if (!window.confirm(`Delete the rotation policy for ${rotation.key}?`)) return;
+    if (
+      !(await confirm({
+        title: "Delete rotation policy",
+        description: `Stop rotating ${rotation.key}?`,
+        confirmLabel: "delete",
+        destructive: true,
+      }))
+    )
+      return;
     setBusy(true);
     try {
       await api.del(`/api/projects/${project.id}/rotations/${rotation.id}`);
@@ -215,17 +227,6 @@ export function RotationsView({ project, canManage }: { project: ProjectDto; can
           )}
         </div>
       </div>
-
-      {notice && (
-        <Notice tone="success" onDismiss={() => setNotice("")}>
-          {notice}
-        </Notice>
-      )}
-      {error && (
-        <Notice tone="error" onDismiss={() => setError("")}>
-          {error}
-        </Notice>
-      )}
 
       <Card className="overflow-hidden py-0">
         <Table>

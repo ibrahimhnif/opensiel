@@ -20,7 +20,8 @@ import { Label } from "./ui/label";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "./ui/table";
 import { Pagination } from "./Pagination";
 import { usePagination } from "../hooks/usePagination";
-import { Notice } from "./Notice";
+import { useToastMessage } from "../hooks/useToastMessage";
+import { useConfirm } from "./ConfirmProvider";
 
 interface CreatedWebhook {
   url: string;
@@ -28,6 +29,7 @@ interface CreatedWebhook {
 }
 
 export function WebhooksView({ project }: { project: ProjectDto }) {
+  const confirm = useConfirm();
   const [rows, setRows] = useState<WebhookDto[]>([]);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
@@ -36,6 +38,8 @@ export function WebhooksView({ project }: { project: ProjectDto }) {
   const [url, setUrl] = useState("");
   const [events, setEvents] = useState<WebhookEvent[]>(["secret.created", "secret.updated"]);
   const [busy, setBusy] = useState(false);
+  useToastMessage("success", notice, setNotice);
+  useToastMessage("error", error, setError);
 
   const load = useCallback(async () => {
     try {
@@ -115,7 +119,15 @@ export function WebhooksView({ project }: { project: ProjectDto }) {
   }
 
   async function remove(webhook: WebhookDto) {
-    if (!window.confirm(`Delete the webhook for ${webhook.url}?`)) return;
+    if (
+      !(await confirm({
+        title: "Delete webhook",
+        description: webhook.url,
+        confirmLabel: "delete",
+        destructive: true,
+      }))
+    )
+      return;
     try {
       await api.del(`/api/projects/${project.id}/webhooks/${webhook.id}`);
       setNotice("webhook deleted");
@@ -152,17 +164,6 @@ export function WebhooksView({ project }: { project: ProjectDto }) {
           </Button>
         </div>
       </div>
-
-      {notice && (
-        <Notice tone="success" onDismiss={() => setNotice("")}>
-          {notice}
-        </Notice>
-      )}
-      {error && (
-        <Notice tone="error" onDismiss={() => setError("")}>
-          {error}
-        </Notice>
-      )}
 
       {created && (
         <div className="border-primary/40 bg-primary/10 text-primary rounded-lg border px-4 py-3 text-sm">
