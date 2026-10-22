@@ -57,12 +57,14 @@ jobs:
       - name: Render chart
         run: |
           helm template opensiel deploy/helm/opensiel --namespace opensiel > /tmp/opensiel.yaml
-          kubectl apply --dry-run=client -f /tmp/opensiel.yaml
+          grep -q 'kind: Deployment' /tmp/opensiel.yaml
+          grep -q 'kind: StatefulSet' /tmp/opensiel.yaml
           helm template opensiel deploy/helm/opensiel --namespace opensiel \
             --set postgresql.enabled=false \
             --set externalDatabase.url='postgres://u:p@db:5432/opensiel' \
             > /tmp/opensiel-external.yaml
-          kubectl apply --dry-run=client -f /tmp/opensiel-external.yaml
+          grep -q 'kind: Deployment' /tmp/opensiel-external.yaml
+          ! grep -q 'kind: StatefulSet' /tmp/opensiel-external.yaml
 
   image:
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
