@@ -23,10 +23,62 @@ export interface SecretVersion {
   version: number;
   comment: string | null;
   fingerprint: string;
+  fingerprintVersion: number;
   createdByType: string;
   createdById: string;
   createdAt: string;
   current: boolean;
+}
+
+export interface SecretDiff {
+  key: string;
+  path: string;
+  env: string;
+  changed: boolean;
+  revealed: boolean;
+  from: { version: number; value: string; createdAt: string };
+  to: { version: number; value: string; createdAt: string };
+}
+
+export type PointInTimeAction = "restore" | "revive" | "delete" | "none";
+
+export interface PointInTimeEntry {
+  key: string;
+  path: string;
+  action: PointInTimeAction;
+  currentVersion: number;
+  targetVersion: number | null;
+}
+
+export interface PointInTimePreview {
+  at: string;
+  env: string;
+  secretCount: number;
+  changes: PointInTimeEntry[];
+}
+
+export interface PointInTimeRestoreResult {
+  at: string;
+  env: string;
+  dryRun: boolean;
+  restored: number;
+  revived: number;
+  deleted: number;
+  changes: PointInTimeEntry[];
+}
+
+export interface TransitKey {
+  id: string;
+  name: string;
+  version: number;
+  createdAt: string;
+}
+
+export interface TransitEncryptResult {
+  ciphertext: string;
+  key: string;
+  keyVersion: number;
+  algorithm: string;
 }
 
 export interface ChangeRequestSummary {
@@ -181,6 +233,79 @@ export class OpensielClient {
     const query = new URLSearchParams({ env, path });
     return this.request(
       `/api/projects/${projectId}/secrets/${encodeURIComponent(key)}/versions?${query}`,
+    );
+  }
+
+  diffSecret(
+    projectId: string,
+    env: string,
+    key: string,
+    options: { path?: string; from?: number; to?: number; reveal?: boolean } = {},
+  ): Promise<{ diff: SecretDiff }> {
+    const query = new URLSearchParams({ env });
+    if (options.path) query.set("path", options.path);
+    if (options.from !== undefined) query.set("from", String(options.from));
+    if (options.to !== undefined) query.set("to", String(options.to));
+    if (options.reveal) query.set("reveal", "true");
+    return this.request(
+      `/api/projects/${projectId}/secrets/${encodeURIComponent(key)}/diff?${query}`,
+    );
+  }
+
+  previewPointInTime(projectId: string, env: string, at: string): Promise<PointInTimePreview> {
+    const query = new URLSearchParams({ env, at });
+    return this.request(`/api/projects/${projectId}/point-in-time?${query}`);
+  }
+
+  restorePointInTime(
+    projectId: string,
+    env: string,
+    at: string,
+    dryRun = false,
+  ): Promise<PointInTimeRestoreResult> {
+    return this.request(`/api/projects/${projectId}/point-in-time/restore`, {
+      method: "POST",
+      body: { env, at, dryRun },
+    });
+  }
+
+  encrypt(
+    projectId: string,
+    plaintext: string,
+    options: { key?: string; context?: string } = {},
+  ): Promise<TransitEncryptResult> {
+    return this.request(`/api/projects/${projectId}/crypto/encrypt`, {
+      method: "POST",
+      body: { plaintext, key: options.key, context: options.context },
+    });
+  }
+
+  decrypt(
+    projectId: string,
+    ciphertext: string,
+    options: { context?: string } = {},
+  ): Promise<{ plaintext: string; key: string; keyVersion: number }> {
+    return this.request(`/api/projects/${projectId}/crypto/decrypt`, {
+      method: "POST",
+      body: { ciphertext, context: options.context },
+    });
+  }
+
+  listTransitKeys(projectId: string): Promise<{ keys: TransitKey[] }> {
+    return this.request(`/api/projects/${projectId}/crypto/keys`);
+  }
+
+  createTransitKey(projectId: string, name: string): Promise<{ key: TransitKey }> {
+    return this.request(`/api/projects/${projectId}/crypto/keys`, {
+      method: "POST",
+      body: { name },
+    });
+  }
+
+  rotateTransitKey(projectId: string, name: string): Promise<{ key: TransitKey }> {
+    return this.request(
+      `/api/projects/${projectId}/crypto/keys/${encodeURIComponent(name)}/rotate`,
+      { method: "POST" },
     );
   }
 

@@ -403,6 +403,7 @@ secrets
         version: number;
         comment: string | null;
         fingerprint: string;
+        fingerprintVersion: number;
         createdByType: string;
         createdAt: string;
         current: boolean;
@@ -442,6 +443,88 @@ secrets
         ? `rollback of ${key} submitted for approval (${result.changeRequest.id})`
         : `rolled back ${key} to v${options.version} (new version v${result.secret?.version})`,
     );
+  });
+
+secrets
+  .command("diff <key>")
+  .description("compare two versions of a secret")
+  .option("--env <env>")
+  .option("--path <path>")
+  .option("--from <version>", "older version")
+  .option("--to <version>", "newer version")
+  .option("--reveal", "print full values instead of masked ones")
+  .action(async (key: string, options) => {
+    const projectId = resolveProjectId();
+    const env = resolveEnv(options.env as string | undefined);
+    const query = new URLSearchParams({ env });
+    if (options.path) query.set("path", options.path as string);
+    if (options.from) query.set("from", String(options.from));
+    if (options.to) query.set("to", String(options.to));
+    if (options.reveal) query.set("reveal", "true");
+    const { diff } = await apiRequest<{
+      diff: {
+        changed: boolean;
+        revealed: boolean;
+        from: { version: number; value: string };
+        to: { version: number; value: string };
+      };
+    }>(`/api/projects/${projectId}/secrets/${encodeURIComponent(key)}/diff?${query}`);
+
+    if (!diff.changed) {
+      console.log(`no change between v${diff.from.version} and v${diff.to.version}`);
+      return;
+    }
+    console.log(`- v${diff.from.version}: ${diff.from.value}`);
+    console.log(`+ v${diff.to.version}: ${diff.to.value}`);
+    if (!diff.revealed) console.log("values are masked; pass --reveal to print them");
+  });
+
+secrets
+  .command("restore")
+  .description("preview or restore an environment to a point in time")
+  .requiredOption("--at <timestamp>", "ISO timestamp, for example 2026-10-22T10:00:00Z")
+  .option("--env <env>")
+  .option("--apply", "apply the restore (default is a dry run)")
+  .action(async (options) => {
+    const projectId = resolveProjectId();
+    const env = resolveEnv(options.env as string | undefined);
+    const result = await apiRequest<{
+      dryRun: boolean;
+      restored: number;
+      revived: number;
+      deleted: number;
+      changes: {
+        key: string;
+        path: string;
+        action: string;
+        currentVersion: number;
+        targetVersion: number | null;
+      }[];
+    }>(`/api/projects/${projectId}/point-in-time/restore`, {
+      method: "POST",
+      body: { env, at: options.at, dryRun: !options.apply },
+    });
+
+    if (result.changes.length === 0) {
+      console.log(`no changes needed for ${env} at ${options.at}`);
+      return;
+    }
+    printTable(
+      ["ACTION", "KEY", "CURRENT", "TARGET"],
+      result.changes.map((change) => [
+        change.action,
+        change.path === "/" ? change.key : `${change.path}/${change.key}`,
+        `v${change.currentVersion}`,
+        change.targetVersion === null ? "-" : `v${change.targetVersion}`,
+      ]),
+    );
+    if (result.dryRun) {
+      console.log("dry run; pass --apply to restore");
+    } else {
+      console.log(
+        `restored ${result.restored}, revived ${result.revived}, deleted ${result.deleted}`,
+      );
+    }
   });
 
 program

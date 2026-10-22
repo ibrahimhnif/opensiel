@@ -184,6 +184,7 @@ export const secretVersions = pgTable(
     iv: text("iv").notNull(),
     tag: text("tag").notNull(),
     fingerprint: text("fingerprint").notNull(),
+    fingerprintVersion: integer("fingerprint_version").notNull().default(2),
     comment: text("comment"),
     createdByType: text("created_by_type").notNull(),
     createdById: text("created_by_id").notNull(),
@@ -203,6 +204,10 @@ export const identities = pgTable(
     clientId: text("client_id").notNull(),
     secretHash: text("secret_hash").notNull(),
     role: text("role").$type<IdentityRole>().notNull().default("viewer"),
+    tokenVersion: integer("token_version").notNull().default(1),
+    tokenTtlSeconds: integer("token_ttl_seconds").notNull().default(900),
+    ipAllowlist: jsonb("ip_allowlist").$type<string[]>(),
+    hourlyTokenCap: integer("hourly_token_cap"),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     revokedAt: timestamp("revoked_at", { withTimezone: true }),
   },
@@ -367,6 +372,29 @@ export const auditLogs = pgTable(
   ],
 );
 
+export const transitKeys = pgTable(
+  "transit_keys",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    projectId: uuid("project_id")
+      .notNull()
+      .references(() => projects.id, { onDelete: "cascade" }),
+    name: text("name").notNull(),
+    version: integer("version").notNull().default(1),
+    wrapped: text("wrapped").notNull(),
+    iv: text("iv").notNull(),
+    tag: text("tag").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    uniqueIndex("transit_keys_project_name_version_uq").on(
+      table.projectId,
+      table.name,
+      table.version,
+    ),
+  ],
+);
+
 export type UserRow = typeof users.$inferSelect;
 export type OrgRow = typeof orgs.$inferSelect;
 export type ProjectRow = typeof projects.$inferSelect;
@@ -378,3 +406,5 @@ export type ChangeRequestRow = typeof changeRequests.$inferSelect;
 export type DynamicSecretConfigRow = typeof dynamicSecretConfigs.$inferSelect;
 export type DynamicSecretLeaseRow = typeof dynamicSecretLeases.$inferSelect;
 export type WebhookRow = typeof webhooks.$inferSelect;
+export type AuditLogRow = typeof auditLogs.$inferSelect;
+export type TransitKeyRow = typeof transitKeys.$inferSelect;

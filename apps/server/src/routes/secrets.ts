@@ -409,6 +409,7 @@ export function registerSecretRoutes(app: FastifyInstance, deps: Deps): void {
         version: row.version,
         comment: row.comment,
         fingerprint: row.fingerprint,
+        fingerprintVersion: row.fingerprintVersion,
         createdByType: row.createdByType,
         createdById: row.createdById,
         createdAt: row.createdAt.toISOString(),

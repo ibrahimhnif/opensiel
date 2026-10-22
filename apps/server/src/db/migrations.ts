@@ -284,4 +284,40 @@ create table webhooks (
 create index webhooks_project_idx on webhooks (project_id);
 `,
   },
+  {
+    name: "0008_keyed_fingerprints",
+    sql: `
+alter table secret_versions add column fingerprint_version integer not null default 1;
+
+alter table secret_versions alter column fingerprint_version set default 2;
+`,
+  },
+  {
+    name: "0009_transit_keys",
+    sql: `
+create table transit_keys (
+  id uuid primary key default gen_random_uuid(),
+  project_id uuid not null references projects(id) on delete cascade,
+  name text not null,
+  version integer not null default 1,
+  wrapped text not null,
+  iv text not null,
+  tag text not null,
+  created_at timestamptz not null default now(),
+  unique (project_id, name, version)
+);
+`,
+  },
+  {
+    name: "0010_identity_token_policy",
+    sql: `
+alter table identities add column token_version integer not null default 1;
+
+alter table identities add column token_ttl_seconds integer not null default 900;
+
+alter table identities add column ip_allowlist jsonb;
+
+alter table identities add column hourly_token_cap integer;
+`,
+  },
 ];

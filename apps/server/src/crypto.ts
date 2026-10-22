@@ -2,12 +2,15 @@ import {
   createCipheriv,
   createDecipheriv,
   createHash,
+  createHmac,
   randomBytes,
   timingSafeEqual,
 } from "node:crypto";
 
 const ALGORITHM = "aes-256-gcm";
 const DEK_AAD = Buffer.from("opensiel:dek:v1");
+
+export const FINGERPRINT_VERSION = 2;
 
 export interface WrappedKey {
   wrapped: string;
@@ -89,8 +92,13 @@ export function sha256(value: string): string {
   return createHash("sha256").update(value).digest("hex");
 }
 
-export function fingerprint(value: string): string {
-  return sha256(value);
+/**
+ * Keyed fingerprint. Using the project data key means a database dump cannot be
+ * used to confirm guesses for low-entropy values, and identical values in
+ * different projects produce different fingerprints.
+ */
+export function valueFingerprint(dek: Buffer, value: string): string {
+  return createHmac("sha256", dek).update(value).digest("hex");
 }
 
 export function constantTimeEqualHex(a: string, b: string): boolean {

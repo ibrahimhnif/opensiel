@@ -68,7 +68,13 @@ Tokens live for 15 minutes. Call `loginWithClientCredentials` again to renew.
 | `setSecret(projectId, env, key, value, { path?, comment? })` | New version; returns `{ secret }` or `{ changeRequest }`. |
 | `deleteSecret(projectId, env, key, path?)`                   | Soft delete; may return a change request.                 |
 | `listSecretVersions(projectId, env, key, path?)`             | Version metadata.                                         |
+| `diffSecret(projectId, env, key, { from?, to?, reveal? })`   | Compare two versions; masked unless `reveal`.             |
 | `rollbackSecret(projectId, env, key, version, path?)`        | Roll back to a version.                                   |
+| `previewPointInTime(projectId, env, at)`                     | Preview an environment at an ISO timestamp.               |
+| `restorePointInTime(projectId, env, at, dryRun?)`            | Restore an environment to that timestamp.                 |
+| `encrypt(projectId, plaintext, { key?, context? })`          | Encrypt with a project transit key.                       |
+| `decrypt(projectId, ciphertext, { context? })`               | Decrypt a transit envelope.                               |
+| `listTransitKeys` / `createTransitKey` / `rotateTransitKey`  | Manage transit keys (create and rotate need admin).       |
 | `exportSecrets(projectId, env, "json" \| "dotenv")`          | Object of root-path secrets.                              |
 
 ### Behavior to know
@@ -78,6 +84,27 @@ Tokens live for 15 minutes. Call `loginWithClientCredentials` again to renew.
 - Secret values are decrypted by the server and sent over TLS; the SDK never talks to the
   database.
 - `exportSecrets` includes root-folder secrets only.
+- A point-in-time restore only creates new versions; existing history is never rewritten.
+
+## Transit encryption
+
+Encrypt application data without managing keys yourself. Ciphertext is bound to an optional
+context string, so it cannot be replayed under a different context.
+
+```ts
+const { ciphertext } = await client.encrypt(projectId, "card=4111", {
+  key: "billing",
+  context: "user:42",
+});
+
+const { plaintext } = await client.decrypt(projectId, ciphertext, {
+  context: "user:42",
+});
+```
+
+Named keys default to `default` and are created on first use; `createTransitKey` and
+`rotateTransitKey` require an owner or admin. Rotation keeps old key material so previously
+issued ciphertext still decrypts.
 
 ## Errors
 

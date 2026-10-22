@@ -10,7 +10,7 @@ import { buildApp } from "../src/app.js";
 import { createDb } from "../src/db/client.js";
 import type { Database } from "../src/db/client.js";
 import { runMigrations } from "../src/db/migrate.js";
-import { generateMasterKey, parseMasterKey } from "../src/crypto.js";
+import { generateMasterKey, parseMasterKey, sha256 } from "../src/crypto.js";
 import type { Env } from "../src/env.js";
 
 const databaseUrl = process.env.TEST_DATABASE_URL;
@@ -217,11 +217,11 @@ if (!databaseUrl) {
     prodId: string;
   }
 
-  async function signup(email: string): Promise<Session> {
+  async function signup(email: string, name = "Test User"): Promise<Session> {
     const response = await app.inject({
       method: "POST",
       url: "/api/auth/signup",
-      payload: { email, password: "correct-horse-battery", name: "Test User" },
+      payload: { email, password: "correct-horse-battery", name },
     });
     expect(response.statusCode).toBe(201);
     const body = response.json<{ token: string; projectId: string }>();
@@ -461,7 +461,13 @@ if (!databaseUrl) {
       url: `${base}/DATABASE_URL/versions?env=dev`,
       headers: auth,
     });
-    expect(versions.json<{ versions: unknown[] }>().versions).toHaveLength(2);
+    const versionRows = versions.json<{
+      versions: { version: number; fingerprint: string; fingerprintVersion: number }[];
+    }>().versions;
+    expect(versionRows).toHaveLength(2);
+    expect(versionRows.every((row) => row.fingerprintVersion === 2)).toBe(true);
+    expect(versionRows.map((row) => row.fingerprint)).not.toContain(sha256("v1"));
+    expect(versionRows.map((row) => row.fingerprint)).not.toContain(sha256("v2"));
 
     const rollback = await app.inject({
       method: "POST",
@@ -485,6 +491,100 @@ if (!databaseUrl) {
       headers: auth,
     });
     expect(exported.body).toContain("DATABASE_URL=v1");
+  });
+
+  it("diffs versions and restores an environment to a point in time", async () => {
+    const session = await signup(`pitr-${Date.now()}@test.dev`);
+    const auth = { authorization: `Bearer ${session.token}` };
+    const base = `/api/projects/${session.projectId}/secrets`;
+
+    await app.inject({
+      method: "POST",
+      url: base,
+      headers: auth,
+      payload: { key: "GREETING", value: "one", env: "dev" },
+    });
+    await new Promise((resolve) => setTimeout(resolve, 25));
+    await app.inject({
+      method: "POST",
+      url: base,
+      headers: auth,
+      payload: { key: "GREETING", value: "two", env: "dev" },
+    });
+
+    const history = await app.inject({
+      method: "GET",
+      url: `${base}/GREETING/versions?env=dev`,
+      headers: auth,
+    });
+    const versions = history.json<{
+      versions: { version: number; createdAt: string }[];
+    }>().versions;
+    expect(versions).toHaveLength(2);
+    const v1 = versions.find((row) => row.version === 1)!;
+    const v2 = versions.find((row) => row.version === 2)!;
+    const cutoff = new Date(
+      (new Date(v1.createdAt).getTime() + new Date(v2.createdAt).getTime()) / 2,
+    ).toISOString();
+
+    const masked = await app.inject({
+      method: "GET",
+      url: `${base}/GREETING/diff?env=dev&from=1&to=2`,
+      headers: auth,
+    });
+    expect(masked.statusCode).toBe(200);
+    expect(masked.json<{ diff: { changed: boolean; revealed: boolean } }>().diff).toMatchObject({
+      changed: true,
+      revealed: false,
+    });
+
+    const revealed = await app.inject({
+      method: "GET",
+      url: `${base}/GREETING/diff?env=dev&from=1&to=2&reveal=true`,
+      headers: auth,
+    });
+    expect(
+      revealed.json<{ diff: { from: { value: string }; to: { value: string } } }>().diff,
+    ).toMatchObject({ from: { value: "one" }, to: { value: "two" } });
+
+    const preview = await app.inject({
+      method: "GET",
+      url: `/api/projects/${session.projectId}/point-in-time?env=dev&at=${encodeURIComponent(cutoff)}`,
+      headers: auth,
+    });
+    expect(preview.statusCode).toBe(200);
+    expect(preview.json<{ changes: unknown[] }>().changes).toHaveLength(1);
+
+    const dryRun = await app.inject({
+      method: "POST",
+      url: `/api/projects/${session.projectId}/point-in-time/restore`,
+      headers: auth,
+      payload: { env: "dev", at: cutoff, dryRun: true },
+    });
+    expect(dryRun.statusCode).toBe(200);
+    expect(dryRun.json<{ restored: number; dryRun: boolean }>()).toMatchObject({
+      restored: 0,
+      dryRun: true,
+    });
+
+    const restore = await app.inject({
+      method: "POST",
+      url: `/api/projects/${session.projectId}/point-in-time/restore`,
+      headers: auth,
+      payload: { env: "dev", at: cutoff },
+    });
+    expect(restore.statusCode).toBe(200);
+    expect(restore.json<{ restored: number }>().restored).toBe(1);
+
+    const current = await app.inject({
+      method: "GET",
+      url: `${base}/GREETING?env=dev`,
+      headers: auth,
+    });
+    expect(current.json<{ secret: { value: string; version: number } }>().secret).toMatchObject({
+      value: "one",
+      version: 3,
+    });
   });
 
   it("isolates organizations", async () => {
@@ -802,6 +902,326 @@ if (!databaseUrl) {
       .logs;
     expect(logs.some((log) => log.action === "secret.write")).toBe(true);
     expect(JSON.stringify(logs)).not.toContain("super-secret-value");
+  });
+
+  it("exports audit logs as csv and jsonl without secret values", async () => {
+    const session = await signup(`audit-export-${Date.now()}@test.dev`);
+    const auth = { authorization: `Bearer ${session.token}` };
+
+    await app.inject({
+      method: "POST",
+      url: `/api/projects/${session.projectId}/secrets`,
+      headers: auth,
+      payload: { key: "EXPORTED", value: "export-payload-xyz", env: "dev" },
+    });
+
+    const csv = await app.inject({
+      method: "GET",
+      url: "/api/audit/export?format=csv",
+      headers: auth,
+    });
+    expect(csv.statusCode).toBe(200);
+    expect(csv.headers["content-type"]).toContain("text/csv");
+    expect(csv.headers["content-disposition"]).toContain("attachment");
+    const [header, ...rows] = csv.body.trim().split("\n");
+    expect(header).toBe(
+      "id,createdAt,actorType,actorId,actorName,action,resourceType,resourceId,projectId,ip,metadata",
+    );
+    expect(rows.some((row) => row.includes("secret.write"))).toBe(true);
+    expect(csv.body).not.toContain("export-payload-xyz");
+
+    const formula = await signup(`audit-formula-${Date.now()}@test.dev`, "=1+1");
+    await app.inject({
+      method: "POST",
+      url: `/api/projects/${formula.projectId}/secrets`,
+      headers: { authorization: `Bearer ${formula.token}` },
+      payload: { key: "SAFE", value: "x", env: "dev" },
+    });
+    const formulaCsv = await app.inject({
+      method: "GET",
+      url: "/api/audit/export?format=csv",
+      headers: { authorization: `Bearer ${formula.token}` },
+    });
+    expect(formulaCsv.body).toContain("'=1+1");
+    expect(formulaCsv.body).not.toMatch(/,=1\+1,/);
+
+    const jsonl = await app.inject({
+      method: "GET",
+      url: "/api/audit/export?format=jsonl",
+      headers: auth,
+    });
+    expect(jsonl.statusCode).toBe(200);
+    const entries = jsonl.body
+      .trim()
+      .split("\n")
+      .map((line) => JSON.parse(line) as { action: string; metadata: unknown });
+    expect(entries.some((entry) => entry.action === "secret.write")).toBe(true);
+    expect(entries.some((entry) => entry.action === "audit.export")).toBe(true);
+    expect(JSON.stringify(entries)).not.toContain("export-payload-xyz");
+
+    const filtered = await app.inject({
+      method: "GET",
+      url: "/api/audit/export?format=jsonl&action=secret.write",
+      headers: auth,
+    });
+    const filteredEntries = filtered.body
+      .trim()
+      .split("\n")
+      .map((line) => JSON.parse(line) as { action: string });
+    expect(filteredEntries.length).toBeGreaterThan(0);
+    expect(filteredEntries.every((entry) => entry.action === "secret.write")).toBe(true);
+
+    const other = await signup(`audit-other-${Date.now()}@test.dev`);
+    const otherCsv = await app.inject({
+      method: "GET",
+      url: "/api/audit/export?format=csv",
+      headers: { authorization: `Bearer ${other.token}` },
+    });
+    expect(otherCsv.body).not.toContain("EXPORTED");
+  });
+
+  it("encrypts and decrypts payloads with project transit keys", async () => {
+    const session = await signup(`transit-${Date.now()}@test.dev`);
+    const auth = { authorization: `Bearer ${session.token}` };
+    const base = `/api/projects/${session.projectId}/crypto`;
+
+    const encrypted = await app.inject({
+      method: "POST",
+      url: `${base}/encrypt`,
+      headers: auth,
+      payload: { plaintext: "card=4111", context: "user:1" },
+    });
+    expect(encrypted.statusCode).toBe(200);
+    const envelope = encrypted.json<{
+      ciphertext: string;
+      key: string;
+      keyVersion: number;
+      algorithm: string;
+    }>();
+    expect(envelope).toMatchObject({ key: "default", keyVersion: 1, algorithm: "AES-256-GCM" });
+    expect(envelope.ciphertext.startsWith("osl1.default.1.")).toBe(true);
+
+    const decrypted = await app.inject({
+      method: "POST",
+      url: `${base}/decrypt`,
+      headers: auth,
+      payload: { ciphertext: envelope.ciphertext, context: "user:1" },
+    });
+    expect(decrypted.statusCode).toBe(200);
+    expect(decrypted.json<{ plaintext: string }>().plaintext).toBe("card=4111");
+
+    for (const context of ["user:2", undefined]) {
+      const denied = await app.inject({
+        method: "POST",
+        url: `${base}/decrypt`,
+        headers: auth,
+        payload: { ciphertext: envelope.ciphertext, context },
+      });
+      expect(denied.statusCode).toBe(400);
+      expect(denied.json<{ error: string }>().error).toBe("decrypt_failed");
+    }
+
+    const malformed = await app.inject({
+      method: "POST",
+      url: `${base}/decrypt`,
+      headers: auth,
+      payload: { ciphertext: "not-an-envelope" },
+    });
+    expect(malformed.statusCode).toBe(400);
+    expect(malformed.json<{ error: string }>().error).toBe("invalid_ciphertext");
+
+    const unknown = await app.inject({
+      method: "POST",
+      url: `${base}/decrypt`,
+      headers: auth,
+      payload: { ciphertext: "osl1.ghost.1.aXY=.dGFn.abc" },
+    });
+    expect(unknown.statusCode).toBe(400);
+    expect(unknown.json<{ error: string }>().error).toBe("unknown_transit_key");
+
+    const created = await app.inject({
+      method: "POST",
+      url: `${base}/keys`,
+      headers: auth,
+      payload: { name: "billing" },
+    });
+    expect(created.statusCode).toBe(201);
+    expect(created.json<{ key: { name: string; version: number } }>().key).toMatchObject({
+      name: "billing",
+      version: 1,
+    });
+
+    const duplicate = await app.inject({
+      method: "POST",
+      url: `${base}/keys`,
+      headers: auth,
+      payload: { name: "billing" },
+    });
+    expect(duplicate.statusCode).toBe(409);
+
+    const withNamedKey = await app.inject({
+      method: "POST",
+      url: `${base}/encrypt`,
+      headers: auth,
+      payload: { plaintext: "invoice", key: "billing" },
+    });
+    expect(withNamedKey.statusCode).toBe(200);
+    const named = withNamedKey.json<{ ciphertext: string; keyVersion: number }>();
+    expect(named.ciphertext.startsWith("osl1.billing.1.")).toBe(true);
+
+    const rotated = await app.inject({
+      method: "POST",
+      url: `${base}/keys/billing/rotate`,
+      headers: auth,
+    });
+    expect(rotated.statusCode).toBe(200);
+    expect(rotated.json<{ key: { version: number } }>().key.version).toBe(2);
+
+    const afterRotation = await app.inject({
+      method: "POST",
+      url: `${base}/encrypt`,
+      headers: auth,
+      payload: { plaintext: "invoice", key: "billing" },
+    });
+    expect(afterRotation.json<{ keyVersion: number }>().keyVersion).toBe(2);
+
+    const oldCiphertext = await app.inject({
+      method: "POST",
+      url: `${base}/decrypt`,
+      headers: auth,
+      payload: { ciphertext: named.ciphertext },
+    });
+    expect(oldCiphertext.statusCode).toBe(200);
+    expect(oldCiphertext.json<{ plaintext: string }>().plaintext).toBe("invoice");
+
+    const keys = await app.inject({ method: "GET", url: `${base}/keys`, headers: auth });
+    expect(keys.json<{ keys: { name: string; version: number }[] }>().keys).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ name: "billing", version: 2 }),
+        expect.objectContaining({ name: "default", version: 1 }),
+      ]),
+    );
+  });
+
+  it("enforces identity token policy and revokes outstanding tokens", async () => {
+    const session = await signup(`identity-policy-${Date.now()}@test.dev`);
+    const auth = { authorization: `Bearer ${session.token}` };
+    const base = `/api/projects/${session.projectId}/identities`;
+
+    const created = await app.inject({
+      method: "POST",
+      url: base,
+      headers: auth,
+      payload: {
+        name: "ci",
+        role: "viewer",
+        environmentIds: [session.devId],
+        tokenTtlSeconds: 60,
+        ipAllowlist: ["127.0.0.1/32"],
+        hourlyTokenCap: 2,
+      },
+    });
+    expect(created.statusCode).toBe(201);
+    const identity = created.json<{
+      identity: { id: string; clientId: string; clientSecret: string; tokenTtlSeconds: number };
+    }>().identity;
+    expect(identity.tokenTtlSeconds).toBe(60);
+
+    const credentials = { clientId: identity.clientId, clientSecret: identity.clientSecret };
+    const first = await app.inject({
+      method: "POST",
+      url: "/api/auth/token",
+      payload: credentials,
+    });
+    expect(first.statusCode).toBe(200);
+    expect(first.json<{ expiresIn: number }>().expiresIn).toBe(60);
+    const firstToken = first.json<{ accessToken: string }>().accessToken;
+
+    const second = await app.inject({
+      method: "POST",
+      url: "/api/auth/token",
+      payload: credentials,
+    });
+    expect(second.statusCode).toBe(200);
+
+    const third = await app.inject({
+      method: "POST",
+      url: "/api/auth/token",
+      payload: credentials,
+    });
+    expect(third.statusCode).toBe(429);
+    expect(third.json<{ error: string }>().error).toBe("token_limit_reached");
+
+    const patched = await app.inject({
+      method: "PATCH",
+      url: `${base}/${identity.id}`,
+      headers: auth,
+      payload: { role: "member", ipAllowlist: ["10.0.0.0/8"], hourlyTokenCap: null },
+    });
+    expect(patched.statusCode).toBe(200);
+    expect(
+      patched.json<{ identity: { role: string; ipAllowlist: string[] } }>().identity,
+    ).toMatchObject({ role: "member", ipAllowlist: ["10.0.0.0/8"] });
+
+    const stale = await app.inject({
+      method: "GET",
+      url: `/api/projects/${session.projectId}/secrets?env=dev`,
+      headers: { authorization: `Bearer ${firstToken}` },
+    });
+    expect(stale.statusCode).toBe(401);
+
+    const blocked = await app.inject({
+      method: "POST",
+      url: "/api/auth/token",
+      payload: credentials,
+    });
+    expect(blocked.statusCode).toBe(403);
+
+    const restored = await app.inject({
+      method: "PATCH",
+      url: `${base}/${identity.id}`,
+      headers: auth,
+      payload: { ipAllowlist: ["127.0.0.1/32"], tokenTtlSeconds: 3600 },
+    });
+    expect(restored.statusCode).toBe(200);
+
+    const renewed = await app.inject({
+      method: "POST",
+      url: "/api/auth/token",
+      payload: credentials,
+    });
+    expect(renewed.statusCode).toBe(200);
+    const renewedToken = renewed.json<{ accessToken: string; expiresIn: number }>();
+    expect(renewedToken.expiresIn).toBe(3600);
+
+    const write = await app.inject({
+      method: "POST",
+      url: `/api/projects/${session.projectId}/secrets`,
+      headers: { authorization: `Bearer ${renewedToken.accessToken}` },
+      payload: { key: "FROM_MACHINE", value: "ok", env: "dev" },
+    });
+    expect(write.statusCode).toBe(201);
+
+    const revoked = await app.inject({
+      method: "POST",
+      url: `${base}/${identity.id}/revoke`,
+      headers: auth,
+    });
+    expect(revoked.statusCode).toBe(200);
+
+    const afterRevoke = await app.inject({
+      method: "GET",
+      url: `/api/projects/${session.projectId}/secrets?env=dev`,
+      headers: { authorization: `Bearer ${renewedToken.accessToken}` },
+    });
+    expect(afterRevoke.statusCode).toBe(401);
+
+    const newToken = await app.inject({
+      method: "POST",
+      url: "/api/auth/token",
+      payload: credentials,
+    });
+    expect(newToken.statusCode).toBe(401);
   });
 
   it("invites teammates into the same organization", async () => {

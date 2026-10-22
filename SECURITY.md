@@ -26,7 +26,9 @@ suite. It is not used at runtime and must not be trusted anywhere else.
 - Secret values are encrypted with the project DEK using AES-256-GCM, with
   `AAD = <secretId>:<version>`. A ciphertext cannot be moved between secrets or versions
   without failing authentication.
-- The database only stores ciphertext, IV, auth tag, a SHA-256 fingerprint, and metadata.
+- The database only stores ciphertext, IV, auth tag, a keyed HMAC-SHA256 fingerprint, and
+  metadata. The fingerprint is keyed with the project data key, so it cannot be used to
+  confirm guesses for stored values.
 - Version rows are append-only; rollback copies a previous plaintext into a new version.
 
 ### Keys
@@ -55,8 +57,10 @@ domains may sign in. With auto-create disabled, only emails with a pending invit
 When AWS KMS is configured, the wrapped master key is decrypted once at startup and never
 written to disk or logs; IAM credentials come from the standard AWS chain.
 
-Machine tokens are stateless; revoking an identity blocks new token issuance, but an
-already-issued token stays valid until it expires (max 15 minutes).
+Machine tokens carry a token version and are re-checked against the identity row on every
+request, so revoking an identity or changing its role, scopes, or token policy takes effect
+immediately. Token TTL defaults to 15 minutes and is configurable per identity, with an
+optional IP allowlist (single addresses or CIDR ranges) and an hourly issuance cap.
 
 ### Authorization
 
