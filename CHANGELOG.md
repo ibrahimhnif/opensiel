@@ -4,6 +4,26 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project follows
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- Secret version diff (`GET .../secrets/:key/diff`) and point-in-time environment restore,
+  exposed as `opensiel secrets diff` and `opensiel secrets restore`.
+- Transit crypto API: encrypt/decrypt with named project keys, context-bound with AAD,
+  plus key rotation (`/api/projects/:id/crypto/*`) and SDK helpers.
+- Audit log export as JSONL or CSV with date/action/project filters, streamed in pages.
+- Machine identity token policy: per-identity TTL, IP allowlist (CIDR), hourly issuance cap,
+  and immediate revocation via token versions.
+- `PATCH /api/projects/:id/identities/:identityId` to update role, scopes, and token policy.
+
+### Changed
+
+- Secret fingerprints are now HMAC-SHA256 keyed with the project DEK instead of plain SHA-256;
+  existing rows are marked `fingerprint_version = 1` and new rows use version 2.
+- Machine tokens are validated against the identity row on every request, so revocation and
+  policy changes take effect immediately.
+
 ## [0.1.1] - 2026-10-22
 
 ### Changed

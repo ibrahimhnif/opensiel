@@ -67,9 +67,28 @@ opensiel secrets set DATABASE_URL=postgres://localhost/app --env dev
 opensiel secrets set FEATURE_FLAG=on --env dev --comment "enable checkout"
 
 opensiel secrets versions DATABASE_URL --env dev
+opensiel secrets diff DATABASE_URL --from 2 --to 4 --env dev --reveal
 opensiel secrets rollback DATABASE_URL --version 1 --env dev
 opensiel secrets delete OLD_KEY --env dev
 ```
+
+### Version diff and point-in-time restore
+
+```bash
+# compare two versions (values are masked unless --reveal is passed)
+opensiel secrets diff DATABASE_URL --from 1 --to 3 --env dev
+
+# preview the environment as it was at a timestamp
+opensiel secrets restore --at 2026-10-22T10:00:00Z --env prod
+
+# apply it: creates a new version for every changed key, revives deleted keys,
+# and deletes keys that did not exist yet at that time
+opensiel secrets restore --at 2026-10-22T10:00:00Z --env prod --apply
+```
+
+Restores are additive: history is never rewritten. The command is a dry run unless `--apply`
+is passed, and only owners/admins can apply a restore. Environments with approvals enabled
+refuse bulk restores — restore secrets one at a time there.
 
 Values may use references (`${OTHER_KEY}`). Folder paths are supported with `--path /backend`;
 `secrets list` shows the path in the key column.

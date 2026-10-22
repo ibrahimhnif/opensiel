@@ -39,12 +39,24 @@ audit_logs (org-scoped, optional project)
 1. `OPENSIEL_MASTER_KEY` (or KMS-decrypted plaintext) is the KEK.
 2. Each project gets a random 32-byte DEK, stored wrapped with AES-256-GCM under the KEK.
 3. Secret values are encrypted with the project DEK, AES-256-GCM, `AAD = <secretId>:<version>`.
-4. Rows store ciphertext, IV, auth tag, and a SHA-256 fingerprint. Values are never logged.
+4. Rows store ciphertext, IV, auth tag, and an HMAC-SHA256 fingerprint keyed with the project
+   DEK. Values are never logged.
 5. Rotation rewraps DEKs to `OPENSIEL_MASTER_KEY_NEXT` and bumps `kek_version`; secret
    ciphertext is untouched.
 
 AAD binding prevents moving ciphertext between secrets or versions. A missing key version
 fails closed with `missing_key_version`.
+
+## Transit keys
+
+`transit_keys` holds named 32-byte keys, each wrapped with the project DEK under
+`AAD = transit-key:<project>:<name>:<version>`. Version rows are kept on rotation so old
+ciphertext keeps decrypting.
+
+Ciphertext envelopes are `osl1.<name>.<version>.<iv>.<tag>.<ciphertext>`, encrypted with
+AES-256-GCM and `AAD = transit:<project>:<name>:<version>:<context>`. The context is supplied
+by the caller, so a payload cannot be decrypted under a different context. The server never
+logs plaintext; only a truncated hash of the context is audited.
 
 ## Authentication
 
@@ -57,9 +69,13 @@ fails closed with `missing_key_version`.
 ### Machine identities
 
 - `clientId` + generated secret; only SHA-256 of the secret is stored.
-- `POST /api/auth/token` exchanges credentials for a 15-minute HS256 JWT with project,
-  role, and environment scopes.
-- Tokens are stateless; revoking blocks new tokens, existing ones expire within 15 minutes.
+- `POST /api/auth/token` exchanges credentials for an HS256 JWT with project, role,
+  environment scopes, and the identity's token version. TTL defaults to 15 minutes and is
+  configurable per identity (60s–24h).
+- Each machine request reloads the identity and its scopes, so revoking an identity or
+  changing its role, scopes, or token policy invalidates outstanding tokens immediately.
+- Optional IP allowlist (addresses or CIDR ranges, checked at issuance) and hourly issuance
+  cap; denials produce `identity.token.denied` audit entries.
 
 ### OIDC
 
@@ -95,6 +111,24 @@ When `environments.approval_required` is true, the route stores a `change_reques
 Owners/admins approve or reject; requesters cannot approve their own request. Once the
 required number of distinct approvals is reached, the payload is decrypted and applied, and
 an audit entry records the approver.
+
+## Version diff and point-in-time restore
+
+`GET /projects/:id/secrets/:key/diff` decrypts two versions and returns them masked unless
+`reveal=true`; every comparison is audited.
+
+`GET /projects/:id/point-in-time` resolves, for every secret in an environment (including
+soft-deleted rows), the newest version created at or before a timestamp. A restore plan has
+three actions:
+
+- `restore` — a newer version exists than the one at the timestamp; a new version is created
+  from the old ciphertext, so history is never rewritten.
+- `revive` — the secret was deleted after the timestamp.
+- `delete` — the secret did not exist yet at the timestamp.
+
+Restores require owner/admin, are audited as `secret.restore`, and are refused when the
+environment requires approvals. A pre-revival deletion timestamp is not tracked, so a
+delete → recreate cycle only considers the current row.
 
 ## References and imports
 

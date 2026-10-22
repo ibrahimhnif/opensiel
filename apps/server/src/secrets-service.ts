@@ -1,5 +1,11 @@
 import { and, desc, eq, isNotNull, isNull } from "drizzle-orm";
-import { decryptValue, encryptValue, fingerprint, secretAad } from "./crypto.js";
+import {
+  decryptValue,
+  encryptValue,
+  FINGERPRINT_VERSION,
+  secretAad,
+  valueFingerprint,
+} from "./crypto.js";
 import { projectDek } from "./access.js";
 import { notFound } from "./errors.js";
 import { secretVersions, secrets } from "./db/schema.js";
@@ -104,7 +110,8 @@ export async function applySecretWrite(
       ciphertext: encrypted.ciphertext,
       iv: encrypted.iv,
       tag: encrypted.tag,
-      fingerprint: fingerprint(input.value),
+      fingerprint: valueFingerprint(dek, input.value),
+      fingerprintVersion: FINGERPRINT_VERSION,
       comment: input.comment ?? null,
       createdByType: actor.type,
       createdById: actor.id,
@@ -168,7 +175,8 @@ export async function applySecretRollback(
       ciphertext: encrypted.ciphertext,
       iv: encrypted.iv,
       tag: encrypted.tag,
-      fingerprint: target.fingerprint,
+      fingerprint: valueFingerprint(dek, value),
+      fingerprintVersion: FINGERPRINT_VERSION,
       comment: input.note ?? `rollback to v${target.version}`,
       createdByType: actor.type,
       createdById: actor.id,

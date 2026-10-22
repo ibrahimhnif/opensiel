@@ -157,6 +157,7 @@ export const webhookEvents = [
   "secret.deleted",
   "secret.rollback",
   "secret.import",
+  "secret.restore",
   "change_request.created",
   "change_request.approved",
   "change_request.rejected",
@@ -186,12 +187,31 @@ export interface WebhookDto {
   createdAt: string;
 }
 
+export const identityIpSchema = z
+  .string()
+  .trim()
+  .max(64)
+  .regex(/^[0-9a-fA-F:.]+(\/\d{1,3})?$/, "use an IP address or CIDR range");
+
 export const createIdentitySchema = z.object({
   name: nameSchema,
   role: identityRoleSchema.default("viewer"),
   environmentIds: z.array(z.string().uuid()).min(1, "pick at least one environment"),
+  tokenTtlSeconds: z.number().int().min(60).max(86_400).optional(),
+  ipAllowlist: z.array(identityIpSchema).max(50).nullable().optional(),
+  hourlyTokenCap: z.number().int().min(1).max(100_000).nullable().optional(),
 });
 export type CreateIdentityInput = z.infer<typeof createIdentitySchema>;
+
+export const updateIdentitySchema = z.object({
+  name: nameSchema.optional(),
+  role: identityRoleSchema.optional(),
+  environmentIds: z.array(z.string().uuid()).min(1).optional(),
+  tokenTtlSeconds: z.number().int().min(60).max(86_400).optional(),
+  ipAllowlist: z.array(identityIpSchema).max(50).nullable().optional(),
+  hourlyTokenCap: z.number().int().min(1).max(100_000).nullable().optional(),
+});
+export type UpdateIdentityInput = z.infer<typeof updateIdentitySchema>;
 
 export const tokenRequestSchema = z.object({
   clientId: z.string().min(1).max(200),
@@ -331,10 +351,104 @@ export interface SecretVersionDto {
   version: number;
   comment: string | null;
   fingerprint: string;
+  fingerprintVersion: number;
   createdByType: string;
   createdById: string;
   createdAt: string;
   current: boolean;
+}
+
+export const secretDiffQuerySchema = z.object({
+  env: slugSchema,
+  path: secretPathSchema.optional(),
+  from: z.coerce.number().int().positive().optional(),
+  to: z.coerce.number().int().positive().optional(),
+  reveal: z.enum(["true", "false"]).optional(),
+});
+export type SecretDiffQuery = z.infer<typeof secretDiffQuerySchema>;
+
+export interface SecretDiffDto {
+  key: string;
+  path: string;
+  env: string;
+  changed: boolean;
+  revealed: boolean;
+  from: { version: number; value: string; createdAt: string };
+  to: { version: number; value: string; createdAt: string };
+}
+
+export const pointInTimeQuerySchema = z.object({
+  env: slugSchema,
+  at: z.string().datetime({ offset: true }),
+});
+export type PointInTimeQuery = z.infer<typeof pointInTimeQuerySchema>;
+
+export const restorePointInTimeSchema = z.object({
+  env: slugSchema,
+  at: z.string().datetime({ offset: true }),
+  dryRun: z.boolean().optional(),
+});
+export type RestorePointInTimeInput = z.infer<typeof restorePointInTimeSchema>;
+
+export type PointInTimeAction = "restore" | "revive" | "delete" | "none";
+
+export interface PointInTimeEntryDto {
+  key: string;
+  path: string;
+  action: PointInTimeAction;
+  currentVersion: number;
+  targetVersion: number | null;
+}
+
+export interface PointInTimePreviewDto {
+  at: string;
+  env: string;
+  secretCount: number;
+  changes: PointInTimeEntryDto[];
+}
+
+export interface PointInTimeRestoreResult {
+  at: string;
+  env: string;
+  dryRun: boolean;
+  restored: number;
+  revived: number;
+  deleted: number;
+  changes: PointInTimeEntryDto[];
+}
+
+export const transitKeyNameSchema = z
+  .string()
+  .trim()
+  .regex(/^[a-z0-9][a-z0-9-]{0,63}$/, "use lowercase letters, digits, and dashes");
+
+export const createTransitKeySchema = z.object({ name: transitKeyNameSchema });
+
+export const transitEncryptSchema = z.object({
+  plaintext: z.string().min(1).max(64_000),
+  context: z.string().max(500).optional(),
+  key: transitKeyNameSchema.optional(),
+});
+export type TransitEncryptInput = z.infer<typeof transitEncryptSchema>;
+
+export const transitDecryptSchema = z.object({
+  ciphertext: z.string().min(1).max(120_000),
+  context: z.string().max(500).optional(),
+});
+export type TransitDecryptInput = z.infer<typeof transitDecryptSchema>;
+
+export interface TransitKeyDto {
+  id: string;
+  name: string;
+  version: number;
+  createdAt: string;
+}
+
+export interface TransitEncryptResult {
+  ciphertext: string;
+  key: string;
+  keyVersion: number;
+  algorithm: string;
 }
 
 export interface IdentityDto {
@@ -343,6 +457,9 @@ export interface IdentityDto {
   clientId: string;
   role: IdentityRole;
   environmentIds: string[];
+  tokenTtlSeconds: number;
+  ipAllowlist: string[] | null;
+  hourlyTokenCap: number | null;
   createdAt: string;
   revokedAt: string | null;
 }
