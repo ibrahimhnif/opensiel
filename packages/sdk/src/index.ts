@@ -111,6 +111,13 @@ export class OpensielError extends Error {
   }
 }
 
+export class MfaRequiredError extends Error {
+  constructor(public readonly challengeToken: string) {
+    super("multi-factor authentication required");
+    this.name = "MfaRequiredError";
+  }
+}
+
 export class OpensielClient {
   private apiUrl: string;
   private token?: string;
@@ -125,12 +132,29 @@ export class OpensielClient {
   }
 
   async login(email: string, password: string): Promise<{ token: string }> {
-    const result = await this.request<{ token: string }>("/api/auth/login", {
+    const result = await this.request<{
+      token?: string;
+      mfaRequired?: boolean;
+      challengeToken?: string;
+    }>("/api/auth/login", {
       method: "POST",
       body: { email, password },
     });
+    if (result.mfaRequired && result.challengeToken) {
+      throw new MfaRequiredError(result.challengeToken);
+    }
+    if (!result.token) throw new OpensielError(500, "login did not return a token");
     this.token = result.token;
-    return result;
+    return { token: result.token };
+  }
+
+  async loginMfa(challengeToken: string, code: string): Promise<{ token: string }> {
+    const result = await this.request<{ token: string }>("/api/auth/mfa/login", {
+      method: "POST",
+      body: { challengeToken, code },
+    });
+    this.token = result.token;
+    return { token: result.token };
   }
 
   async loginWithClientCredentials(

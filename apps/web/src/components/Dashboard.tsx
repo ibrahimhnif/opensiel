@@ -28,9 +28,18 @@ import { IdentitiesView } from "./IdentitiesView";
 import { AuditView } from "./AuditView";
 import { DynamicView } from "./DynamicView";
 import { WebhooksView } from "./WebhooksView";
+import { MfaCard } from "./MfaCard";
 
 type Tab =
-  "secrets" | "scan" | "dynamic" | "webhooks" | "approvals" | "members" | "identities" | "audit";
+  | "secrets"
+  | "scan"
+  | "dynamic"
+  | "webhooks"
+  | "approvals"
+  | "members"
+  | "identities"
+  | "audit"
+  | "security";
 
 const TABS: { value: Tab; label: string }[] = [
   { value: "secrets", label: "Secrets" },
@@ -41,6 +50,7 @@ const TABS: { value: Tab; label: string }[] = [
   { value: "members", label: "Members" },
   { value: "identities", label: "Identities" },
   { value: "audit", label: "Audit" },
+  { value: "security", label: "Security" },
 ];
 
 export function Dashboard({ user, onSignedOut }: { user: UserDto; onSignedOut: () => void }) {
@@ -370,6 +380,9 @@ export function Dashboard({ user, onSignedOut }: { user: UserDto; onSignedOut: (
               </TabsContent>
               <TabsContent value="audit">
                 <AuditView project={project} />
+              </TabsContent>
+              <TabsContent value="security">
+                <MfaCard isOwner={user.role === "owner"} />
               </TabsContent>
             </Tabs>
           </>

@@ -11,6 +11,7 @@ import { createDb } from "../src/db/client.js";
 import type { Database } from "../src/db/client.js";
 import { runMigrations } from "../src/db/migrate.js";
 import { runAuditSinkOnce } from "../src/audit-sink.js";
+import { base32Decode, currentTotpStep, totpCode } from "../src/mfa.js";
 import { generateMasterKey, parseMasterKey, sha256 } from "../src/crypto.js";
 import type { Env } from "../src/env.js";
 
@@ -218,6 +219,10 @@ if (!databaseUrl) {
     devId: string;
     stagingId: string;
     prodId: string;
+  }
+
+  function totpNow(secret: string): string {
+    return totpCode(base32Decode(secret), currentTotpStep());
   }
 
   async function signup(email: string, name = "Test User"): Promise<Session> {
@@ -1316,6 +1321,182 @@ if (!databaseUrl) {
       payload: credentials,
     });
     expect(newToken.statusCode).toBe(401);
+  });
+
+  it("enrolls TOTP, requires it at login, and consumes recovery codes", async () => {
+    const email = `mfa-${Date.now()}@test.dev`;
+    const password = "correct-horse-battery";
+    const session = await signup(email);
+    const auth = { authorization: `Bearer ${session.token}` };
+
+    const setup = await app.inject({
+      method: "POST",
+      url: "/api/auth/mfa/setup",
+      headers: auth,
+    });
+    expect(setup.statusCode).toBe(200);
+    const { secret, otpauthUrl: uri } = setup.json<{ secret: string; otpauthUrl: string }>();
+    expect(uri.startsWith("otpauth://totp/")).toBe(true);
+
+    const enabled = await app.inject({
+      method: "POST",
+      url: "/api/auth/mfa/verify",
+      headers: auth,
+      payload: { code: totpNow(secret) },
+    });
+    expect(enabled.statusCode).toBe(201);
+    const recoveryCodes = enabled.json<{ recoveryCodes: string[] }>().recoveryCodes;
+    expect(recoveryCodes).toHaveLength(10);
+
+    const status = await app.inject({ method: "GET", url: "/api/auth/mfa", headers: auth });
+    expect(status.json()).toMatchObject({
+      enabled: true,
+      recoveryCodesRemaining: 10,
+      orgRequired: false,
+    });
+
+    const first = await app.inject({
+      method: "POST",
+      url: "/api/auth/login",
+      payload: { email, password },
+    });
+    expect(first.statusCode).toBe(200);
+    const challenge = first.json<{ mfaRequired: boolean; challengeToken: string }>();
+    expect(challenge.mfaRequired).toBe(true);
+    expect(challenge).not.toHaveProperty("token");
+
+    const usedCode = totpNow(secret);
+    const second = await app.inject({
+      method: "POST",
+      url: "/api/auth/mfa/login",
+      payload: { challengeToken: challenge.challengeToken, code: usedCode },
+    });
+    expect(second.statusCode).toBe(200);
+    const token = second.json<{ token: string }>().token;
+    expect(token).toBeTruthy();
+
+    const me = await app.inject({
+      method: "GET",
+      url: "/api/auth/me",
+      headers: { authorization: `Bearer ${token}` },
+    });
+    expect(me.statusCode).toBe(200);
+
+    const replay = await app.inject({
+      method: "POST",
+      url: "/api/auth/mfa/login",
+      payload: { challengeToken: challenge.challengeToken, code: usedCode },
+    });
+    expect(replay.statusCode).toBe(401);
+
+    const recovery = await app.inject({
+      method: "POST",
+      url: "/api/auth/mfa/login",
+      payload: { challengeToken: challenge.challengeToken, code: recoveryCodes[0] },
+    });
+    expect(recovery.statusCode).toBe(200);
+    expect(recovery.json<{ recoveryCodesRemaining: number }>().recoveryCodesRemaining).toBe(9);
+
+    const reuse = await app.inject({
+      method: "POST",
+      url: "/api/auth/mfa/login",
+      payload: { challengeToken: challenge.challengeToken, code: recoveryCodes[0] },
+    });
+    expect(reuse.statusCode).toBe(401);
+
+    const wrongPassword = await app.inject({
+      method: "POST",
+      url: "/api/auth/mfa/disable",
+      headers: auth,
+      payload: { password: "not-the-password", code: totpNow(secret) },
+    });
+    expect(wrongPassword.statusCode).toBe(401);
+
+    const disabled = await app.inject({
+      method: "POST",
+      url: "/api/auth/mfa/disable",
+      headers: auth,
+      payload: { password, code: totpNow(secret) },
+    });
+    expect(disabled.statusCode).toBe(200);
+
+    const plain = await app.inject({
+      method: "POST",
+      url: "/api/auth/login",
+      payload: { email, password },
+    });
+    expect(plain.statusCode).toBe(200);
+    expect(plain.json()).toHaveProperty("token");
+  });
+
+  it("enforces the organization MFA policy during enrollment", async () => {
+    const email = `mfa-policy-${Date.now()}@test.dev`;
+    const password = "correct-horse-battery";
+    const session = await signup(email);
+    const auth = { authorization: `Bearer ${session.token}` };
+
+    const policy = await app.inject({
+      method: "PATCH",
+      url: "/api/org/mfa",
+      headers: auth,
+      payload: { required: true },
+    });
+    expect(policy.statusCode).toBe(200);
+
+    const blocked = await app.inject({
+      method: "POST",
+      url: "/api/auth/login",
+      payload: { email, password },
+    });
+    expect(blocked.statusCode).toBe(403);
+    expect(blocked.json<{ error: string }>().error).toBe("mfa_enrollment_required");
+    const enrollmentToken = blocked.json<{ enrollmentToken: string }>().enrollmentToken;
+
+    const setup = await app.inject({
+      method: "POST",
+      url: "/api/auth/mfa/setup",
+      payload: { enrollmentToken },
+    });
+    expect(setup.statusCode).toBe(200);
+    const { secret } = setup.json<{ secret: string }>();
+
+    const verify = await app.inject({
+      method: "POST",
+      url: "/api/auth/mfa/verify",
+      payload: { enrollmentToken, code: totpNow(secret) },
+    });
+    expect(verify.statusCode).toBe(201);
+    const token = verify.json<{ token: string }>().token;
+    expect(token).toBeTruthy();
+
+    const me = await app.inject({
+      method: "GET",
+      url: "/api/auth/me",
+      headers: { authorization: `Bearer ${token}` },
+    });
+    expect(me.statusCode).toBe(200);
+
+    const disable = await app.inject({
+      method: "POST",
+      url: "/api/auth/mfa/disable",
+      headers: { authorization: `Bearer ${token}` },
+      payload: { password, code: totpNow(secret) },
+    });
+    expect(disable.statusCode).toBe(403);
+
+    const login = await app.inject({
+      method: "POST",
+      url: "/api/auth/login",
+      payload: { email, password },
+    });
+    expect(login.json<{ mfaRequired: boolean }>().mfaRequired).toBe(true);
+
+    const status = await app.inject({
+      method: "GET",
+      url: "/api/auth/mfa",
+      headers: { authorization: `Bearer ${token}` },
+    });
+    expect(status.json()).toMatchObject({ enabled: true, orgRequired: true });
   });
 
   it("invites teammates into the same organization", async () => {

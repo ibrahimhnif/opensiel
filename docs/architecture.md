@@ -66,6 +66,22 @@ logs plaintext; only a truncated hash of the context is audited.
 - 32-byte session token; only SHA-256 is stored, 7-day expiry.
 - httpOnly, SameSite=Lax cookie; also returned to the CLI on login.
 
+### MFA
+
+- TOTP (RFC 6238, SHA-1, 6 digits, 30s) with a ±1 step window and replay rejection through
+  `user_mfa.last_used_step`.
+- Enrollment returns an `otpauth://` URL and a manual secret; the secret is stored encrypted
+  with the master key under `AAD = mfa:<userId>`.
+- Ten recovery codes are returned once, stored as SHA-256 hashes, and marked used on
+  redemption.
+- Password logins for enrolled users return a 5-minute `mfa` challenge token instead of a
+  session. `POST /api/auth/mfa/login` exchanges a code or recovery code for a session.
+- `orgs.mfa_required` forces enrollment: an unenrolled password login returns
+  `mfa_enrollment_required` with a 5-minute enrollment token that only works for
+  `/api/auth/mfa/setup` and `/api/auth/mfa/verify`. Disabling MFA is refused while the policy
+  is on.
+- SSO sign-ins rely on the identity provider's MFA.
+
 ### Machine identities
 
 - `clientId` + generated secret; only SHA-256 of the secret is stored.

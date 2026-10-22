@@ -338,4 +338,29 @@ create table audit_sink_state (
 insert into audit_sink_state (id) values ('default') on conflict (id) do nothing;
 `,
   },
+  {
+    name: "0012_mfa",
+    sql: `
+alter table orgs add column mfa_required boolean not null default false;
+
+create table user_mfa (
+  user_id uuid primary key references users(id) on delete cascade,
+  secret_ciphertext text not null,
+  secret_iv text not null,
+  secret_tag text not null,
+  enabled boolean not null default false,
+  last_used_step bigint,
+  created_at timestamptz not null default now(),
+  enabled_at timestamptz
+);
+
+create table user_mfa_recovery_codes (
+  user_id uuid not null references users(id) on delete cascade,
+  code_hash text not null,
+  used_at timestamptz,
+  created_at timestamptz not null default now(),
+  primary key (user_id, code_hash)
+);
+`,
+  },
 ];
