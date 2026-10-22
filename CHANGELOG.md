@@ -16,6 +16,8 @@ All notable changes to this project are documented here. The format is based on
 - Machine identity token policy: per-identity TTL, IP allowlist (CIDR), hourly issuance cap,
   and immediate revocation via token versions.
 - `PATCH /api/projects/:id/identities/:identityId` to update role, scopes, and token policy.
+- CLI: `opensiel crypto encrypt|decrypt` and `opensiel crypto keys list|create|rotate`.
+- Web UI: version diff and a point-in-time restore panel in the secrets view.
 
 ### Changed
 

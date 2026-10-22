@@ -579,6 +579,91 @@ program
     });
   });
 
+const crypto = program
+  .command("crypto")
+  .description("encrypt and decrypt data with project transit keys");
+
+crypto
+  .command("encrypt [value]")
+  .description("encrypt a value (reads stdin when no value is given)")
+  .option("--key <name>", "transit key name", "default")
+  .option("--context <context>", "binding context for the ciphertext")
+  .action(async (value: string | undefined, options) => {
+    const projectId = resolveProjectId();
+    const plaintext = value === undefined ? readFileSync(0, "utf8").replace(/\r?\n$/, "") : value;
+    if (!plaintext) fail("nothing to encrypt");
+
+    const result = await apiRequest<{ ciphertext: string; key: string; keyVersion: number }>(
+      `/api/projects/${projectId}/crypto/encrypt`,
+      {
+        method: "POST",
+        body: { plaintext, key: options.key, context: options.context },
+      },
+    );
+    process.stdout.write(`${result.ciphertext}\n`);
+  });
+
+crypto
+  .command("decrypt <ciphertext>")
+  .description("decrypt a transit envelope")
+  .option("--context <context>", "binding context used at encryption time")
+  .action(async (ciphertext: string, options) => {
+    const projectId = resolveProjectId();
+    const result = await apiRequest<{ plaintext: string }>(
+      `/api/projects/${projectId}/crypto/decrypt`,
+      { method: "POST", body: { ciphertext, context: options.context } },
+    );
+    process.stdout.write(result.plaintext);
+  });
+
+const cryptoKeys = crypto.command("keys").description("manage transit keys");
+
+cryptoKeys
+  .command("list")
+  .description("list transit key names")
+  .action(async () => {
+    const projectId = resolveProjectId();
+    const { keys } = await apiRequest<{
+      keys: { name: string; version: number; createdAt: string }[];
+    }>(`/api/projects/${projectId}/crypto/keys`);
+    if (keys.length === 0) {
+      console.log("no transit keys");
+      return;
+    }
+    printTable(
+      ["NAME", "VERSION", "CREATED"],
+      keys.map((key) => [
+        key.name,
+        String(key.version),
+        key.createdAt.slice(0, 19).replace("T", " "),
+      ]),
+    );
+  });
+
+cryptoKeys
+  .command("create <name>")
+  .description("create a named transit key")
+  .action(async (name: string) => {
+    const projectId = resolveProjectId();
+    const result = await apiRequest<{ key: { name: string; version: number } }>(
+      `/api/projects/${projectId}/crypto/keys`,
+      { method: "POST", body: { name } },
+    );
+    console.log(`created transit key ${result.key.name} (v${result.key.version})`);
+  });
+
+cryptoKeys
+  .command("rotate <name>")
+  .description("rotate a named transit key")
+  .action(async (name: string) => {
+    const projectId = resolveProjectId();
+    const result = await apiRequest<{ key: { name: string; version: number } }>(
+      `/api/projects/${projectId}/crypto/keys/${encodeURIComponent(name)}/rotate`,
+      { method: "POST" },
+    );
+    console.log(`rotated transit key ${result.key.name} to v${result.key.version}`);
+  });
+
 program
   .command("whoami")
   .description("show the current session")

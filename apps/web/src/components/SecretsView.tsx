@@ -6,6 +6,7 @@ import type {
   SecretVersionDto,
 } from "@opensiel/shared";
 import {
+  Clock,
   Copy,
   Eye,
   EyeOff,
@@ -33,6 +34,7 @@ import {
 } from "./ui/dialog";
 import { Input } from "./ui/input";
 import { Label } from "./ui/label";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "./ui/select";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "./ui/table";
 import { Pagination } from "./Pagination";
 import { usePagination } from "../hooks/usePagination";
@@ -42,6 +44,7 @@ import { Notice } from "./Notice";
 interface Props {
   project: ProjectDto;
   env: string;
+  canManage?: boolean;
 }
 
 interface EditorState {
@@ -56,9 +59,38 @@ interface HistoryState {
   key: string;
   path: string;
   versions: SecretVersionDto[];
+  from: number;
+  to: number;
 }
 
-export function SecretsView({ project, env }: Props) {
+interface SecretDiff {
+  key: string;
+  path: string;
+  env: string;
+  changed: boolean;
+  revealed: boolean;
+  from: { version: number; value: string; createdAt: string };
+  to: { version: number; value: string; createdAt: string };
+}
+
+type PitrAction = "restore" | "revive" | "delete";
+
+interface PitrChange {
+  key: string;
+  path: string;
+  action: PitrAction;
+  currentVersion: number;
+  targetVersion: number | null;
+}
+
+interface PitrPreview {
+  at: string;
+  env: string;
+  secretCount: number;
+  changes: PitrChange[];
+}
+
+export function SecretsView({ project, env, canManage = false }: Props) {
   const [rows, setRows] = useState<SecretDto[]>([]);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
@@ -67,6 +99,12 @@ export function SecretsView({ project, env }: Props) {
   const [revealed, setRevealed] = useState<Record<string, boolean>>({});
   const [editor, setEditor] = useState<EditorState | null>(null);
   const [history, setHistory] = useState<HistoryState | null>(null);
+  const [diff, setDiff] = useState<SecretDiff | null>(null);
+  const [diffBusy, setDiffBusy] = useState(false);
+  const [pitrOpen, setPitrOpen] = useState(false);
+  const [pitrAt, setPitrAt] = useState(() => toLocalInput(new Date(Date.now() - 3_600_000)));
+  const [pitrPreview, setPitrPreview] = useState<PitrPreview | null>(null);
+  const [pitrBusy, setPitrBusy] = useState(false);
   const [busy, setBusy] = useState(false);
   const [importOpen, setImportOpen] = useState(false);
   const [importText, setImportText] = useState("");
@@ -174,9 +212,95 @@ export function SecretsView({ project, env }: Props) {
       const result = await api.get<{ versions: SecretVersionDto[] }>(
         `/api/projects/${project.id}/secrets/${encodeURIComponent(row.key)}/versions?${params}`,
       );
-      setHistory({ key: row.key, path: row.path, versions: result.versions });
+      const versions = result.versions;
+      setDiff(null);
+      setHistory({
+        key: row.key,
+        path: row.path,
+        versions,
+        from: versions[1]?.version ?? versions[0]?.version ?? 0,
+        to: versions[0]?.version ?? 0,
+      });
     } catch (err) {
       setError(errorMessage(err));
+    }
+  }
+
+  async function loadDiff(reveal = false) {
+    if (!history) return;
+    if (history.from === history.to) {
+      setError("pick two different versions");
+      return;
+    }
+    setDiffBusy(true);
+    setError("");
+    try {
+      const params = new URLSearchParams({
+        env,
+        path: history.path,
+        from: String(history.from),
+        to: String(history.to),
+      });
+      if (reveal) params.set("reveal", "true");
+      const result = await api.get<{ diff: SecretDiff }>(
+        `/api/projects/${project.id}/secrets/${encodeURIComponent(history.key)}/diff?${params}`,
+      );
+      setDiff(result.diff);
+    } catch (err) {
+      setError(errorMessage(err));
+    } finally {
+      setDiffBusy(false);
+    }
+  }
+
+  async function previewPointInTime() {
+    const at = new Date(pitrAt);
+    if (Number.isNaN(at.getTime())) {
+      setError("pick a valid timestamp");
+      return;
+    }
+    setPitrBusy(true);
+    setError("");
+    try {
+      const params = new URLSearchParams({ env, at: at.toISOString() });
+      const result = await api.get<PitrPreview>(
+        `/api/projects/${project.id}/point-in-time?${params}`,
+      );
+      setPitrPreview(result);
+    } catch (err) {
+      setError(errorMessage(err));
+    } finally {
+      setPitrBusy(false);
+    }
+  }
+
+  async function restorePointInTime() {
+    const at = new Date(pitrAt);
+    if (!pitrPreview || Number.isNaN(at.getTime())) return;
+    if (
+      !window.confirm(
+        `Restore ${env} to ${pitrPreview.at}? Changed keys get a new version, deleted keys are revived, and keys created after that time are deleted.`,
+      )
+    ) {
+      return;
+    }
+    setPitrBusy(true);
+    setError("");
+    try {
+      const result = await api.post<{ restored: number; revived: number; deleted: number }>(
+        `/api/projects/${project.id}/point-in-time/restore`,
+        { env, at: at.toISOString(), dryRun: false },
+      );
+      setPitrOpen(false);
+      setPitrPreview(null);
+      setNotice(
+        `restored ${result.restored}, revived ${result.revived}, deleted ${result.deleted}`,
+      );
+      await load();
+    } catch (err) {
+      setError(errorMessage(err));
+    } finally {
+      setPitrBusy(false);
     }
   }
 
@@ -293,6 +417,17 @@ export function SecretsView({ project, env }: Props) {
           <Button variant="outline" size="sm" onClick={() => void load()} disabled={loading}>
             <RefreshCw className={cn("size-4", loading && "animate-spin")} />
             refresh
+          </Button>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => {
+              setPitrOpen(true);
+              setPitrPreview(null);
+            }}
+          >
+            <Clock className="size-4" />
+            point in time
           </Button>
           <Button
             variant="outline"
@@ -536,7 +671,10 @@ export function SecretsView({ project, env }: Props) {
       <Dialog
         open={Boolean(history)}
         onOpenChange={(open) => {
-          if (!open) setHistory(null);
+          if (!open) {
+            setHistory(null);
+            setDiff(null);
+          }
         }}
       >
         <DialogContent>
@@ -550,6 +688,85 @@ export function SecretsView({ project, env }: Props) {
                   {history.path} · {env}
                 </DialogDescription>
               </DialogHeader>
+
+              <div className="space-y-2 rounded-lg border p-3">
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className="text-xs text-muted-foreground">compare</span>
+                  <Select
+                    value={String(history.from)}
+                    onValueChange={(value) => {
+                      setDiff(null);
+                      setHistory({ ...history, from: Number(value) });
+                    }}
+                  >
+                    <SelectTrigger className="h-8 w-24">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {history.versions.map((version) => (
+                        <SelectItem key={version.version} value={String(version.version)}>
+                          v{version.version}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  <span className="text-xs text-muted-foreground">→</span>
+                  <Select
+                    value={String(history.to)}
+                    onValueChange={(value) => {
+                      setDiff(null);
+                      setHistory({ ...history, to: Number(value) });
+                    }}
+                  >
+                    <SelectTrigger className="h-8 w-24">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {history.versions.map((version) => (
+                        <SelectItem key={version.version} value={String(version.version)}>
+                          v{version.version}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    onClick={() => void loadDiff(Boolean(diff?.revealed))}
+                    disabled={diffBusy}
+                  >
+                    {diffBusy && <Loader2 className="size-3.5 animate-spin" />}
+                    compare
+                  </Button>
+                </div>
+
+                {diff && (
+                  <div className="space-y-1">
+                    {diff.changed ? (
+                      <>
+                        <div className="rounded bg-destructive/10 px-2 py-1 font-mono text-xs break-all">
+                          - v{diff.from.version}: {diff.from.value}
+                        </div>
+                        <div className="rounded bg-primary/10 px-2 py-1 font-mono text-xs break-all">
+                          + v{diff.to.version}: {diff.to.value}
+                        </div>
+                      </>
+                    ) : (
+                      <p className="text-xs text-muted-foreground">
+                        no change between v{diff.from.version} and v{diff.to.version}
+                      </p>
+                    )}
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      onClick={() => void loadDiff(!diff.revealed)}
+                      disabled={diffBusy}
+                    >
+                      {diff.revealed ? "hide values" : "reveal values"}
+                    </Button>
+                  </div>
+                )}
+              </div>
 
               <div className="space-y-2">
                 {historyPagination.pageItems.map((version) => (
@@ -597,6 +814,81 @@ export function SecretsView({ project, env }: Props) {
               </DialogFooter>
             </>
           )}
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={pitrOpen} onOpenChange={setPitrOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Point-in-time · {env}</DialogTitle>
+            <DialogDescription>
+              Preview the environment at a timestamp, then restore changed keys as new versions.
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="space-y-2">
+            <Label htmlFor="pitr-at">Timestamp (local)</Label>
+            <Input
+              id="pitr-at"
+              type="datetime-local"
+              value={pitrAt}
+              onChange={(event) => {
+                setPitrAt(event.target.value);
+                setPitrPreview(null);
+              }}
+            />
+          </div>
+
+          {pitrPreview && (
+            <div className="space-y-2">
+              <p className="text-xs text-muted-foreground">
+                {pitrPreview.secretCount} secret(s) at {formatDate(pitrPreview.at)}
+              </p>
+              {pitrPreview.changes.length === 0 ? (
+                <p className="text-sm">No changes needed.</p>
+              ) : (
+                <div className="max-h-64 space-y-1 overflow-auto">
+                  {pitrPreview.changes.map((change) => (
+                    <div
+                      key={`${change.path}:${change.key}`}
+                      className="flex items-center justify-between gap-2 rounded border px-2 py-1 text-xs"
+                    >
+                      <span className="font-mono">
+                        {change.path === "/" ? change.key : `${change.path}/${change.key}`}
+                      </span>
+                      <span className="flex items-center gap-2">
+                        <span className="text-muted-foreground">
+                          v{change.currentVersion} →{" "}
+                          {change.targetVersion === null ? "—" : `v${change.targetVersion}`}
+                        </span>
+                        <Badge variant={change.action === "delete" ? "destructive" : "success"}>
+                          {change.action}
+                        </Badge>
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setPitrOpen(false)}>
+              cancel
+            </Button>
+            <Button variant="outline" onClick={() => void previewPointInTime()} disabled={pitrBusy}>
+              {pitrBusy && <Loader2 className="size-4 animate-spin" />}
+              preview
+            </Button>
+            {canManage && (
+              <Button
+                onClick={() => void restorePointInTime()}
+                disabled={pitrBusy || !pitrPreview || pitrPreview.changes.length === 0}
+              >
+                restore
+              </Button>
+            )}
+          </DialogFooter>
         </DialogContent>
       </Dialog>
 
@@ -689,4 +981,11 @@ export function SecretsView({ project, env }: Props) {
 
 function formatDate(value: string): string {
   return value.slice(0, 19).replace("T", " ");
+}
+
+function toLocalInput(date: Date): string {
+  const pad = (value: number) => String(value).padStart(2, "0");
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(
+    date.getHours(),
+  )}:${pad(date.getMinutes())}`;
 }
