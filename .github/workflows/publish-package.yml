@@ -1,0 +1,48 @@
+name: publish-package
+
+# Bootstrap helper for the first npm publish. Normal releases use OIDC trusted
+# publishing from release.yml. Remove NPM_TOKEN after the first publish.
+on:
+  workflow_dispatch:
+    inputs:
+      package:
+        description: Package to stage
+        type: choice
+        options:
+          - cli
+          - sdk
+        required: true
+
+permissions:
+  contents: read
+
+jobs:
+  stage:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+          registry-url: https://registry.npmjs.org
+      - run: npm install -g npm@^11.16.0
+      - run: pnpm install --frozen-lockfile
+      - name: Build
+        run: |
+          if [ "${{ inputs.package }}" = "cli" ]; then
+            pnpm --filter @liostech/opensiel-cli build
+          else
+            pnpm --filter @liostech/opensiel-sdk build
+          fi
+      - name: Stage
+        run: |
+          if [ "${{ inputs.package }}" = "cli" ]; then
+            cd apps/cli
+          else
+            cd packages/sdk
+          fi
+          npm stage publish --access public
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
