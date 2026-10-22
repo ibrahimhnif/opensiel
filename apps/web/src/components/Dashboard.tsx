@@ -343,7 +343,7 @@ export function Dashboard({ user, onSignedOut }: { user: UserDto; onSignedOut: (
               </TabsList>
 
               <TabsContent value="secrets">
-                <SecretsView project={project} env={env} />
+                <SecretsView project={project} env={env} canManage={canManage} />
               </TabsContent>
               <TabsContent value="scan">
                 <ScanView project={project} />

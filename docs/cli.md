@@ -112,6 +112,24 @@ changes one at a time there.
 
 `export` only includes root-folder secrets.
 
+## Encryption with transit keys
+
+Encrypt application data without managing keys yourself. The plaintext is read from stdin by
+default, so it does not land in shell history:
+
+```bash
+echo -n "card=4111" | opensiel crypto encrypt --context user:42
+opensiel crypto decrypt 'osl1.default.1.…' --context user:42
+
+opensiel crypto keys list
+opensiel crypto keys create billing
+opensiel crypto keys rotate billing
+```
+
+The context is bound to the ciphertext; decrypting with a different context fails with
+`decrypt_failed`. Named keys default to `default` and are created on first use.
+`keys create` and `keys rotate` require an owner or admin.
+
 ## Run a command with secrets
 
 ```bash
