@@ -47,7 +47,13 @@ jobs:
       - run: pnpm --filter @liostech/opensiel-sdk build
       - name: Publish @liostech/opensiel-sdk
         working-directory: packages/sdk
-        run: npm publish --access public --provenance
+        run: |
+          VERSION="$(node -p "require('./package.json').version")"
+          if npm view "@liostech/opensiel-sdk@$VERSION" version >/dev/null 2>&1; then
+            echo "@liostech/opensiel-sdk@$VERSION is already published; skipping"
+            exit 0
+          fi
+          npm publish --access public --provenance
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 

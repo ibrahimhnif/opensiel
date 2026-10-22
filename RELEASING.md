@@ -62,6 +62,11 @@ npm publish --access public
 The package has a `prepack` script, so `npm publish` rebuilds `dist` automatically. Publishing
 requires membership in the `liostech` npm org.
 
+If the account uses auth-and-writes 2FA, npm requires an OTP (`npm publish --otp <code>`) or a
+granular access token with **bypass 2FA** enabled. The CI publish uses the latter. The release
+job skips a version that is already on the registry, so a manual first publish does not break
+the tag.
+
 ## 4. Verify
 
 ```bash
