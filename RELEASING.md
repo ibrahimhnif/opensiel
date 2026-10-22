@@ -42,7 +42,7 @@ git push origin v0.1.0
 
 The tag runs `.github/workflows/release.yml`:
 
-1. `image` builds and pushes `ghcr.io/<owner>/opensiel:v0.1.0` and `:latest`.
+1. `image` builds and pushes `ghcr.io/<owner>/opensiel:v0.1.0`, `:0.1.0`, and `:latest`.
 2. `chart` lints, packages, pushes `oci://ghcr.io/<owner>/charts/opensiel:0.1.0`, and uploads
    the chart artifact.
 3. `sdk` publishes `@liostech/opensiel-sdk` to npm with provenance using OIDC trusted
