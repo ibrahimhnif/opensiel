@@ -1,37 +1,43 @@
-import { useCallback, useEffect, useState } from "react";
+import { useEffect, useState } from "react";
 import type { AuditLogDto, ProjectDto } from "@opensiel/shared";
-import { RefreshCw } from "lucide-react";
-import { api, errorMessage } from "../api";
+import { RefreshCw, Search } from "lucide-react";
+import { api } from "../api";
 import { Badge } from "./ui/badge";
 import { Button } from "./ui/button";
 import { Card } from "./ui/card";
+import { Input } from "./ui/input";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "./ui/select";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "./ui/table";
 import { Pagination } from "./Pagination";
-import { usePagination } from "../hooks/usePagination";
-import { useToastMessage } from "../hooks/useToastMessage";
+import { useServerList } from "../hooks/useServerList";
+import { notify } from "../lib/notify";
 
 export function AuditView({ project }: { project: ProjectDto }) {
-  const [logs, setLogs] = useState<AuditLogDto[]>([]);
-  const [error, setError] = useState("");
-  useToastMessage("error", error, setError);
+  const [actionFilter, setActionFilter] = useState("");
 
-  const load = useCallback(async () => {
-    try {
-      const result = await api.get<{ logs: AuditLogDto[] }>(
-        `/api/audit?projectId=${project.id}&limit=100`,
-      );
-      setLogs(result.logs);
-      setError("");
-    } catch (err) {
-      setError(errorMessage(err));
-    }
-  }, [project.id]);
+  const list = useServerList<AuditLogDto>({
+    key: `${project.id}:${actionFilter}`,
+    pageSize: 20,
+    initialSort: "createdAt",
+    initialOrder: "desc",
+    fetcher: async ({ limit, offset, q, sort, order }) => {
+      const params = new URLSearchParams({
+        projectId: project.id,
+        limit: String(limit),
+        offset: String(offset),
+        sort: sort || "createdAt",
+        order,
+      });
+      if (q) params.set("q", q);
+      if (actionFilter) params.set("action", actionFilter);
+      const result = await api.get<{ logs: AuditLogDto[]; total: number }>(`/api/audit?${params}`);
+      return { items: result.logs, total: result.total };
+    },
+  });
 
   useEffect(() => {
-    void load();
-  }, [load]);
-
-  const pagination = usePagination(logs, { pageSize: 20, resetKey: project.id });
+    if (list.error) notify.error(list.error);
+  }, [list.error]);
 
   return (
     <section className="space-y-4">
@@ -42,9 +48,36 @@ export function AuditView({ project }: { project: ProjectDto }) {
             Reads, writes, rollbacks, and identity usage for this project.
           </p>
         </div>
-        <Button variant="outline" size="sm" onClick={() => void load()}>
-          <RefreshCw className="size-4" /> refresh
-        </Button>
+        <div className="flex flex-wrap items-center gap-2">
+          <div className="relative w-full max-w-xs">
+            <Search className="text-muted-foreground absolute top-1/2 left-2.5 size-4 -translate-y-1/2" />
+            <Input
+              className="pl-8"
+              placeholder="Search actor, action, resource…"
+              value={list.query}
+              onChange={(event) => list.setQuery(event.target.value)}
+            />
+          </div>
+          <Select
+            value={actionFilter || "all"}
+            onValueChange={(value) => setActionFilter(value === "all" ? "" : value)}
+          >
+            <SelectTrigger className="h-8 w-44">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">all actions</SelectItem>
+              <SelectItem value="secret.read">secret.read</SelectItem>
+              <SelectItem value="secret.write">secret.write</SelectItem>
+              <SelectItem value="secret.delete">secret.delete</SelectItem>
+              <SelectItem value="secret.rollback">secret.rollback</SelectItem>
+              <SelectItem value="identity.token">identity.token</SelectItem>
+            </SelectContent>
+          </Select>
+          <Button variant="outline" size="sm" onClick={() => list.reload()}>
+            <RefreshCw className="size-4" /> refresh
+          </Button>
+        </div>
       </div>
 
       <Card className="overflow-hidden py-0">
@@ -59,7 +92,7 @@ export function AuditView({ project }: { project: ProjectDto }) {
             </TableRow>
           </TableHeader>
           <TableBody>
-            {pagination.pageItems.map((log) => (
+            {list.items.map((log) => (
               <TableRow key={log.id}>
                 <TableCell className="text-xs text-muted-foreground">
                   {formatDate(log.createdAt)}
@@ -82,25 +115,16 @@ export function AuditView({ project }: { project: ProjectDto }) {
                 </TableCell>
               </TableRow>
             ))}
-            {logs.length === 0 && (
+            {list.total === 0 && (
               <TableRow>
                 <TableCell colSpan={5} className="py-8 text-center text-muted-foreground">
-                  No audit entries yet.
+                  No audit entries match.
                 </TableCell>
               </TableRow>
             )}
           </TableBody>
         </Table>
-        <Pagination
-          page={pagination.page}
-          pageSize={pagination.pageSize}
-          total={pagination.total}
-          totalPages={pagination.totalPages}
-          rangeStart={pagination.rangeStart}
-          rangeEnd={pagination.rangeEnd}
-          onPageChange={pagination.setPage}
-          onPageSizeChange={pagination.setPageSize}
-        />
+        <Pagination {...list.pagination} />
       </Card>
     </section>
   );

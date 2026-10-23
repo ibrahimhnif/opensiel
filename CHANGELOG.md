@@ -48,6 +48,10 @@ All notable changes to this project are documented here. The format is based on
 - Opt-in end-to-end encryption: user X25519 keys, per-member wrapped project keys, ciphertext-only
   secret routes, client crypto helpers in `@opensiel/shared`, and plaintext-route guards for
   e2ee projects.
+- Server-side list filtering, sorting, and pagination (`limit`, `offset`, `q`, `sort`, `order`,
+  plus `total`) for secrets, audit logs, identities, webhooks, dynamic credentials, change
+  requests, members, invites, secret versions, and scan findings; the web views now drive all
+  of these from the API instead of slicing full client-side arrays.
 
 ### Changed
 

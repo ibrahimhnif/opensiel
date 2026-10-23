@@ -105,6 +105,9 @@ export interface ScanResult {
   characters: number;
   scannedEnvironments: number;
   scannedSecrets: number;
+  total: number;
+  limit: number;
+  offset: number;
 }
 
 export const createDynamicConfigSchema = z.object({

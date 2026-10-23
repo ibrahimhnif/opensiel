@@ -27,13 +27,16 @@ import { loadEnvironmentSecrets } from "../secret-read.js";
 import { parseImportContents } from "../dotenv.js";
 import { dispatchEvent } from "../webhooks.js";
 import { applySecretDelete, applySecretRollback, applySecretWrite } from "../secrets-service.js";
+import { paginate, paginationSchema, sortRows } from "../pagination.js";
 import type { Actor, Deps } from "../types.js";
 
-const listQuerySchema = z.object({
-  env: slugSchema,
-  path: secretPathSchema.optional(),
-  recursive: z.enum(["true", "false"]).optional(),
-});
+const listQuerySchema = z
+  .object({
+    env: slugSchema,
+    path: secretPathSchema.optional(),
+    recursive: z.enum(["true", "false"]).optional(),
+  })
+  .merge(paginationSchema);
 
 const secretQuerySchema = z.object({
   env: slugSchema,
@@ -120,21 +123,51 @@ export function registerSecretRoutes(app: FastifyInstance, deps: Deps): void {
       actor.type === "machine" ? { allowedEnvironmentIds: actor.envIds } : {},
     );
 
-    const values = loaded
-      .filter((secret) => matchesPath(secret.path, path, recursive))
-      .sort((a, b) => a.path.localeCompare(b.path) || a.key.localeCompare(b.key))
-      .map((secret) => ({
-        key: secret.key,
-        value: secret.value,
-        path: secret.path,
-        version: secret.version,
-        createdAt: secret.createdAt.toISOString(),
-        updatedAt: secret.updatedAt.toISOString(),
-        importedFrom: secret.importedFrom,
-      }));
+    let filtered = loaded.filter((secret) => matchesPath(secret.path, path, recursive));
+    if (query.q) {
+      const needle = query.q.toLowerCase();
+      filtered = filtered.filter(
+        (secret) =>
+          secret.key.toLowerCase().includes(needle) || secret.path.toLowerCase().includes(needle),
+      );
+    }
+
+    const pageQuery = {
+      limit: query.limit ?? 25,
+      offset: query.offset ?? 0,
+      order: query.order ?? ("asc" as const),
+      q: query.q,
+      sort: query.sort,
+    };
+    const sorted = sortRows(
+      filtered.sort((a, b) => a.path.localeCompare(b.path) || a.key.localeCompare(b.key)),
+      pageQuery,
+      {
+        key: (secret) => secret.key,
+        path: (secret) => secret.path,
+        version: (secret) => secret.version,
+        updatedAt: (secret) => secret.updatedAt.getTime(),
+        createdAt: (secret) => secret.createdAt.getTime(),
+      },
+    );
+    const page = paginate(sorted, pageQuery);
+    const values = page.items.map((secret) => ({
+      key: secret.key,
+      value: secret.value,
+      path: secret.path,
+      version: secret.version,
+      createdAt: secret.createdAt.toISOString(),
+      updatedAt: secret.updatedAt.toISOString(),
+      importedFrom: secret.importedFrom,
+    }));
 
     await auditRead(deps, actor, project.id, environment.slug, path, values.length, request.ip);
-    return { secrets: values };
+    return {
+      secrets: values,
+      total: page.total,
+      limit: page.limit,
+      offset: page.offset,
+    };
   });
 
   app.get("/api/projects/:projectId/secrets/:key", async (request) => {
@@ -418,14 +451,28 @@ export function registerSecretRoutes(app: FastifyInstance, deps: Deps): void {
 
     const path = normalizePath(query.path);
     const secret = await findSecret(deps, project.id, environment.id, path, key);
-    const rows = await deps.db
+    const allRows = await deps.db
       .select()
       .from(secretVersions)
       .where(eq(secretVersions.secretId, secret.id))
       .orderBy(desc(secretVersions.version));
 
+    const versionQuery = parse(paginationSchema.merge(secretQuerySchema), request.query);
+    const versionPageQuery = {
+      limit: versionQuery.limit ?? 25,
+      offset: versionQuery.offset ?? 0,
+      order: versionQuery.order ?? ("asc" as const),
+      q: versionQuery.q,
+      sort: versionQuery.sort,
+    };
+    const filteredVersions = sortRows(allRows, versionPageQuery, {
+      version: (row) => row.version,
+      createdAt: (row) => row.createdAt.getTime(),
+    });
+    const versionPage = paginate(filteredVersions, versionPageQuery);
+
     return {
-      versions: rows.map((row) => ({
+      versions: versionPage.items.map((row) => ({
         version: row.version,
         comment: row.comment,
         fingerprint: row.fingerprint,
@@ -435,6 +482,9 @@ export function registerSecretRoutes(app: FastifyInstance, deps: Deps): void {
         createdAt: row.createdAt.toISOString(),
         current: row.version === secret.latestVersion,
       })),
+      total: versionPage.total,
+      limit: versionPage.limit,
+      offset: versionPage.offset,
     };
   });
 

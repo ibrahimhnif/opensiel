@@ -158,6 +158,18 @@ Owners/admins approve or reject; requesters cannot approve their own request. On
 required number of distinct approvals is reached, the payload is decrypted and applied, and
 an audit entry records the approver.
 
+## List APIs
+
+Collection endpoints (`/secrets`, `/audit`, `/identities`, `/webhooks`, dynamic secrets,
+change requests, members, invites, secret versions, and scanning) paginate on the server:
+
+- `limit` (1–200, default 25), `offset` (default 0)
+- `q` for a server-side text filter
+- `sort` and `order` (`asc`/`desc`)
+
+Responses keep the resource key (for example `secrets`) and add `total`, `limit`, and
+`offset`, so clients never need to fetch and slice the full dataset.
+
 ## Secret syncs
 
 `secret_syncs` pushes the secrets at one environment/path to an external provider.
