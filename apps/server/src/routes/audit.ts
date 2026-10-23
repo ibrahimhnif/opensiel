@@ -1,4 +1,4 @@
-import { and, asc, desc, eq, gte, lt, lte } from "drizzle-orm";
+import { and, asc, count, desc, eq, gte, ilike, lt, lte, or } from "drizzle-orm";
 import { Readable } from "node:stream";
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
@@ -8,13 +8,18 @@ import { badRequest, forbidden, parse } from "../errors.js";
 import { auditLogs } from "../db/schema.js";
 import type { AuditLogRow } from "../db/schema.js";
 import { writeAudit } from "../audit.js";
+import { paginationSchema } from "../pagination.js";
 import type { Deps } from "../types.js";
 
-const querySchema = z.object({
-  projectId: z.string().uuid().optional(),
-  limit: z.coerce.number().int().min(1).max(200).optional(),
-  cursor: z.string().optional(),
-});
+const querySchema = paginationSchema.merge(
+  z.object({
+    projectId: z.string().uuid().optional(),
+    cursor: z.string().optional(),
+    action: z.string().trim().max(100).optional(),
+    sort: z.enum(["createdAt", "action", "actorName"]).default("createdAt"),
+    order: z.enum(["asc", "desc"]).default("desc"),
+  }),
+);
 
 const exportQuerySchema = z.object({
   format: z.enum(["jsonl", "csv"]).default("jsonl"),
@@ -150,17 +155,43 @@ export function registerAuditRoutes(app: FastifyInstance, deps: Deps): void {
 
     const conditions = [eq(auditLogs.orgId, actor.orgId)];
     if (query.projectId) conditions.push(eq(auditLogs.projectId, query.projectId));
+    if (query.action) conditions.push(eq(auditLogs.action, query.action));
+    if (query.q) {
+      const needle = `%${query.q}%`;
+      const search = or(
+        ilike(auditLogs.actorName, needle),
+        ilike(auditLogs.action, needle),
+        ilike(auditLogs.resourceId, needle),
+      );
+      if (search) conditions.push(search);
+    }
     if (query.cursor) {
       const cursor = new Date(query.cursor);
       if (!Number.isNaN(cursor.getTime())) conditions.push(lt(auditLogs.createdAt, cursor));
     }
 
+    const totalRows = await deps.db
+      .select({ total: count() })
+      .from(auditLogs)
+      .where(and(...conditions));
+    const total = Number(totalRows[0]?.total ?? 0);
+
+    const direction = query.order === "desc" ? desc : asc;
     const rows = await deps.db
       .select()
       .from(auditLogs)
       .where(and(...conditions))
-      .orderBy(desc(auditLogs.createdAt))
-      .limit(query.limit ?? 100);
+      .orderBy(
+        direction(
+          query.sort === "action"
+            ? auditLogs.action
+            : query.sort === "actorName"
+              ? auditLogs.actorName
+              : auditLogs.createdAt,
+        ),
+      )
+      .limit(query.limit ?? 50)
+      .offset(query.offset ?? 0);
 
     return {
       logs: rows.map((row) => ({
@@ -176,7 +207,9 @@ export function registerAuditRoutes(app: FastifyInstance, deps: Deps): void {
         ip: row.ip,
         createdAt: row.createdAt.toISOString(),
       })),
-      nextCursor: rows.length > 0 ? rows[rows.length - 1].createdAt.toISOString() : null,
+      total,
+      limit: query.limit,
+      offset: query.offset,
     };
   });
 }

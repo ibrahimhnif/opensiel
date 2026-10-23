@@ -6,6 +6,7 @@ import { randomToken, sha256 } from "../crypto.js";
 import { conflict, forbidden, notFound, parse } from "../errors.js";
 import { orgInvites, orgMembers, orgs, sessions, users } from "../db/schema.js";
 import { writeAudit } from "../audit.js";
+import { paginate, paginationSchema, sortRows } from "../pagination.js";
 import type { Actor, Deps, UserActor } from "../types.js";
 
 const INVITE_TTL_MS = 7 * 24 * 60 * 60 * 1000;
@@ -66,15 +67,36 @@ export function registerOrgRoutes(app: FastifyInstance, deps: Deps): void {
     if (!org) throw notFound("organization not found");
 
     const rows = await memberRows(deps, org.id);
+    const query = parse(paginationSchema, request.query);
+    const needle = query.q?.toLowerCase();
+    const filtered = needle
+      ? rows.filter(
+          (row) =>
+            row.user.name.toLowerCase().includes(needle) ||
+            row.user.email.toLowerCase().includes(needle) ||
+            row.member.role.toLowerCase().includes(needle),
+        )
+      : rows;
+    const sorted = sortRows(filtered, query, {
+      name: (row) => row.user.name,
+      email: (row) => row.user.email,
+      role: (row) => row.member.role,
+      createdAt: (row) => row.member.createdAt.getTime(),
+    });
+    const page = paginate(sorted, query);
+
     return {
       org: { id: org.id, name: org.name, slug: org.slug, mfaRequired: org.mfaRequired },
-      members: rows.map((row) => ({
+      members: page.items.map((row) => ({
         userId: row.user.id,
         email: row.user.email,
         name: row.user.name,
         role: row.member.role,
         createdAt: row.member.createdAt.toISOString(),
       })),
+      membersTotal: page.total,
+      membersLimit: page.limit,
+      membersOffset: page.offset,
       currentUserId: actor.id,
       canManage: actor.role === "owner" || actor.role === "admin",
       isOwner: actor.role === "owner",
@@ -182,17 +204,38 @@ export function registerOrgRoutes(app: FastifyInstance, deps: Deps): void {
       .where(and(eq(orgInvites.orgId, actor.orgId), isNull(orgInvites.acceptedAt)))
       .orderBy(desc(orgInvites.createdAt));
 
+    const active = rows.filter((row) => row.invite.expiresAt.getTime() > Date.now());
+    const query = parse(paginationSchema, request.query);
+    const needle = query.q?.toLowerCase();
+    const filtered = needle
+      ? active.filter(
+          (row) =>
+            row.invite.email.toLowerCase().includes(needle) ||
+            row.invite.role.toLowerCase().includes(needle) ||
+            row.inviter.name.toLowerCase().includes(needle),
+        )
+      : active;
+    const sorted = sortRows(filtered, query, {
+      email: (row) => row.invite.email,
+      role: (row) => row.invite.role,
+      invitedByName: (row) => row.inviter.name,
+      expiresAt: (row) => row.invite.expiresAt.getTime(),
+      createdAt: (row) => row.invite.createdAt.getTime(),
+    });
+    const page = paginate(sorted, query);
+
     return {
-      invites: rows
-        .filter((row) => row.invite.expiresAt.getTime() > Date.now())
-        .map((row) => ({
-          id: row.invite.id,
-          email: row.invite.email,
-          role: row.invite.role,
-          invitedByName: row.inviter.name,
-          expiresAt: row.invite.expiresAt.toISOString(),
-          createdAt: row.invite.createdAt.toISOString(),
-        })),
+      invites: page.items.map((row) => ({
+        id: row.invite.id,
+        email: row.invite.email,
+        role: row.invite.role,
+        invitedByName: row.inviter.name,
+        expiresAt: row.invite.expiresAt.toISOString(),
+        createdAt: row.invite.createdAt.toISOString(),
+      })),
+      total: page.total,
+      limit: page.limit,
+      offset: page.offset,
     };
   });
 

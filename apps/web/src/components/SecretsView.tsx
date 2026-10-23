@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import type {
   ImportSecretsResult,
   ProjectDto,
@@ -37,7 +37,8 @@ import { Label } from "./ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "./ui/select";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "./ui/table";
 import { Pagination } from "./Pagination";
-import { usePagination } from "../hooks/usePagination";
+import { useServerList } from "../hooks/useServerList";
+import { notify } from "../lib/notify";
 import { Textarea } from "./ui/textarea";
 import { Notice } from "./Notice";
 import { useToastMessage } from "../hooks/useToastMessage";
@@ -94,14 +95,13 @@ interface PitrPreview {
 
 export function SecretsView({ project, env, canManage = false }: Props) {
   const confirm = useConfirm();
-  const [rows, setRows] = useState<SecretDto[]>([]);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
-  const [loading, setLoading] = useState(false);
-  const [query, setQuery] = useState("");
   const [revealed, setRevealed] = useState<Record<string, boolean>>({});
   const [editor, setEditor] = useState<EditorState | null>(null);
   const [history, setHistory] = useState<HistoryState | null>(null);
+  const [historyPage, setHistoryPage] = useState(1);
+  const [historyTotal, setHistoryTotal] = useState(0);
   const [diff, setDiff] = useState<SecretDiff | null>(null);
   const [diffBusy, setDiffBusy] = useState(false);
   const [pitrOpen, setPitrOpen] = useState(false);
@@ -118,44 +118,58 @@ export function SecretsView({ project, env, canManage = false }: Props) {
   useToastMessage("success", notice, setNotice);
   useToastMessage("error", error, setError);
 
-  const load = useCallback(async () => {
-    setLoading(true);
-    try {
-      const result = await api.get<{ secrets: SecretDto[] }>(
-        `/api/projects/${project.id}/secrets?env=${encodeURIComponent(env)}`,
+  const list = useServerList<SecretDto>({
+    key: `${project.id}:${env}`,
+    pageSize: 20,
+    initialSort: "key",
+    initialOrder: "asc",
+    fetcher: async ({ limit, offset, q, sort, order }) => {
+      const params = new URLSearchParams({
+        env,
+        limit: String(limit),
+        offset: String(offset),
+        order,
+      });
+      if (q) params.set("q", q);
+      if (sort) params.set("sort", sort);
+      const result = await api.get<{ secrets: SecretDto[]; total: number }>(
+        `/api/projects/${project.id}/secrets?${params}`,
       );
-      setRows(result.secrets);
-      setError("");
-    } catch (err) {
-      setError(errorMessage(err));
-    } finally {
-      setLoading(false);
-    }
-  }, [project.id, env]);
+      return { items: result.secrets, total: result.total };
+    },
+  });
 
   useEffect(() => {
-    void load();
-  }, [load]);
+    if (list.error) notify.error(list.error);
+  }, [list.error]);
 
-  const filtered = useMemo(() => {
-    const needle = query.trim().toLowerCase();
-    if (!needle) return rows;
-    return rows.filter(
-      (row) =>
-        row.key.toLowerCase().includes(needle) ||
-        row.path.toLowerCase().includes(needle) ||
-        row.value.toLowerCase().includes(needle),
+  async function loadHistoryPage(key: string, path: string, pageNumber: number) {
+    const params = new URLSearchParams({
+      env,
+      path,
+      limit: "10",
+      offset: String((pageNumber - 1) * 10),
+      sort: "version",
+      order: "desc",
+    });
+    const result = await api.get<{ versions: SecretVersionDto[]; total: number }>(
+      `/api/projects/${project.id}/secrets/${encodeURIComponent(key)}/versions?${params}`,
     );
-  }, [rows, query]);
+    setHistoryTotal(result.total);
+    setHistoryPage(pageNumber);
+    return result.versions;
+  }
 
-  const pagination = usePagination(filtered, {
-    pageSize: 20,
-    resetKey: `${project.id}:${env}:${query}`,
-  });
-  const historyPagination = usePagination(history?.versions ?? [], {
-    pageSize: 10,
-    resetKey: `${history?.key ?? ""}:${history?.path ?? ""}`,
-  });
+  async function changeHistoryPage(pageNumber: number) {
+    if (!history) return;
+    try {
+      const versions = await loadHistoryPage(history.key, history.path, pageNumber);
+      setHistory({ ...history, versions });
+      setDiff(null);
+    } catch (err) {
+      setError(errorMessage(err));
+    }
+  }
 
   const activeEnvironment = project.environments.find((environment) => environment.slug === env);
 
@@ -185,7 +199,7 @@ export function SecretsView({ project, env, canManage = false }: Props) {
           ? `change submitted for approval (${result.changeRequest.id.slice(0, 8)})`
           : "secret saved",
       );
-      await load();
+      list.reload();
     } catch (err) {
       setError(errorMessage(err));
     } finally {
@@ -213,7 +227,7 @@ export function SecretsView({ project, env, canManage = false }: Props) {
           ? `delete submitted for approval (${result.changeRequest.id.slice(0, 8)})`
           : "secret deleted",
       );
-      await load();
+      list.reload();
     } catch (err) {
       setError(errorMessage(err));
     }
@@ -221,11 +235,7 @@ export function SecretsView({ project, env, canManage = false }: Props) {
 
   async function openHistory(row: SecretDto) {
     try {
-      const params = new URLSearchParams({ env, path: row.path });
-      const result = await api.get<{ versions: SecretVersionDto[] }>(
-        `/api/projects/${project.id}/secrets/${encodeURIComponent(row.key)}/versions?${params}`,
-      );
-      const versions = result.versions;
+      const versions = await loadHistoryPage(row.key, row.path, 1);
       setDiff(null);
       setHistory({
         key: row.key,
@@ -311,7 +321,7 @@ export function SecretsView({ project, env, canManage = false }: Props) {
       setNotice(
         `restored ${result.restored}, revived ${result.revived}, deleted ${result.deleted}`,
       );
-      await load();
+      list.reload();
     } catch (err) {
       setError(errorMessage(err));
     } finally {
@@ -336,7 +346,7 @@ export function SecretsView({ project, env, canManage = false }: Props) {
           ? `rollback submitted for approval (${result.changeRequest.id.slice(0, 8)})`
           : `rolled back ${history.key} to v${version}`,
       );
-      await load();
+      list.reload();
     } catch (err) {
       setError(errorMessage(err));
     }
@@ -408,7 +418,7 @@ export function SecretsView({ project, env, canManage = false }: Props) {
       setImportPath("/");
       setImportComment("");
       setImportPreview(null);
-      await load();
+      list.reload();
     } catch (err) {
       setError(errorMessage(err));
     } finally {
@@ -423,14 +433,32 @@ export function SecretsView({ project, env, canManage = false }: Props) {
           <Search className="text-muted-foreground absolute top-1/2 left-2.5 size-4 -translate-y-1/2" />
           <Input
             className="pl-8"
-            placeholder="Search keys, paths, values…"
-            value={query}
-            onChange={(event) => setQuery(event.target.value)}
+            placeholder="Search keys or paths…"
+            value={list.query}
+            onChange={(event) => list.setQuery(event.target.value)}
           />
         </div>
         <div className="flex flex-wrap items-center gap-2">
-          <Button variant="outline" size="sm" onClick={() => void load()} disabled={loading}>
-            <RefreshCw className={cn("size-4", loading && "animate-spin")} />
+          <Select value={list.sort || "key"} onValueChange={(value) => list.setSort(value)}>
+            <SelectTrigger className="h-8 w-32">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="key">sort: key</SelectItem>
+              <SelectItem value="path">sort: path</SelectItem>
+              <SelectItem value="version">sort: version</SelectItem>
+              <SelectItem value="updatedAt">sort: updated</SelectItem>
+            </SelectContent>
+          </Select>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => list.setOrder(list.order === "asc" ? "desc" : "asc")}
+          >
+            {list.order}
+          </Button>
+          <Button variant="outline" size="sm" onClick={() => list.reload()} disabled={list.loading}>
+            <RefreshCw className={cn("size-4", list.loading && "animate-spin")} />
             refresh
           </Button>
           <Button
@@ -484,7 +512,7 @@ export function SecretsView({ project, env, canManage = false }: Props) {
             </TableRow>
           </TableHeader>
           <TableBody>
-            {pagination.pageItems.map((row) => {
+            {list.items.map((row) => {
               const id = rowId(row);
               const isRevealed = Boolean(revealed[id]);
               return (
@@ -573,25 +601,16 @@ export function SecretsView({ project, env, canManage = false }: Props) {
                 </TableRow>
               );
             })}
-            {filtered.length === 0 && (
+            {list.total === 0 && (
               <TableRow>
                 <TableCell colSpan={5} className="py-10 text-center text-sm text-muted-foreground">
-                  {rows.length === 0 ? `No secrets in ${env} yet.` : "No matches."}
+                  {list.query ? "No matches." : `No secrets in ${env} yet.`}
                 </TableCell>
               </TableRow>
             )}
           </TableBody>
         </Table>
-        <Pagination
-          page={pagination.page}
-          pageSize={pagination.pageSize}
-          total={pagination.total}
-          totalPages={pagination.totalPages}
-          rangeStart={pagination.rangeStart}
-          rangeEnd={pagination.rangeEnd}
-          onPageChange={pagination.setPage}
-          onPageSizeChange={pagination.setPageSize}
-        />
+        <Pagination {...list.pagination} />
       </Card>
 
       <Dialog
@@ -773,7 +792,7 @@ export function SecretsView({ project, env, canManage = false }: Props) {
               </div>
 
               <div className="space-y-2">
-                {historyPagination.pageItems.map((version) => (
+                {history.versions.map((version) => (
                   <div
                     key={version.version}
                     className="flex items-center justify-between gap-3 rounded-lg border px-3 py-2"
@@ -800,14 +819,14 @@ export function SecretsView({ project, env, canManage = false }: Props) {
                 ))}
               </div>
               <Pagination
-                page={historyPagination.page}
-                pageSize={historyPagination.pageSize}
-                total={historyPagination.total}
-                totalPages={historyPagination.totalPages}
-                rangeStart={historyPagination.rangeStart}
-                rangeEnd={historyPagination.rangeEnd}
-                onPageChange={historyPagination.setPage}
-                onPageSizeChange={historyPagination.setPageSize}
+                page={historyPage}
+                pageSize={10}
+                total={historyTotal}
+                totalPages={Math.max(1, Math.ceil(historyTotal / 10))}
+                rangeStart={historyTotal === 0 ? 0 : (historyPage - 1) * 10 + 1}
+                rangeEnd={Math.min(historyPage * 10, historyTotal)}
+                onPageChange={(page) => void changeHistoryPage(page)}
+                onPageSizeChange={() => {}}
                 className="border-0 px-0"
               />
 

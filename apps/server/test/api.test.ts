@@ -2267,6 +2267,73 @@ if (!databaseUrl) {
     expect(switchBack.statusCode).toBe(409);
   });
 
+  it("paginates, filters, and sorts list endpoints server-side", async () => {
+    const session = await signup(`paging-${Date.now()}@test.dev`);
+    const auth = { authorization: `Bearer ${session.token}` };
+    const base = `/api/projects/${session.projectId}`;
+
+    for (const key of ["ALPHA", "BETA", "GAMMA", "DELTA"]) {
+      const created = await app.inject({
+        method: "POST",
+        url: `${base}/secrets`,
+        headers: auth,
+        payload: { key, value: key.toLowerCase(), env: "dev" },
+      });
+      expect(created.statusCode).toBe(201);
+    }
+
+    const first = await app.inject({
+      method: "GET",
+      url: `${base}/secrets?env=dev&limit=2&offset=0&sort=key&order=asc`,
+      headers: auth,
+    });
+    const firstBody = first.json<{
+      secrets: { key: string }[];
+      total: number;
+      limit: number;
+      offset: number;
+    }>();
+    expect(firstBody).toMatchObject({ total: 4, limit: 2, offset: 0 });
+    expect(firstBody.secrets.map((secret) => secret.key)).toEqual(["ALPHA", "BETA"]);
+
+    const second = await app.inject({
+      method: "GET",
+      url: `${base}/secrets?env=dev&limit=2&offset=2&sort=key&order=asc`,
+      headers: auth,
+    });
+    expect(
+      second.json<{ secrets: { key: string }[] }>().secrets.map((secret) => secret.key),
+    ).toEqual(["DELTA", "GAMMA"]);
+
+    const descending = await app.inject({
+      method: "GET",
+      url: `${base}/secrets?env=dev&limit=4&offset=0&sort=key&order=desc`,
+      headers: auth,
+    });
+    expect(
+      descending.json<{ secrets: { key: string }[] }>().secrets.map((secret) => secret.key),
+    ).toEqual(["GAMMA", "DELTA", "BETA", "ALPHA"]);
+
+    const filtered = await app.inject({
+      method: "GET",
+      url: `${base}/secrets?env=dev&q=AM&limit=20&offset=0`,
+      headers: auth,
+    });
+    const filteredBody = filtered.json<{ secrets: { key: string }[]; total: number }>();
+    expect(filteredBody.total).toBe(1);
+    expect(filteredBody.secrets.map((secret) => secret.key)).toEqual(["GAMMA"]);
+
+    const audit = await app.inject({
+      method: "GET",
+      url: `/api/audit?projectId=${session.projectId}&limit=1&offset=0&sort=createdAt&order=desc&q=secret.write`,
+      headers: auth,
+    });
+    const auditBody = audit.json<{ logs: unknown[]; total: number; limit: number }>();
+    expect(auditBody.logs).toHaveLength(1);
+    expect(auditBody.limit).toBe(1);
+    expect(auditBody.total).toBeGreaterThanOrEqual(4);
+  });
+
   it("invites teammates into the same organization", async () => {
     const owner = await signup(`invite-owner-${Date.now()}@test.dev`);
     const auth = { authorization: `Bearer ${owner.token}` };

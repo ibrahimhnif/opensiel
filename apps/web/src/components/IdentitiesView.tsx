@@ -1,6 +1,6 @@
-import { useCallback, useEffect, useState } from "react";
+import { useEffect, useState } from "react";
 import type { IdentityAuthMethodDto, IdentityDto, ProjectDto } from "@opensiel/shared";
-import { Copy, KeyRound, Loader2, Plus, RefreshCw, X } from "lucide-react";
+import { Copy, KeyRound, Loader2, Plus, RefreshCw, Search, X } from "lucide-react";
 import { api, errorMessage } from "../api";
 import { cn } from "../lib/utils";
 import { Badge } from "./ui/badge";
@@ -21,7 +21,8 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from ".
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "./ui/table";
 import { Textarea } from "./ui/textarea";
 import { Pagination } from "./Pagination";
-import { usePagination } from "../hooks/usePagination";
+import { useServerList } from "../hooks/useServerList";
+import { notify } from "../lib/notify";
 import { useToastMessage } from "../hooks/useToastMessage";
 import { useConfirm } from "./ConfirmProvider";
 
@@ -33,7 +34,6 @@ interface CreatedIdentity {
 
 export function IdentitiesView({ project }: { project: ProjectDto }) {
   const confirm = useConfirm();
-  const [rows, setRows] = useState<IdentityDto[]>([]);
   const [error, setError] = useState("");
   const [created, setCreated] = useState<CreatedIdentity | null>(null);
   const [open, setOpen] = useState(false);
@@ -54,26 +54,29 @@ export function IdentitiesView({ project }: { project: ProjectDto }) {
   useToastMessage("success", notice, setNotice);
   useToastMessage("error", error, setError);
 
-  const load = useCallback(async () => {
-    try {
-      const result = await api.get<{ identities: IdentityDto[] }>(
-        `/api/projects/${project.id}/identities`,
+  const list = useServerList<IdentityDto>({
+    key: project.id,
+    pageSize: 10,
+    initialSort: "createdAt",
+    initialOrder: "asc",
+    fetcher: async ({ limit, offset, q, sort, order }) => {
+      const params = new URLSearchParams({
+        limit: String(limit),
+        offset: String(offset),
+        order,
+      });
+      if (q) params.set("q", q);
+      if (sort) params.set("sort", sort);
+      const result = await api.get<{ identities: IdentityDto[]; total: number }>(
+        `/api/projects/${project.id}/identities?${params}`,
       );
-      setRows(result.identities);
-      setError("");
-    } catch (err) {
-      setError(errorMessage(err));
-    }
-  }, [project.id]);
+      return { items: result.identities, total: result.total };
+    },
+  });
 
   useEffect(() => {
-    void load();
-  }, [load]);
-
-  const identityPagination = usePagination(rows, {
-    pageSize: 10,
-    resetKey: project.id,
-  });
+    if (list.error) notify.error(list.error);
+  }, [list.error]);
 
   function toggleEnv(id: string) {
     setEnvIds((current) =>
@@ -103,7 +106,7 @@ export function IdentitiesView({ project }: { project: ProjectDto }) {
         clientSecret: result.identity.clientSecret,
       });
       setOpen(false);
-      await load();
+      list.reload();
     } catch (err) {
       setError(errorMessage(err));
     } finally {
@@ -124,7 +127,7 @@ export function IdentitiesView({ project }: { project: ProjectDto }) {
     try {
       await api.post(`/api/projects/${project.id}/identities/${identity.id}/revoke`);
       setNotice(`${identity.name} revoked`);
-      await load();
+      list.reload();
     } catch (err) {
       setError(errorMessage(err));
     }
@@ -240,8 +243,34 @@ export function IdentitiesView({ project }: { project: ProjectDto }) {
             Client credentials for CI, servers, and local tooling.
           </p>
         </div>
-        <div className="flex items-center gap-2">
-          <Button variant="outline" size="sm" onClick={() => void load()}>
+        <div className="flex flex-wrap items-center gap-2">
+          <div className="relative w-full max-w-xs">
+            <Search className="text-muted-foreground absolute top-1/2 left-2.5 size-4 -translate-y-1/2" />
+            <Input
+              className="pl-8"
+              placeholder="Search name, client id, role…"
+              value={list.query}
+              onChange={(event) => list.setQuery(event.target.value)}
+            />
+          </div>
+          <Select value={list.sort || "createdAt"} onValueChange={(value) => list.setSort(value)}>
+            <SelectTrigger className="h-8 w-36">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="createdAt">sort: created</SelectItem>
+              <SelectItem value="name">sort: name</SelectItem>
+              <SelectItem value="role">sort: role</SelectItem>
+            </SelectContent>
+          </Select>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => list.setOrder(list.order === "asc" ? "desc" : "asc")}
+          >
+            {list.order}
+          </Button>
+          <Button variant="outline" size="sm" onClick={() => list.reload()}>
             <RefreshCw className="size-4" /> refresh
           </Button>
           <Button size="sm" onClick={openForm}>
@@ -310,7 +339,7 @@ export function IdentitiesView({ project }: { project: ProjectDto }) {
             </TableRow>
           </TableHeader>
           <TableBody>
-            {identityPagination.pageItems.map((identity) => (
+            {list.items.map((identity) => (
               <TableRow key={identity.id}>
                 <TableCell>{identity.name}</TableCell>
                 <TableCell>
@@ -350,25 +379,16 @@ export function IdentitiesView({ project }: { project: ProjectDto }) {
                 </TableCell>
               </TableRow>
             ))}
-            {rows.length === 0 && (
+            {list.total === 0 && (
               <TableRow>
                 <TableCell colSpan={6} className="py-8 text-center text-muted-foreground">
-                  No machine identities yet.
+                  {list.query ? "No matching identities." : "No machine identities yet."}
                 </TableCell>
               </TableRow>
             )}
           </TableBody>
         </Table>
-        <Pagination
-          page={identityPagination.page}
-          pageSize={identityPagination.pageSize}
-          total={identityPagination.total}
-          totalPages={identityPagination.totalPages}
-          rangeStart={identityPagination.rangeStart}
-          rangeEnd={identityPagination.rangeEnd}
-          onPageChange={identityPagination.setPage}
-          onPageSizeChange={identityPagination.setPageSize}
-        />
+        <Pagination {...list.pagination} />
       </Card>
 
       <Dialog open={open} onOpenChange={setOpen}>

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useEffect, useState } from "react";
 import type { DynamicConfigDto, DynamicLeaseDto, ProjectDto } from "@opensiel/shared";
 import { Copy, Database, KeyRound, Loader2, Plus, RefreshCw, Trash2, X } from "lucide-react";
 import { api, errorMessage } from "../api";
@@ -15,9 +15,11 @@ import {
 } from "./ui/dialog";
 import { Input } from "./ui/input";
 import { Label } from "./ui/label";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "./ui/select";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "./ui/table";
 import { Pagination } from "./Pagination";
-import { usePagination } from "../hooks/usePagination";
+import { useServerList } from "../hooks/useServerList";
+import { notify } from "../lib/notify";
 import { Textarea } from "./ui/textarea";
 import { useToastMessage } from "../hooks/useToastMessage";
 import { useConfirm } from "./ConfirmProvider";
@@ -37,8 +39,6 @@ interface Credentials {
 
 export function DynamicView({ project }: { project: ProjectDto; canManage: boolean }) {
   const confirm = useConfirm();
-  const [configs, setConfigs] = useState<DynamicConfigDto[]>([]);
-  const [leases, setLeases] = useState<DynamicLeaseDto[]>([]);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const [created, setCreated] = useState<Credentials | null>(null);
@@ -53,36 +53,52 @@ export function DynamicView({ project }: { project: ProjectDto; canManage: boole
   useToastMessage("success", notice, setNotice);
   useToastMessage("error", error, setError);
 
-  const load = useCallback(async () => {
-    try {
-      const [configResult, leaseResult] = await Promise.all([
-        api.get<{ configurations: DynamicConfigDto[] }>(
-          `/api/projects/${project.id}/dynamic-secrets`,
-        ),
-        api.get<{ leases: DynamicLeaseDto[] }>(
-          `/api/projects/${project.id}/dynamic-secrets/leases`,
-        ),
-      ]);
-      setConfigs(configResult.configurations);
-      setLeases(leaseResult.leases);
-      setError("");
-    } catch (err) {
-      setError(errorMessage(err));
-    }
-  }, [project.id]);
+  const configList = useServerList<DynamicConfigDto>({
+    key: project.id,
+    pageSize: 10,
+    initialSort: "name",
+    initialOrder: "asc",
+    fetcher: async ({ limit, offset, q, sort, order }) => {
+      const params = new URLSearchParams({
+        limit: String(limit),
+        offset: String(offset),
+        order,
+      });
+      if (q) params.set("q", q);
+      if (sort) params.set("sort", sort);
+      const result = await api.get<{ configurations: DynamicConfigDto[]; total: number }>(
+        `/api/projects/${project.id}/dynamic-secrets?${params}`,
+      );
+      return { items: result.configurations, total: result.total };
+    },
+  });
+
+  const leaseList = useServerList<DynamicLeaseDto>({
+    key: project.id,
+    pageSize: 10,
+    initialSort: "createdAt",
+    initialOrder: "desc",
+    fetcher: async ({ limit, offset, q, sort, order }) => {
+      const params = new URLSearchParams({
+        limit: String(limit),
+        offset: String(offset),
+        order,
+      });
+      if (q) params.set("q", q);
+      if (sort) params.set("sort", sort);
+      const result = await api.get<{ leases: DynamicLeaseDto[]; total: number }>(
+        `/api/projects/${project.id}/dynamic-secrets/leases?${params}`,
+      );
+      return { items: result.leases, total: result.total };
+    },
+  });
 
   useEffect(() => {
-    void load();
-  }, [load]);
-
-  const configPagination = usePagination(configs, {
-    pageSize: 10,
-    resetKey: project.id,
-  });
-  const leasePagination = usePagination(leases, {
-    pageSize: 10,
-    resetKey: project.id,
-  });
+    if (configList.error) notify.error(configList.error);
+  }, [configList.error]);
+  useEffect(() => {
+    if (leaseList.error) notify.error(leaseList.error);
+  }, [leaseList.error]);
 
   function openForm() {
     setOpen(true);
@@ -107,7 +123,8 @@ export function DynamicView({ project }: { project: ProjectDto; canManage: boole
       });
       setOpen(false);
       setNotice(`configuration ${name} created`);
-      await load();
+      configList.reload();
+      leaseList.reload();
     } catch (err) {
       setError(errorMessage(err));
     } finally {
@@ -134,7 +151,8 @@ export function DynamicView({ project }: { project: ProjectDto; canManage: boole
         database: result.database,
         expiresAt: result.lease.expiresAt,
       });
-      await load();
+      configList.reload();
+      leaseList.reload();
     } catch (err) {
       setError(errorMessage(err));
     } finally {
@@ -155,7 +173,8 @@ export function DynamicView({ project }: { project: ProjectDto; canManage: boole
     try {
       await api.post(`/api/projects/${project.id}/dynamic-secrets/leases/${lease.id}/revoke`);
       setNotice(`lease for ${lease.username} revoked`);
-      await load();
+      configList.reload();
+      leaseList.reload();
     } catch (err) {
       setError(errorMessage(err));
     }
@@ -174,7 +193,8 @@ export function DynamicView({ project }: { project: ProjectDto; canManage: boole
     try {
       await api.del(`/api/projects/${project.id}/dynamic-secrets/${config.id}`);
       setNotice(`configuration ${config.name} deleted`);
-      await load();
+      configList.reload();
+      leaseList.reload();
     } catch (err) {
       setError(errorMessage(err));
     }
@@ -200,7 +220,14 @@ export function DynamicView({ project }: { project: ProjectDto; canManage: boole
           </p>
         </div>
         <div className="flex items-center gap-2">
-          <Button variant="outline" size="sm" onClick={() => void load()}>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => {
+              configList.reload();
+              leaseList.reload();
+            }}
+          >
             <RefreshCw className="size-4" /> refresh
           </Button>
           <Button size="sm" onClick={openForm}>
@@ -284,7 +311,30 @@ export function DynamicView({ project }: { project: ProjectDto; canManage: boole
       )}
 
       <div className="space-y-2">
-        <h3 className="text-sm font-medium">Configurations</h3>
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <h3 className="text-sm font-medium">Configurations</h3>
+          <div className="flex items-center gap-2">
+            <Input
+              className="h-8 w-40"
+              placeholder="Search configurations…"
+              value={configList.query}
+              onChange={(event) => configList.setQuery(event.target.value)}
+            />
+            <Select
+              value={configList.sort || "name"}
+              onValueChange={(value) => configList.setSort(value)}
+            >
+              <SelectTrigger className="h-8 w-32">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="name">name</SelectItem>
+                <SelectItem value="createdAt">created</SelectItem>
+                <SelectItem value="ttlSeconds">ttl</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+        </div>
         <Card className="overflow-hidden py-0">
           <Table>
             <TableHeader>
@@ -297,7 +347,7 @@ export function DynamicView({ project }: { project: ProjectDto; canManage: boole
               </TableRow>
             </TableHeader>
             <TableBody>
-              {configPagination.pageItems.map((config) => (
+              {configList.items.map((config) => (
                 <TableRow key={config.id}>
                   <TableCell>
                     <span className="flex items-center gap-2">
@@ -339,30 +389,47 @@ export function DynamicView({ project }: { project: ProjectDto; canManage: boole
                   </TableCell>
                 </TableRow>
               ))}
-              {configs.length === 0 && (
+              {configList.total === 0 && (
                 <TableRow>
                   <TableCell colSpan={5} className="py-8 text-center text-muted-foreground">
-                    No dynamic secret configurations yet.
+                    {configList.query
+                      ? "No matching configurations."
+                      : "No dynamic secret configurations yet."}
                   </TableCell>
                 </TableRow>
               )}
             </TableBody>
           </Table>
-          <Pagination
-            page={configPagination.page}
-            pageSize={configPagination.pageSize}
-            total={configPagination.total}
-            totalPages={configPagination.totalPages}
-            rangeStart={configPagination.rangeStart}
-            rangeEnd={configPagination.rangeEnd}
-            onPageChange={configPagination.setPage}
-            onPageSizeChange={configPagination.setPageSize}
-          />
+          <Pagination {...configList.pagination} />
         </Card>
       </div>
 
       <div className="space-y-2">
-        <h3 className="text-sm font-medium">Leases</h3>
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <h3 className="text-sm font-medium">Leases</h3>
+          <div className="flex items-center gap-2">
+            <Input
+              className="h-8 w-40"
+              placeholder="Search leases…"
+              value={leaseList.query}
+              onChange={(event) => leaseList.setQuery(event.target.value)}
+            />
+            <Select
+              value={leaseList.sort || "createdAt"}
+              onValueChange={(value) => leaseList.setSort(value)}
+            >
+              <SelectTrigger className="h-8 w-36">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="createdAt">created</SelectItem>
+                <SelectItem value="expiresAt">expires</SelectItem>
+                <SelectItem value="username">username</SelectItem>
+                <SelectItem value="configName">configuration</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+        </div>
         <Card className="overflow-hidden py-0">
           <Table>
             <TableHeader>
@@ -376,7 +443,7 @@ export function DynamicView({ project }: { project: ProjectDto; canManage: boole
               </TableRow>
             </TableHeader>
             <TableBody>
-              {leasePagination.pageItems.map((lease) => (
+              {leaseList.items.map((lease) => (
                 <TableRow key={lease.id}>
                   <TableCell>{lease.configName}</TableCell>
                   <TableCell>
@@ -414,25 +481,16 @@ export function DynamicView({ project }: { project: ProjectDto; canManage: boole
                   </TableCell>
                 </TableRow>
               ))}
-              {leases.length === 0 && (
+              {leaseList.total === 0 && (
                 <TableRow>
                   <TableCell colSpan={6} className="py-8 text-center text-muted-foreground">
-                    No leases yet.
+                    {leaseList.query ? "No matching leases." : "No leases yet."}
                   </TableCell>
                 </TableRow>
               )}
             </TableBody>
           </Table>
-          <Pagination
-            page={leasePagination.page}
-            pageSize={leasePagination.pageSize}
-            total={leasePagination.total}
-            totalPages={leasePagination.totalPages}
-            rangeStart={leasePagination.rangeStart}
-            rangeEnd={leasePagination.rangeEnd}
-            onPageChange={leasePagination.setPage}
-            onPageSizeChange={leasePagination.setPageSize}
-          />
+          <Pagination {...leaseList.pagination} />
         </Card>
       </div>
 

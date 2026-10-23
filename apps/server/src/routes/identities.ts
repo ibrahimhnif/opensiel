@@ -7,6 +7,7 @@ import { badRequest, forbidden, notFound, parse } from "../errors.js";
 import { randomToken, sha256 } from "../crypto.js";
 import { environments, identities, identityScopes } from "../db/schema.js";
 import { writeAudit } from "../audit.js";
+import { paginate, paginationSchema, sortRows } from "../pagination.js";
 import type { Deps } from "../types.js";
 
 function identityDto(identity: typeof identities.$inferSelect, environmentIds: string[]) {
@@ -44,26 +45,51 @@ export function registerIdentityRoutes(app: FastifyInstance, deps: Deps): void {
     if (actor.type === "machine") throw forbidden("a user session is required");
     const { projectId } = request.params as { projectId: string };
     const project = await loadProject(deps, actor, projectId);
+    const query = parse(paginationSchema, request.query);
 
-    const rows = await deps.db
+    const allRows = await deps.db
       .select()
       .from(identities)
       .where(eq(identities.projectId, project.id))
       .orderBy(identities.createdAt);
 
-    if (rows.length === 0) return { identities: [] };
+    const needle = query.q?.toLowerCase();
+    const filtered = needle
+      ? allRows.filter(
+          (row) =>
+            row.name.toLowerCase().includes(needle) ||
+            row.clientId.toLowerCase().includes(needle) ||
+            row.role.toLowerCase().includes(needle),
+        )
+      : allRows;
+    const sorted = sortRows(filtered, query, {
+      name: (row) => row.name,
+      role: (row) => row.role,
+      createdAt: (row) => row.createdAt.getTime(),
+      revokedAt: (row) => row.revokedAt?.getTime() ?? null,
+    });
+    const page = paginate(sorted, query);
+    if (page.items.length === 0) {
+      return {
+        identities: [],
+        total: page.total,
+        limit: page.limit,
+        offset: page.offset,
+      };
+    }
+
     const scopes = await deps.db
       .select()
       .from(identityScopes)
       .where(
         inArray(
           identityScopes.identityId,
-          rows.map((row) => row.id),
+          page.items.map((row) => row.id),
         ),
       );
 
     return {
-      identities: rows.map((identity) =>
+      identities: page.items.map((identity) =>
         identityDto(
           identity,
           scopes
@@ -71,6 +97,9 @@ export function registerIdentityRoutes(app: FastifyInstance, deps: Deps): void {
             .map((scope) => scope.environmentId),
         ),
       ),
+      total: page.total,
+      limit: page.limit,
+      offset: page.offset,
     };
   });
 

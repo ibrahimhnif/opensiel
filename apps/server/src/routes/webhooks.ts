@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { and, eq } from "drizzle-orm";
+import { and, asc, count, desc, eq, ilike } from "drizzle-orm";
 import type { FastifyInstance } from "fastify";
 import type { WebhookDto } from "@opensiel/shared";
 import { createWebhookSchema, updateWebhookSchema } from "@opensiel/shared";
@@ -10,6 +10,7 @@ import { webhooks } from "../db/schema.js";
 import type { WebhookRow } from "../db/schema.js";
 import { deliverToWebhook, encryptWebhookSecret, generateWebhookSecret } from "../webhooks.js";
 import { writeAudit } from "../audit.js";
+import { paginationSchema } from "../pagination.js";
 import type { Deps } from "../types.js";
 
 function webhookDto(webhook: WebhookRow): WebhookDto {
@@ -32,14 +33,37 @@ export function registerWebhookRoutes(app: FastifyInstance, deps: Deps): void {
     assertCanAdmin(actor);
     const { projectId } = request.params as { projectId: string };
     const project = await loadProject(deps, actor, projectId);
+    const query = parse(paginationSchema, request.query);
+
+    const conditions = [eq(webhooks.projectId, project.id)];
+    if (query.q) conditions.push(ilike(webhooks.url, `%${query.q}%`));
+
+    const totalRows = await deps.db
+      .select({ total: count() })
+      .from(webhooks)
+      .where(and(...conditions));
+    const direction = query.order === "desc" ? desc : asc;
+    const orderColumn =
+      query.sort === "url"
+        ? webhooks.url
+        : query.sort === "lastDeliveryAt"
+          ? webhooks.lastDeliveryAt
+          : webhooks.createdAt;
 
     const rows = await deps.db
       .select()
       .from(webhooks)
-      .where(eq(webhooks.projectId, project.id))
-      .orderBy(webhooks.createdAt);
+      .where(and(...conditions))
+      .orderBy(direction(orderColumn))
+      .limit(query.limit ?? 25)
+      .offset(query.offset ?? 0);
 
-    return { webhooks: rows.map(webhookDto) };
+    return {
+      webhooks: rows.map(webhookDto),
+      total: Number(totalRows[0]?.total ?? 0),
+      limit: query.limit,
+      offset: query.offset,
+    };
   });
 
   app.post("/api/projects/:projectId/webhooks", async (request, reply) => {

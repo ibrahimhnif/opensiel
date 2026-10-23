@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { and, count, desc, eq, inArray } from "drizzle-orm";
+import { and, asc, count, desc, eq, ilike, inArray, or } from "drizzle-orm";
 import type { ChangeRequestAction, ChangeRequestDto, ChangeRequestStatus } from "@opensiel/shared";
 import { decryptValue, encryptValue } from "./crypto.js";
 import { projectDek } from "./access.js";
@@ -101,20 +101,49 @@ export async function createChangeRequest(
 export async function listChangeRequests(
   deps: Deps,
   projectId: string,
-  options: { status?: ChangeRequestStatus; requestedById?: string } = {},
-): Promise<ChangeRequestDto[]> {
+  options: {
+    status?: ChangeRequestStatus;
+    requestedById?: string;
+    action?: ChangeRequestAction;
+    q?: string;
+    sort?: "requestedAt" | "status";
+    order?: "asc" | "desc";
+    limit?: number;
+    offset?: number;
+  } = {},
+): Promise<{ requests: ChangeRequestDto[]; total: number }> {
   const conditions = [eq(changeRequests.projectId, projectId)];
   if (options.status) conditions.push(eq(changeRequests.status, options.status));
   if (options.requestedById)
     conditions.push(eq(changeRequests.requestedById, options.requestedById));
+  if (options.action) conditions.push(eq(changeRequests.action, options.action));
+  if (options.q) {
+    const needle = `%${options.q}%`;
+    const search = or(
+      ilike(changeRequests.secretKey, needle),
+      ilike(changeRequests.path, needle),
+      ilike(changeRequests.requestedByName, needle),
+    );
+    if (search) conditions.push(search);
+  }
 
+  const totalRows = await deps.db
+    .select({ total: count() })
+    .from(changeRequests)
+    .where(and(...conditions));
+  const total = Number(totalRows[0]?.total ?? 0);
+
+  const direction = options.order === "asc" ? asc : desc;
   const rows = await deps.db
     .select()
     .from(changeRequests)
     .where(and(...conditions))
-    .orderBy(desc(changeRequests.requestedAt))
-    .limit(100);
-  if (rows.length === 0) return [];
+    .orderBy(
+      direction(options.sort === "status" ? changeRequests.status : changeRequests.requestedAt),
+    )
+    .limit(options.limit ?? 100)
+    .offset(options.offset ?? 0);
+  if (rows.length === 0) return { requests: [], total };
 
   const envRows = await deps.db
     .select()
@@ -133,7 +162,7 @@ export async function listChangeRequests(
       ),
     );
 
-  return rows.map((row) => {
+  const requests = rows.map((row) => {
     const environment = envById.get(row.environmentId);
     const approvals = approvalRows.filter((entry) => entry.approval.requestId === row.id);
     return requestDto(
@@ -143,6 +172,8 @@ export async function listChangeRequests(
       environment?.requiredApprovals ?? 1,
     );
   });
+
+  return { requests, total };
 }
 
 export async function decideChangeRequest(
