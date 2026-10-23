@@ -161,7 +161,8 @@ an audit entry records the approver.
 ## List APIs
 
 Collection endpoints (`/secrets`, `/audit`, `/identities`, `/webhooks`, dynamic secrets,
-change requests, members, invites, secret versions, and scanning) paginate on the server:
+rotations, syncs, change requests, members, invites, roles, grants, secret versions, and
+scanning) paginate on the server:
 
 - `limit` (1–200, default 25), `offset` (default 0)
 - `q` for a server-side text filter

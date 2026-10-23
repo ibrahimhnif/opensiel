@@ -2332,6 +2332,23 @@ if (!databaseUrl) {
     expect(auditBody.logs).toHaveLength(1);
     expect(auditBody.limit).toBe(1);
     expect(auditBody.total).toBeGreaterThanOrEqual(4);
+
+    const role = await app.inject({
+      method: "POST",
+      url: "/api/org/roles",
+      headers: auth,
+      payload: { name: `Paging ${Date.now()}`, permissions: ["secret:read"] },
+    });
+    expect(role.statusCode).toBe(201);
+    const roles = await app.inject({
+      method: "GET",
+      url: "/api/org/roles?limit=1&offset=0&sort=name&order=asc",
+      headers: auth,
+    });
+    const rolesBody = roles.json<{ roles: unknown[]; total: number; limit: number }>();
+    expect(rolesBody.roles).toHaveLength(1);
+    expect(rolesBody.limit).toBe(1);
+    expect(rolesBody.total).toBeGreaterThanOrEqual(1);
   });
 
   it("invites teammates into the same organization", async () => {
