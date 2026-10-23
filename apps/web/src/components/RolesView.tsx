@@ -19,6 +19,9 @@ import { Input } from "./ui/input";
 import { Label } from "./ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "./ui/select";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "./ui/table";
+import { Pagination } from "./Pagination";
+import { useServerList } from "../hooks/useServerList";
+import { notify } from "../lib/notify";
 import { useToastMessage } from "../hooks/useToastMessage";
 import { useConfirm } from "./ConfirmProvider";
 
@@ -52,10 +55,8 @@ interface Member {
 
 export function RolesView({ project }: { project: ProjectDto }) {
   const confirm = useConfirm();
-  const [roles, setRoles] = useState<CustomRole[]>([]);
-  const [grants, setGrants] = useState<Grant[]>([]);
   const [members, setMembers] = useState<Member[]>([]);
-  const [loading, setLoading] = useState(false);
+  const [allRoles, setAllRoles] = useState<CustomRole[]>([]);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
@@ -74,28 +75,67 @@ export function RolesView({ project }: { project: ProjectDto }) {
   useToastMessage("success", notice, setNotice);
   useToastMessage("error", error, setError);
 
-  const load = useCallback(async () => {
-    setLoading(true);
+  const roleList = useServerList<CustomRole>({
+    key: "roles",
+    pageSize: 10,
+    initialSort: "name",
+    initialOrder: "asc",
+    fetcher: async ({ limit, offset, q, sort, order }) => {
+      const params = new URLSearchParams({
+        limit: String(limit),
+        offset: String(offset),
+        order,
+      });
+      if (q) params.set("q", q);
+      if (sort) params.set("sort", sort);
+      const result = await api.get<{ roles: CustomRole[]; total: number }>(
+        `/api/org/roles?${params}`,
+      );
+      return { items: result.roles, total: result.total };
+    },
+  });
+
+  const grantList = useServerList<Grant>({
+    key: "grants",
+    pageSize: 10,
+    initialSort: "createdAt",
+    initialOrder: "desc",
+    fetcher: async ({ limit, offset, q, sort, order }) => {
+      const params = new URLSearchParams({
+        limit: String(limit),
+        offset: String(offset),
+        order,
+      });
+      if (q) params.set("q", q);
+      if (sort) params.set("sort", sort);
+      const result = await api.get<{ grants: Grant[]; total: number }>(`/api/org/grants?${params}`);
+      return { items: result.grants, total: result.total };
+    },
+  });
+
+  useEffect(() => {
+    if (roleList.error) notify.error(roleList.error);
+  }, [roleList.error]);
+  useEffect(() => {
+    if (grantList.error) notify.error(grantList.error);
+  }, [grantList.error]);
+
+  const loadFormData = useCallback(async () => {
     try {
-      const [roleResult, grantResult, orgResult] = await Promise.all([
-        api.get<{ roles: CustomRole[] }>("/api/org/roles"),
-        api.get<{ grants: Grant[] }>("/api/org/grants"),
-        api.get<{ members: Member[] }>("/api/org"),
+      const [orgResult, roleResult] = await Promise.all([
+        api.get<{ members: Member[] }>("/api/org?limit=200&offset=0"),
+        api.get<{ roles: CustomRole[] }>("/api/org/roles?limit=200&offset=0"),
       ]);
-      setRoles(roleResult.roles);
-      setGrants(grantResult.grants);
       setMembers(orgResult.members);
-      setError("");
+      setAllRoles(roleResult.roles);
     } catch (err) {
       setError(errorMessage(err));
-    } finally {
-      setLoading(false);
     }
   }, []);
 
   useEffect(() => {
-    void load();
-  }, [load]);
+    void loadFormData();
+  }, [loadFormData]);
 
   function togglePermission(permission: string, checked: boolean) {
     setPermissions((current) =>
@@ -115,7 +155,8 @@ export function RolesView({ project }: { project: ProjectDto }) {
       setRoleName("");
       setPermissions([]);
       setNotice("role created");
-      await load();
+      roleList.reload();
+      void loadFormData();
     } catch (err) {
       setError(errorMessage(err));
     } finally {
@@ -137,7 +178,9 @@ export function RolesView({ project }: { project: ProjectDto }) {
     try {
       await api.del(`/api/org/roles/${role.id}`);
       setNotice(`deleted role ${role.name}`);
-      await load();
+      roleList.reload();
+      grantList.reload();
+      void loadFormData();
     } catch (err) {
       setError(errorMessage(err));
     } finally {
@@ -176,7 +219,7 @@ export function RolesView({ project }: { project: ProjectDto }) {
       setGrantRole("");
       setGrantExpires("");
       setNotice("grant created");
-      await load();
+      grantList.reload();
     } catch (err) {
       setError(errorMessage(err));
     } finally {
@@ -198,7 +241,7 @@ export function RolesView({ project }: { project: ProjectDto }) {
     try {
       await api.del(`/api/org/grants/${grant.id}`);
       setNotice("grant revoked");
-      await load();
+      grantList.reload();
     } catch (err) {
       setError(errorMessage(err));
     } finally {
@@ -225,8 +268,16 @@ export function RolesView({ project }: { project: ProjectDto }) {
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
-          <Button variant="outline" size="sm" onClick={() => void load()} disabled={loading}>
-            <RefreshCw className={loading ? "size-4 animate-spin" : "size-4"} />
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => {
+              roleList.reload();
+              grantList.reload();
+              void loadFormData();
+            }}
+          >
+            <RefreshCw className="size-4" />
             refresh
           </Button>
           <Button size="sm" onClick={() => setRoleOpen(true)}>
@@ -239,6 +290,26 @@ export function RolesView({ project }: { project: ProjectDto }) {
       </div>
 
       <Card className="overflow-hidden py-0">
+        <div className="flex flex-wrap items-center justify-between gap-2 border-b px-4 py-2">
+          <span className="text-sm font-medium">Custom roles</span>
+          <div className="flex items-center gap-2">
+            <Input
+              className="h-8 w-40"
+              placeholder="Search roles…"
+              value={roleList.query}
+              onChange={(event) => roleList.setQuery(event.target.value)}
+            />
+            <Select value={roleList.sort || "name"} onValueChange={roleList.setSort}>
+              <SelectTrigger className="h-8 w-28">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="name">name</SelectItem>
+                <SelectItem value="createdAt">created</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+        </div>
         <Table>
           <TableHeader>
             <TableRow>
@@ -248,7 +319,7 @@ export function RolesView({ project }: { project: ProjectDto }) {
             </TableRow>
           </TableHeader>
           <TableBody>
-            {roles.map((role) => (
+            {roleList.items.map((role) => (
               <TableRow key={role.id}>
                 <TableCell className="font-medium">{role.name}</TableCell>
                 <TableCell>
@@ -273,18 +344,41 @@ export function RolesView({ project }: { project: ProjectDto }) {
                 </TableCell>
               </TableRow>
             ))}
-            {roles.length === 0 && (
+            {roleList.total === 0 && (
               <TableRow>
                 <TableCell colSpan={3} className="py-8 text-center text-sm text-muted-foreground">
-                  No custom roles yet.
+                  {roleList.query ? "No matching roles." : "No custom roles yet."}
                 </TableCell>
               </TableRow>
             )}
           </TableBody>
         </Table>
+        <Pagination {...roleList.pagination} />
       </Card>
 
       <Card className="overflow-hidden py-0">
+        <div className="flex flex-wrap items-center justify-between gap-2 border-b px-4 py-2">
+          <span className="text-sm font-medium">Grants</span>
+          <div className="flex items-center gap-2">
+            <Input
+              className="h-8 w-40"
+              placeholder="Search grants…"
+              value={grantList.query}
+              onChange={(event) => grantList.setQuery(event.target.value)}
+            />
+            <Select value={grantList.sort || "createdAt"} onValueChange={grantList.setSort}>
+              <SelectTrigger className="h-8 w-32">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="createdAt">created</SelectItem>
+                <SelectItem value="userName">member</SelectItem>
+                <SelectItem value="roleName">role</SelectItem>
+                <SelectItem value="expiresAt">expires</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+        </div>
         <Table>
           <TableHeader>
             <TableRow>
@@ -296,7 +390,7 @@ export function RolesView({ project }: { project: ProjectDto }) {
             </TableRow>
           </TableHeader>
           <TableBody>
-            {grants.map((grant) => (
+            {grantList.items.map((grant) => (
               <TableRow key={grant.id}>
                 <TableCell>{grant.userName}</TableCell>
                 <TableCell>
@@ -321,15 +415,16 @@ export function RolesView({ project }: { project: ProjectDto }) {
                 </TableCell>
               </TableRow>
             ))}
-            {grants.length === 0 && (
+            {grantList.total === 0 && (
               <TableRow>
                 <TableCell colSpan={5} className="py-8 text-center text-sm text-muted-foreground">
-                  No grants yet.
+                  {grantList.query ? "No matching grants." : "No grants yet."}
                 </TableCell>
               </TableRow>
             )}
           </TableBody>
         </Table>
+        <Pagination {...grantList.pagination} />
       </Card>
 
       <Dialog open={roleOpen} onOpenChange={setRoleOpen}>
@@ -414,7 +509,7 @@ export function RolesView({ project }: { project: ProjectDto }) {
                     <SelectValue placeholder="select role" />
                   </SelectTrigger>
                   <SelectContent>
-                    {roles.map((role) => (
+                    {allRoles.map((role) => (
                       <SelectItem key={role.id} value={role.id}>
                         {role.name}
                       </SelectItem>

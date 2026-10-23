@@ -27,6 +27,7 @@ import { environments, secretSyncs } from "../db/schema.js";
 import type { SecretSyncRow } from "../db/schema.js";
 import { writeAudit } from "../audit.js";
 import { encryptSyncConfig, runSecretSync } from "../sync.js";
+import { contains, paginate, paginationSchema, sortRows } from "../pagination.js";
 import type { Deps } from "../types.js";
 
 function syncDto(sync: SecretSyncRow, environmentSlug: string): SecretSyncDto {
@@ -71,6 +72,7 @@ export function registerSyncRoutes(app: FastifyInstance, deps: Deps): void {
     const { projectId } = request.params as { projectId: string };
     const project = await loadProject(deps, actor, projectId);
     const envs = await envSlugMap(deps, project.id);
+    const query = parse(paginationSchema, request.query);
 
     const rows = await deps.db
       .select()
@@ -78,8 +80,30 @@ export function registerSyncRoutes(app: FastifyInstance, deps: Deps): void {
       .where(eq(secretSyncs.projectId, project.id))
       .orderBy(secretSyncs.createdAt);
 
+    const needle = query.q?.toLowerCase();
+    const filtered = needle
+      ? rows.filter(
+          (sync) =>
+            contains(sync.provider, needle) ||
+            contains(sync.path, needle) ||
+            contains(envs.get(sync.environmentId), needle),
+        )
+      : rows;
+    const sorted = sortRows(filtered, query, {
+      provider: (sync) => sync.provider,
+      path: (sync) => sync.path,
+      environment: (sync) => envs.get(sync.environmentId) ?? "",
+      nextRunAt: (sync) => sync.nextRunAt.getTime(),
+      lastRunAt: (sync) => sync.lastRunAt?.getTime() ?? null,
+      createdAt: (sync) => sync.createdAt.getTime(),
+    });
+    const page = paginate(sorted, query);
+
     return {
-      syncs: rows.map((sync) => syncDto(sync, envs.get(sync.environmentId) ?? "unknown")),
+      syncs: page.items.map((sync) => syncDto(sync, envs.get(sync.environmentId) ?? "unknown")),
+      total: page.total,
+      limit: page.limit,
+      offset: page.offset,
     };
   });
 

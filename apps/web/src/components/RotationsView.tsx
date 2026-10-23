@@ -1,6 +1,6 @@
-import { useCallback, useEffect, useState } from "react";
+import { useEffect, useState } from "react";
 import type { ProjectDto } from "@opensiel/shared";
-import { Loader2, Play, Plus, RefreshCw, Trash2 } from "lucide-react";
+import { Loader2, Play, Plus, RefreshCw, Search, Trash2 } from "lucide-react";
 import { api, errorMessage } from "../api";
 import { Badge } from "./ui/badge";
 import { Button } from "./ui/button";
@@ -17,6 +17,9 @@ import { Input } from "./ui/input";
 import { Label } from "./ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "./ui/select";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "./ui/table";
+import { Pagination } from "./Pagination";
+import { useServerList } from "../hooks/useServerList";
+import { notify } from "../lib/notify";
 import { useToastMessage } from "../hooks/useToastMessage";
 import { useConfirm } from "./ConfirmProvider";
 
@@ -72,8 +75,6 @@ function emptyForm(env: string): FormState {
 
 export function RotationsView({ project, canManage }: { project: ProjectDto; canManage: boolean }) {
   const confirm = useConfirm();
-  const [rotations, setRotations] = useState<Rotation[]>([]);
-  const [loading, setLoading] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
@@ -84,24 +85,29 @@ export function RotationsView({ project, canManage }: { project: ProjectDto; can
   useToastMessage("success", notice, setNotice);
   useToastMessage("error", error, setError);
 
-  const load = useCallback(async () => {
-    setLoading(true);
-    try {
-      const result = await api.get<{ rotations: Rotation[] }>(
-        `/api/projects/${project.id}/rotations`,
+  const list = useServerList<Rotation>({
+    key: project.id,
+    pageSize: 10,
+    initialSort: "createdAt",
+    initialOrder: "desc",
+    fetcher: async ({ limit, offset, q, sort, order }) => {
+      const params = new URLSearchParams({
+        limit: String(limit),
+        offset: String(offset),
+        order,
+      });
+      if (q) params.set("q", q);
+      if (sort) params.set("sort", sort);
+      const result = await api.get<{ rotations: Rotation[]; total: number }>(
+        `/api/projects/${project.id}/rotations?${params}`,
       );
-      setRotations(result.rotations);
-      setError("");
-    } catch (err) {
-      setError(errorMessage(err));
-    } finally {
-      setLoading(false);
-    }
-  }, [project.id]);
+      return { items: result.rotations, total: result.total };
+    },
+  });
 
   useEffect(() => {
-    void load();
-  }, [load]);
+    if (list.error) notify.error(list.error);
+  }, [list.error]);
 
   async function create(event: React.FormEvent) {
     event.preventDefault();
@@ -142,7 +148,7 @@ export function RotationsView({ project, canManage }: { project: ProjectDto; can
       setOpen(false);
       setForm(emptyForm(form.env));
       setNotice("rotation policy created");
-      await load();
+      list.reload();
     } catch (err) {
       setError(errorMessage(err));
     } finally {
@@ -156,7 +162,7 @@ export function RotationsView({ project, canManage }: { project: ProjectDto; can
       await api.patch(`/api/projects/${project.id}/rotations/${rotation.id}`, {
         enabled: !rotation.enabled,
       });
-      await load();
+      list.reload();
     } catch (err) {
       setError(errorMessage(err));
     } finally {
@@ -176,7 +182,7 @@ export function RotationsView({ project, canManage }: { project: ProjectDto; can
           ? `rotated ${rotation.key}`
           : `rotation failed: ${result.result.error ?? "unknown error"}`,
       );
-      await load();
+      list.reload();
     } catch (err) {
       setError(errorMessage(err));
     } finally {
@@ -198,7 +204,7 @@ export function RotationsView({ project, canManage }: { project: ProjectDto; can
     try {
       await api.del(`/api/projects/${project.id}/rotations/${rotation.id}`);
       setNotice(`deleted rotation for ${rotation.key}`);
-      await load();
+      list.reload();
     } catch (err) {
       setError(errorMessage(err));
     } finally {
@@ -215,9 +221,36 @@ export function RotationsView({ project, canManage }: { project: ProjectDto; can
             Rotate static credentials with a grace window before the old one is revoked.
           </p>
         </div>
-        <div className="flex items-center gap-2">
-          <Button variant="outline" size="sm" onClick={() => void load()} disabled={loading}>
-            <RefreshCw className={loading ? "size-4 animate-spin" : "size-4"} />
+        <div className="flex flex-wrap items-center gap-2">
+          <div className="relative w-full max-w-xs">
+            <Search className="text-muted-foreground absolute top-1/2 left-2.5 size-4 -translate-y-1/2" />
+            <Input
+              className="pl-8"
+              placeholder="Search key, provider, env…"
+              value={list.query}
+              onChange={(event) => list.setQuery(event.target.value)}
+            />
+          </div>
+          <Select value={list.sort || "createdAt"} onValueChange={list.setSort}>
+            <SelectTrigger className="h-8 w-36">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="createdAt">created</SelectItem>
+              <SelectItem value="key">key</SelectItem>
+              <SelectItem value="provider">provider</SelectItem>
+              <SelectItem value="nextRunAt">next run</SelectItem>
+            </SelectContent>
+          </Select>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => list.setOrder(list.order === "asc" ? "desc" : "asc")}
+          >
+            {list.order}
+          </Button>
+          <Button variant="outline" size="sm" onClick={() => list.reload()} disabled={list.loading}>
+            <RefreshCw className={list.loading ? "size-4 animate-spin" : "size-4"} />
             refresh
           </Button>
           {canManage && (
@@ -241,7 +274,7 @@ export function RotationsView({ project, canManage }: { project: ProjectDto; can
             </TableRow>
           </TableHeader>
           <TableBody>
-            {rotations.map((rotation) => (
+            {list.items.map((rotation) => (
               <TableRow key={rotation.id}>
                 <TableCell className="whitespace-normal">
                   <code className="bg-transparent p-0 text-sm">{rotation.key}</code>
@@ -315,15 +348,16 @@ export function RotationsView({ project, canManage }: { project: ProjectDto; can
                 </TableCell>
               </TableRow>
             ))}
-            {rotations.length === 0 && (
+            {list.total === 0 && (
               <TableRow>
                 <TableCell colSpan={6} className="py-10 text-center text-sm text-muted-foreground">
-                  No rotation policies yet.
+                  {list.query ? "No matching rotation policies." : "No rotation policies yet."}
                 </TableCell>
               </TableRow>
             )}
           </TableBody>
         </Table>
+        <Pagination {...list.pagination} />
       </Card>
 
       <Dialog open={open} onOpenChange={setOpen}>

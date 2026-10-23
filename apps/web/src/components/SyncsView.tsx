@@ -1,6 +1,6 @@
-import { useCallback, useEffect, useState } from "react";
+import { useEffect, useState } from "react";
 import type { ProjectDto } from "@opensiel/shared";
-import { Loader2, Play, Plus, RefreshCw, Trash2 } from "lucide-react";
+import { Loader2, Play, Plus, RefreshCw, Search, Trash2 } from "lucide-react";
 import { api, errorMessage } from "../api";
 import { Badge } from "./ui/badge";
 import { Button } from "./ui/button";
@@ -18,6 +18,9 @@ import { Label } from "./ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "./ui/select";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "./ui/table";
 import { Textarea } from "./ui/textarea";
+import { Pagination } from "./Pagination";
+import { useServerList } from "../hooks/useServerList";
+import { notify } from "../lib/notify";
 import { useToastMessage } from "../hooks/useToastMessage";
 import { useConfirm } from "./ConfirmProvider";
 
@@ -63,8 +66,6 @@ const CONFIG_TEMPLATES: Record<string, string> = {
 
 export function SyncsView({ project, canManage }: { project: ProjectDto; canManage: boolean }) {
   const confirm = useConfirm();
-  const [syncs, setSyncs] = useState<Sync[]>([]);
-  const [loading, setLoading] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
@@ -78,21 +79,29 @@ export function SyncsView({ project, canManage }: { project: ProjectDto; canMana
   const [intervalSeconds, setIntervalSeconds] = useState("300");
   const [configText, setConfigText] = useState(CONFIG_TEMPLATES.webhook);
 
-  const load = useCallback(async () => {
-    setLoading(true);
-    try {
-      const result = await api.get<{ syncs: Sync[] }>(`/api/projects/${project.id}/syncs`);
-      setSyncs(result.syncs);
-    } catch (err) {
-      setError(errorMessage(err));
-    } finally {
-      setLoading(false);
-    }
-  }, [project.id]);
+  const list = useServerList<Sync>({
+    key: project.id,
+    pageSize: 10,
+    initialSort: "createdAt",
+    initialOrder: "desc",
+    fetcher: async ({ limit, offset, q, sort, order }) => {
+      const params = new URLSearchParams({
+        limit: String(limit),
+        offset: String(offset),
+        order,
+      });
+      if (q) params.set("q", q);
+      if (sort) params.set("sort", sort);
+      const result = await api.get<{ syncs: Sync[]; total: number }>(
+        `/api/projects/${project.id}/syncs?${params}`,
+      );
+      return { items: result.syncs, total: result.total };
+    },
+  });
 
   useEffect(() => {
-    void load();
-  }, [load]);
+    if (list.error) notify.error(list.error);
+  }, [list.error]);
 
   async function create(event: React.FormEvent) {
     event.preventDefault();
@@ -116,7 +125,7 @@ export function SyncsView({ project, canManage }: { project: ProjectDto; canMana
       });
       setOpen(false);
       setNotice("sync created");
-      await load();
+      list.reload();
     } catch (err) {
       setError(errorMessage(err));
     } finally {
@@ -135,7 +144,7 @@ export function SyncsView({ project, canManage }: { project: ProjectDto; canMana
           ? `synced ${result.result.count ?? 0} secret(s)`
           : `sync failed: ${result.result.error ?? "unknown error"}`,
       );
-      await load();
+      list.reload();
     } catch (err) {
       setError(errorMessage(err));
     } finally {
@@ -149,7 +158,7 @@ export function SyncsView({ project, canManage }: { project: ProjectDto; canMana
       await api.patch(`/api/projects/${project.id}/syncs/${sync.id}`, {
         enabled: !sync.enabled,
       });
-      await load();
+      list.reload();
     } catch (err) {
       setError(errorMessage(err));
     } finally {
@@ -172,7 +181,7 @@ export function SyncsView({ project, canManage }: { project: ProjectDto; canMana
     try {
       await api.del(`/api/projects/${project.id}/syncs/${sync.id}`);
       setNotice("sync deleted");
-      await load();
+      list.reload();
     } catch (err) {
       setError(errorMessage(err));
     } finally {
@@ -189,9 +198,36 @@ export function SyncsView({ project, canManage }: { project: ProjectDto; canMana
             Push an environment to a cloud provider, CI, or a webhook on a schedule.
           </p>
         </div>
-        <div className="flex items-center gap-2">
-          <Button variant="outline" size="sm" onClick={() => void load()} disabled={loading}>
-            <RefreshCw className={loading ? "size-4 animate-spin" : "size-4"} />
+        <div className="flex flex-wrap items-center gap-2">
+          <div className="relative w-full max-w-xs">
+            <Search className="text-muted-foreground absolute top-1/2 left-2.5 size-4 -translate-y-1/2" />
+            <Input
+              className="pl-8"
+              placeholder="Search provider, env, path…"
+              value={list.query}
+              onChange={(event) => list.setQuery(event.target.value)}
+            />
+          </div>
+          <Select value={list.sort || "createdAt"} onValueChange={list.setSort}>
+            <SelectTrigger className="h-8 w-36">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="createdAt">created</SelectItem>
+              <SelectItem value="provider">provider</SelectItem>
+              <SelectItem value="environment">environment</SelectItem>
+              <SelectItem value="nextRunAt">next run</SelectItem>
+            </SelectContent>
+          </Select>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => list.setOrder(list.order === "asc" ? "desc" : "asc")}
+          >
+            {list.order}
+          </Button>
+          <Button variant="outline" size="sm" onClick={() => list.reload()} disabled={list.loading}>
+            <RefreshCw className={list.loading ? "size-4 animate-spin" : "size-4"} />
             refresh
           </Button>
           {canManage && (
@@ -214,7 +250,7 @@ export function SyncsView({ project, canManage }: { project: ProjectDto; canMana
             </TableRow>
           </TableHeader>
           <TableBody>
-            {syncs.map((sync) => (
+            {list.items.map((sync) => (
               <TableRow key={sync.id}>
                 <TableCell>
                   <Badge variant="outline">{sync.provider}</Badge>
@@ -279,15 +315,16 @@ export function SyncsView({ project, canManage }: { project: ProjectDto; canMana
                 </TableCell>
               </TableRow>
             ))}
-            {syncs.length === 0 && (
+            {list.total === 0 && (
               <TableRow>
                 <TableCell colSpan={5} className="py-10 text-center text-sm text-muted-foreground">
-                  No syncs yet.
+                  {list.query ? "No matching syncs." : "No syncs yet."}
                 </TableCell>
               </TableRow>
             )}
           </TableBody>
         </Table>
+        <Pagination {...list.pagination} />
       </Card>
 
       <Dialog open={open} onOpenChange={setOpen}>

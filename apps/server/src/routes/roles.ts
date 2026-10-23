@@ -15,6 +15,7 @@ import {
 } from "../db/schema.js";
 import type { CustomRoleRow, RoleGrantRow } from "../db/schema.js";
 import { writeAudit } from "../audit.js";
+import { contains, paginate, paginationSchema, sortRows } from "../pagination.js";
 import type { Deps } from "../types.js";
 
 function isUniqueViolation(error: unknown): boolean {
@@ -51,12 +52,27 @@ function grantDto(grant: RoleGrantRow, role: CustomRoleRow, user: { name: string
 export function registerRoleRoutes(app: FastifyInstance, deps: Deps): void {
   app.get("/api/org/roles", async (request) => {
     const actor = requireUser(await requireActor(deps, request));
+    const query = parse(paginationSchema, request.query);
     const rows = await deps.db
       .select()
       .from(customRoles)
       .where(eq(customRoles.orgId, actor.orgId))
       .orderBy(customRoles.name);
-    return { roles: rows.map(roleDto) };
+
+    const needle = query.q?.toLowerCase();
+    const filtered = needle ? rows.filter((row) => contains(row.name, needle)) : rows;
+    const sorted = sortRows(filtered, query, {
+      name: (row) => row.name,
+      createdAt: (row) => row.createdAt.getTime(),
+    });
+    const page = paginate(sorted, query);
+
+    return {
+      roles: page.items.map(roleDto),
+      total: page.total,
+      limit: page.limit,
+      offset: page.offset,
+    };
   });
 
   app.post("/api/org/roles", async (request, reply) => {
@@ -126,6 +142,7 @@ export function registerRoleRoutes(app: FastifyInstance, deps: Deps): void {
   app.get("/api/org/grants", async (request) => {
     const actor = requireUser(await requireActor(deps, request));
     assertCanAdmin(actor);
+    const query = parse(paginationSchema, request.query);
 
     const rows = await deps.db
       .select({ grant: roleGrants, role: customRoles, user: users })
@@ -135,8 +152,30 @@ export function registerRoleRoutes(app: FastifyInstance, deps: Deps): void {
       .where(eq(roleGrants.orgId, actor.orgId))
       .orderBy(roleGrants.createdAt);
 
+    const needle = query.q?.toLowerCase();
+    const filtered = needle
+      ? rows.filter(
+          (row) =>
+            contains(row.user.name, needle) ||
+            contains(row.user.email, needle) ||
+            contains(row.role.name, needle) ||
+            contains(row.grant.path, needle),
+        )
+      : rows;
+    const sorted = sortRows(filtered, query, {
+      userName: (row) => row.user.name,
+      roleName: (row) => row.role.name,
+      path: (row) => row.grant.path,
+      expiresAt: (row) => row.grant.expiresAt?.getTime() ?? null,
+      createdAt: (row) => row.grant.createdAt.getTime(),
+    });
+    const page = paginate(sorted, query);
+
     return {
-      grants: rows.map((row) => grantDto(row.grant, row.role, row.user)),
+      grants: page.items.map((row) => grantDto(row.grant, row.role, row.user)),
+      total: page.total,
+      limit: page.limit,
+      offset: page.offset,
     };
   });
 

@@ -21,6 +21,7 @@ import { environments, rotationPolicies } from "../db/schema.js";
 import type { RotationPolicyRow } from "../db/schema.js";
 import { writeAudit } from "../audit.js";
 import { encryptRotationConfig, runRotation } from "../rotation.js";
+import { contains, paginate, paginationSchema, sortRows } from "../pagination.js";
 import type { Deps } from "../types.js";
 
 function isUniqueViolation(error: unknown): boolean {
@@ -63,6 +64,7 @@ export function registerRotationRoutes(app: FastifyInstance, deps: Deps): void {
     const { projectId } = request.params as { projectId: string };
     const project = await loadProject(deps, actor, projectId);
     const envs = await envSlugMap(deps, project.id);
+    const query = parse(paginationSchema, request.query);
 
     const rows = await deps.db
       .select()
@@ -70,10 +72,33 @@ export function registerRotationRoutes(app: FastifyInstance, deps: Deps): void {
       .where(eq(rotationPolicies.projectId, project.id))
       .orderBy(rotationPolicies.createdAt);
 
+    const needle = query.q?.toLowerCase();
+    const filtered = needle
+      ? rows.filter(
+          (policy) =>
+            contains(policy.secretKey, needle) ||
+            contains(policy.provider, needle) ||
+            contains(policy.path, needle) ||
+            contains(envs.get(policy.environmentId), needle),
+        )
+      : rows;
+    const sorted = sortRows(filtered, query, {
+      key: (policy) => policy.secretKey,
+      provider: (policy) => policy.provider,
+      path: (policy) => policy.path,
+      nextRunAt: (policy) => policy.nextRunAt.getTime(),
+      lastRunAt: (policy) => policy.lastRunAt?.getTime() ?? null,
+      createdAt: (policy) => policy.createdAt.getTime(),
+    });
+    const page = paginate(sorted, query);
+
     return {
-      rotations: rows.map((policy) =>
+      rotations: page.items.map((policy) =>
         policyDto(policy, envs.get(policy.environmentId) ?? "unknown"),
       ),
+      total: page.total,
+      limit: page.limit,
+      offset: page.offset,
     };
   });
 
