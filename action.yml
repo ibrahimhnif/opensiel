@@ -1,0 +1,72 @@
+name: opensiel secrets
+description: Fetch secrets from opensiel and export them as environment variables.
+author: opensiel contributors
+
+branding:
+  icon: lock
+  color: green
+
+inputs:
+  api-url:
+    description: Base URL of the opensiel instance, for example https://opensiel.example.com
+    required: true
+  project:
+    description: Project ID or slug.
+    required: true
+  env:
+    description: Environment slug, for example dev, staging, or prod.
+    required: true
+  client-id:
+    description: Machine identity client ID. Required unless token is set.
+    required: false
+  client-secret:
+    description: Machine identity client secret. Required unless token is set.
+    required: false
+  token:
+    description: Existing session or machine token. Skips the client-credentials exchange.
+    required: false
+  output-file:
+    description: Write a dotenv file to this path. Empty means no file.
+    required: false
+    default: ""
+  export-env:
+    description: Export secrets to GITHUB_ENV for later steps.
+    required: false
+    default: "true"
+  mask:
+    description: Mask secret values in the workflow log.
+    required: false
+    default: "true"
+  command:
+    description: Optional command to run with the secrets in its environment.
+    required: false
+    default: ""
+
+outputs:
+  env-file:
+    description: Absolute path of the dotenv file, empty when output-file is not set.
+    value: ${{ steps.opensiel.outputs.env-file }}
+  project-id:
+    description: Resolved project ID.
+    value: ${{ steps.opensiel.outputs.project-id }}
+  secret-count:
+    description: Number of exported secrets.
+    value: ${{ steps.opensiel.outputs.secret-count }}
+
+runs:
+  using: composite
+  steps:
+    - id: opensiel
+      shell: bash
+      env:
+        OPENSIEL_API_URL: ${{ inputs.api-url }}
+        OPENSIEL_PROJECT: ${{ inputs.project }}
+        OPENSIEL_ENV: ${{ inputs.env }}
+        OPENSIEL_CLIENT_ID: ${{ inputs.client-id }}
+        OPENSIEL_CLIENT_SECRET: ${{ inputs.client-secret }}
+        OPENSIEL_TOKEN: ${{ inputs.token }}
+        OPENSIEL_OUTPUT_FILE: ${{ inputs.output-file }}
+        OPENSIEL_EXPORT_ENV: ${{ inputs.export-env }}
+        OPENSIEL_MASK: ${{ inputs.mask }}
+        OPENSIEL_COMMAND: ${{ inputs.command }}
+      run: node "${{ github.action_path }}/scripts/opensiel-action.mjs"

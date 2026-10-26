@@ -52,9 +52,10 @@ returns `409`.
 
 ### Is data encrypted end to end?
 
-No. Secrets are encrypted at rest with AES-256-GCM envelope encryption; the server decrypts
-values to serve authorized clients over TLS. The database alone does not reveal secrets, but
-someone with the master key and database can.
+By default, no: secrets use AES-256-GCM envelope encryption and the server decrypts values for
+authorized clients over TLS. You can opt a project into `e2ee` while it is empty; then keys stay
+client-side, the server stores only ciphertext, and plaintext APIs (web UI editing, approvals,
+rotation, syncs) are unavailable for that project.
 
 ### Can I use AWS KMS?
 
@@ -66,6 +67,13 @@ standard AWS chain.
 
 OIDC (authorization code + PKCE) and SAML (signed assertions). First login joins a pending
 invite or creates an organization, depending on auto-create.
+
+### Does it support MFA?
+
+Yes. Users enroll a TOTP authenticator under **Security** and receive ten single-use recovery
+codes. Owners can require MFA for password logins across the organization; enrolled users get
+a code challenge at login, and unenrolled users are sent through enrollment first. SSO logins
+rely on the identity provider's MFA.
 
 ### Is there high availability?
 
@@ -104,7 +112,7 @@ the selected project and environment in the URL (`?project=…&env=…`).
 
 ### What is on the roadmap?
 
-MFA, PKI/SSH certificate issuance, SCIM, and provider plugins. See the
+PKI/SSH certificate issuance, SCIM, and provider plugins. See the
 [changelog](https://github.com/ibrahimhnif/opensiel/blob/main/CHANGELOG.md) for what shipped.
 
 ### How can I contribute?

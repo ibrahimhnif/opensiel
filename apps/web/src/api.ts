@@ -2,6 +2,7 @@ export class ApiError extends Error {
   constructor(
     public readonly status: number,
     message: string,
+    public readonly body: unknown = undefined,
   ) {
     super(message);
     this.name = "ApiError";
@@ -11,17 +12,20 @@ export class ApiError extends Error {
 async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   const response = await fetch(path, { credentials: "same-origin", ...init });
   const text = await response.text();
+  let parsed: unknown;
+  try {
+    parsed = text ? JSON.parse(text) : undefined;
+  } catch {
+    parsed = undefined;
+  }
   if (!response.ok) {
     let message = `${response.status} ${response.statusText}`;
-    try {
-      const parsed = JSON.parse(text) as { message?: string };
-      if (parsed.message) message = parsed.message;
-    } catch {
-      if (text) message = text.slice(0, 300);
-    }
-    throw new ApiError(response.status, message);
+    const detail = parsed as { message?: string } | undefined;
+    if (detail?.message) message = detail.message;
+    else if (text) message = text.slice(0, 300);
+    throw new ApiError(response.status, message, parsed);
   }
-  return (text ? JSON.parse(text) : undefined) as T;
+  return parsed as T;
 }
 
 const jsonHeaders = { "content-type": "application/json" };

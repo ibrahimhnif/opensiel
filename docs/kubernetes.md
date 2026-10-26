@@ -96,7 +96,7 @@ kubectl -n opensiel create secret generic opensiel-secrets \
 
 Edit `deploy/k8s/app.yaml` and `deploy/k8s/ingress.yaml`:
 
-- replace `ghcr.io/OWNER/opensiel:latest` with your image,
+- pin the image tag instead of `latest` in production,
 - replace `opensiel.example.com` with your hostname,
 - adjust `storageClassName` if `local-path` is not available.
 
@@ -132,6 +132,45 @@ spec:
 ```
 
 Set `OPENSIEL_PUBLIC_URL` to the HTTPS URL so cookies are `Secure` and SSO callbacks match.
+
+## Workload identity with service-account tokens
+
+Instead of shipping a client secret, a workload can exchange its projected service-account
+token for an opensiel machine token.
+
+1. Configure the cluster with a service-account issuer and JWKS (most managed clusters already
+   do; self-managed clusters set `--service-account-issuer` and expose
+   `/openid/v1/jwks`).
+2. In **Identities**, create an identity, then add an auth method with:
+   - issuer: the cluster's service-account issuer, for example
+     `https://kubernetes.default.svc.cluster.local`
+   - audience: `opensiel`
+   - JWKS URL: `<issuer>/openid/v1/jwks` (reachable from the opensiel pod)
+   - optional allowed subjects, for example `system:serviceaccount:apps:web`
+3. Project a token with the same audience and exchange it:
+
+```yaml
+volumes:
+  - name: opensiel-token
+    projected:
+      sources:
+        - serviceAccountToken:
+            path: token
+            audience: opensiel
+            expirationSeconds: 3600
+```
+
+```bash
+TOKEN=$(curl -s -X POST "$OPENSIEL_API/api/auth/token/jwt" \
+  -H 'content-type: application/json' \
+  -d "{\"clientId\":\"$OPENSIEL_CLIENT_ID\",\"jwt\":\"$(cat /var/run/secrets/opensiel/token)\"}" \
+  | jq -r .accessToken)
+
+OPENSIEL_TOKEN="$TOKEN" opensiel run --env prod -- node server.js
+```
+
+Tokens are verified on the server against the configured issuer, audience, and JWKS; no client
+secret is stored in the workload.
 
 ## Injecting secrets into pods
 
@@ -170,7 +209,7 @@ spec:
         fsGroup: 1001
       initContainers:
         - name: fetch-secrets
-          image: ghcr.io/OWNER/opensiel:latest
+          image: ghcr.io/ibrahimhnif/opensiel:latest
           command: ["sh", "-c"]
           args:
             - |
@@ -193,7 +232,7 @@ spec:
             - { name: secrets, mountPath: /secrets }
       containers:
         - name: web
-          image: ghcr.io/OWNER/web:latest
+          image: ghcr.io/your-org/web:latest
           command: ["sh", "-c"]
           args: ["set -a; . /secrets/app.env; set +a; exec node server.js"]
           volumeMounts:
@@ -224,7 +263,7 @@ Notes:
 ## Upgrades
 
 ```bash
-kubectl -n opensiel set image deploy/opensiel opensiel=ghcr.io/OWNER/opensiel:v0.2.0
+kubectl -n opensiel set image deploy/opensiel opensiel=ghcr.io/ibrahimhnif/opensiel:v0.2.0
 kubectl -n opensiel rollout status deploy/opensiel
 ```
 

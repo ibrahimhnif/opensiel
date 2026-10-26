@@ -17,7 +17,7 @@ import {
 import { Input } from "./ui/input";
 import { Label } from "./ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "./ui/select";
-import { Notice } from "./Notice";
+import { useToastMessage } from "../hooks/useToastMessage";
 import { Logo } from "./Logo";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "./ui/tabs";
 import { SecretsView } from "./SecretsView";
@@ -28,9 +28,24 @@ import { IdentitiesView } from "./IdentitiesView";
 import { AuditView } from "./AuditView";
 import { DynamicView } from "./DynamicView";
 import { WebhooksView } from "./WebhooksView";
+import { MfaCard } from "./MfaCard";
+import { RotationsView } from "./RotationsView";
+import { RolesView } from "./RolesView";
+import { SyncsView } from "./SyncsView";
 
 type Tab =
-  "secrets" | "scan" | "dynamic" | "webhooks" | "approvals" | "members" | "identities" | "audit";
+  | "secrets"
+  | "scan"
+  | "dynamic"
+  | "webhooks"
+  | "approvals"
+  | "members"
+  | "identities"
+  | "audit"
+  | "security"
+  | "rotations"
+  | "access"
+  | "syncs";
 
 const TABS: { value: Tab; label: string }[] = [
   { value: "secrets", label: "Secrets" },
@@ -41,6 +56,10 @@ const TABS: { value: Tab; label: string }[] = [
   { value: "members", label: "Members" },
   { value: "identities", label: "Identities" },
   { value: "audit", label: "Audit" },
+  { value: "rotations", label: "Rotations" },
+  { value: "syncs", label: "Syncs" },
+  { value: "access", label: "Access" },
+  { value: "security", label: "Security" },
 ];
 
 export function Dashboard({ user, onSignedOut }: { user: UserDto; onSignedOut: () => void }) {
@@ -52,6 +71,7 @@ export function Dashboard({ user, onSignedOut }: { user: UserDto; onSignedOut: (
   const [newProjectName, setNewProjectName] = useState("");
   const [loading, setLoading] = useState(true);
   const [mobileCreateOpen, setMobileCreateOpen] = useState(false);
+  useToastMessage("error", error, setError);
 
   const loadProjects = useCallback(async () => {
     try {
@@ -261,12 +281,6 @@ export function Dashboard({ user, onSignedOut }: { user: UserDto; onSignedOut: (
           </div>
         </div>
 
-        {error && (
-          <Notice tone="error" onDismiss={() => setError("")}>
-            {error}
-          </Notice>
-        )}
-
         {loading && projects.length === 0 ? (
           <div className="grid flex-1 place-items-center py-16">
             <span className="flex items-center gap-2 text-sm text-muted-foreground">
@@ -334,7 +348,13 @@ export function Dashboard({ user, onSignedOut }: { user: UserDto; onSignedOut: (
             <Tabs value={tab} onValueChange={(value) => setTab(value as Tab)}>
               <TabsList className="w-full max-w-full justify-start overflow-x-auto md:w-fit">
                 {TABS.filter(
-                  (entry) => (entry.value !== "dynamic" && entry.value !== "webhooks") || canManage,
+                  (entry) =>
+                    (entry.value !== "dynamic" &&
+                      entry.value !== "webhooks" &&
+                      entry.value !== "rotations" &&
+                      entry.value !== "syncs" &&
+                      entry.value !== "access") ||
+                    canManage,
                 ).map((entry) => (
                   <TabsTrigger key={entry.value} value={entry.value} className="shrink-0">
                     {entry.label}
@@ -343,7 +363,7 @@ export function Dashboard({ user, onSignedOut }: { user: UserDto; onSignedOut: (
               </TabsList>
 
               <TabsContent value="secrets">
-                <SecretsView project={project} env={env} />
+                <SecretsView project={project} env={env} canManage={canManage} />
               </TabsContent>
               <TabsContent value="scan">
                 <ScanView project={project} />
@@ -370,6 +390,18 @@ export function Dashboard({ user, onSignedOut }: { user: UserDto; onSignedOut: (
               </TabsContent>
               <TabsContent value="audit">
                 <AuditView project={project} />
+              </TabsContent>
+              <TabsContent value="rotations">
+                <RotationsView project={project} canManage={canManage} />
+              </TabsContent>
+              <TabsContent value="syncs">
+                <SyncsView project={project} canManage={canManage} />
+              </TabsContent>
+              <TabsContent value="access">
+                <RolesView project={project} />
+              </TabsContent>
+              <TabsContent value="security">
+                <MfaCard isOwner={user.role === "owner"} />
               </TabsContent>
             </Tabs>
           </>

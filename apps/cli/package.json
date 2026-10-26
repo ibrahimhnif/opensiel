@@ -1,22 +1,48 @@
 {
-  "name": "@opensiel/cli",
-  "version": "0.1.0",
-  "private": true,
+  "name": "@liostech/opensiel-cli",
+  "version": "0.1.1",
+  "description": "CLI for opensiel: log in, inject secrets, import and export environments.",
+  "keywords": [
+    "opensiel",
+    "secrets",
+    "secrets-management",
+    "cli",
+    "dotenv"
+  ],
+  "license": "MIT",
+  "author": "opensiel contributors",
+  "homepage": "https://opensiel.liostech.id/docs/cli",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/ibrahimhnif/opensiel.git",
+    "directory": "apps/cli"
+  },
+  "bugs": {
+    "url": "https://github.com/ibrahimhnif/opensiel/issues"
+  },
   "type": "module",
   "bin": {
-    "opensiel": "./dist/index.js"
+    "opensiel": "dist/index.js"
   },
   "files": [
-    "dist"
+    "dist",
+    "README.md",
+    "LICENSE"
   ],
+  "engines": {
+    "node": ">=20"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
   "scripts": {
     "dev": "tsx src/index.ts",
     "build": "tsup && chmod +x dist/index.js",
+    "prepack": "pnpm build",
     "typecheck": "tsc --noEmit",
     "test": "vitest run --passWithNoTests"
   },
   "dependencies": {
-    "@opensiel/shared": "workspace:*",
     "commander": "^13.1.0"
   },
   "devDependencies": {

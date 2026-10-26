@@ -11,13 +11,13 @@ Maintainer checklist for a public release. The release workflow runs on tags mat
 - [ ] The GHCR chart package (`charts/opensiel`) is public if you want OCI installs. The chart
       is also attached to the GitHub release, which works without a public OCI package.
 - [ ] The npm organization `liostech` exists and your account can publish to it. Create it at
-      <https://www.npmjs.com/org/create> if needed. `@liostech/opensiel-sdk` is scoped, so publishing
+      <https://www.npmjs.com/org/create> if needed. Both packages are scoped, so publishing
       without the org fails.
-- [ ] A trusted publisher is configured for `@liostech/opensiel-sdk` (package settings on
-      npmjs.com → **Trusted Publisher** → GitHub Actions: owner `ibrahimhnif`, repository
-      `opensiel`, workflow `release.yml`, allow `npm publish`). Trusted publishing needs a
-      successful publish within 2 days of creating the configuration, so configure it when the
-      next version is ready to ship.
+- [ ] A trusted publisher is configured for `@liostech/opensiel-sdk` and
+      `@liostech/opensiel-cli` (package settings on npmjs.com → **Trusted Publisher** → GitHub
+      Actions: owner `ibrahimhnif`, repository `opensiel`, workflow `release.yml`, allow
+      `npm publish`). Trusted publishing needs a successful publish within 2 days of creating
+      the configuration, so configure it when the next version is ready to ship.
 - [ ] You are logged in to npm locally only if you want to stage or approve a package manually.
 - [ ] Docker is available locally for the installer smoke test.
 
@@ -27,6 +27,8 @@ Keep these in sync with the tag:
 
 - `package.json` (`version`)
 - `packages/sdk/package.json` (`version`)
+- `apps/cli/package.json` (`version`)
+- `apps/cli/src/index.ts` (`.version(...)`)
 - `CHANGELOG.md` (move changes under the new version)
 
 ```bash
@@ -42,16 +44,21 @@ git push origin v0.1.0
 
 The tag runs `.github/workflows/release.yml`:
 
-1. `image` builds and pushes `ghcr.io/<owner>/opensiel:v0.1.0` and `:latest`.
+1. `image` builds and pushes `ghcr.io/<owner>/opensiel:v0.1.0`, `:0.1.0`, and `:latest`.
 2. `chart` lints, packages, pushes `oci://ghcr.io/<owner>/charts/opensiel:0.1.0`, and uploads
    the chart artifact.
 3. `sdk` publishes `@liostech/opensiel-sdk` to npm with provenance using OIDC trusted
    publishing (no npm token).
-4. `release` attaches the chart `.tgz` and creates the GitHub release with generated notes.
+4. `cli` publishes `@liostech/opensiel-cli` the same way.
+5. `release` attaches the chart `.tgz` and creates the GitHub release with generated notes.
 
-If `sdk` fails with `ENEEDAUTH`, check the trusted publisher fields (repository, workflow
-filename, and `id-token: write`). If it reports the version already exists, the publish was
-already done; that is expected for a re-run.
+The tag also makes the repository root `action.yml` usable as
+`uses: ibrahimhnif/opensiel@v0.1.0`. Pin the release tag in workflows. Optionally, publish the
+action to the GitHub Marketplace from the release page.
+
+If `sdk` or `cli` fails with `ENEEDAUTH`, check the trusted publisher fields (repository,
+workflow filename, and `id-token: write`). If it reports the version already exists, the
+publish was already done; that is expected for a re-run.
 
 ### First publish: staged publishing
 
@@ -61,12 +68,22 @@ first version:
 ```bash
 npm login
 pnpm install
-pnpm --filter @liostech/opensiel-sdk build
 
+# SDK
+pnpm --filter @liostech/opensiel-sdk build
 cd packages/sdk
 npm pack --dry-run
 npm stage publish --access public
-npm stage approve <stage-id>   # asks for the 2FA code
+
+# CLI
+pnpm --filter @liostech/opensiel-cli build
+cd ../../apps/cli
+npm pack --dry-run
+npm stage publish --access public
+
+# approve each stage (asks for the 2FA code)
+npm stage approve <sdk-stage-id>
+npm stage approve <cli-stage-id>
 ```
 
 `npm stage publish` does not require 2FA. The approval does, either with `npm stage approve` or
@@ -78,15 +95,18 @@ Bypass-2FA granular tokens are deprecated for direct publishing (see the
 Do not create a long-lived publish token. Use staged publishing for the first version, then
 OIDC trusted publishing for later releases.
 
-After `0.1.0` is approved, create the trusted publisher configuration described in
-Preconditions. The release job skips a version that is already on the registry, so the first
-tag can still run the image and GitHub release steps.
+After both `0.1.0` packages are approved, create the trusted publisher configurations
+described in Preconditions. The release jobs skip versions that are already on the registry, so
+the first tag can still run the image, chart, and GitHub release steps.
 
 ## 4. Verify
 
 ```bash
 npm view @liostech/opensiel-sdk version
 npm view @liostech/opensiel-sdk dist-tags
+npm view @liostech/opensiel-cli version
+npm install -g --prefix /tmp/opensiel-cli @liostech/opensiel-cli
+/tmp/opensiel-cli/bin/opensiel --version
 
 docker pull ghcr.io/ibrahimhnif/opensiel:v0.1.0
 
@@ -127,5 +147,6 @@ curl -fsSL https://opensiel.liostech.id/install.sh | bash -s -- --version v0.1.0
 - [ ] Trusted publisher configured for the next version
 - [ ] Versions and changelog updated
 - [ ] Tag pushed
-- [ ] `image`, `chart`, `sdk`, and `release` jobs green
+- [ ] `image`, `chart`, `sdk`, `cli`, and `release` jobs green
 - [ ] `npm view`, `docker pull`, `helm show chart`, and installer smoke test pass
+- [ ] `uses: ibrahimhnif/opensiel@v<version>` works in a scratch workflow

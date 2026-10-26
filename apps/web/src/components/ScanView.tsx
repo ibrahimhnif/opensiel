@@ -9,32 +9,31 @@ import { Input } from "./ui/input";
 import { Label } from "./ui/label";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "./ui/table";
 import { Pagination } from "./Pagination";
-import { usePagination } from "../hooks/usePagination";
 import { Textarea } from "./ui/textarea";
 import { Notice } from "./Notice";
+import { useToastMessage } from "../hooks/useToastMessage";
+
+const PAGE_SIZE = 20;
 
 export function ScanView({ project }: { project: ProjectDto }) {
   const [contents, setContents] = useState("");
   const [result, setResult] = useState<ScanResult | null>(null);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
-  const [scanId, setScanId] = useState(0);
+  const [page, setPage] = useState(1);
+  useToastMessage("error", error, setError);
 
-  const findingPagination = usePagination(result?.findings ?? [], {
-    pageSize: 20,
-    resetKey: String(scanId),
-  });
-
-  async function scan() {
+  async function scan(pageNumber = 1) {
     if (!contents.trim()) return;
     setBusy(true);
     setError("");
     try {
-      const response = await api.post<ScanResult>(`/api/projects/${project.id}/scan`, {
-        contents,
-      });
+      const response = await api.post<ScanResult>(
+        `/api/projects/${project.id}/scan?limit=${PAGE_SIZE}&offset=${(pageNumber - 1) * PAGE_SIZE}`,
+        { contents },
+      );
       setResult(response);
-      setScanId((value) => value + 1);
+      setPage(pageNumber);
     } catch (err) {
       setError(errorMessage(err));
     } finally {
@@ -47,6 +46,7 @@ export function ScanView({ project }: { project: ProjectDto }) {
     if (!file) return;
     setContents(await file.text());
     setResult(null);
+    setPage(1);
   }
 
   return (
@@ -61,19 +61,13 @@ export function ScanView({ project }: { project: ProjectDto }) {
         </div>
       </div>
 
-      {error && (
-        <Notice tone="error" onDismiss={() => setError("")}>
-          {error}
-        </Notice>
-      )}
-
       {result && (
         <Notice
           tone={result.findings.length > 0 ? "error" : "success"}
           onDismiss={() => setResult(null)}
         >
-          {result.findings.length > 0
-            ? `${result.findings.length} potential leak(s) found in ${result.characters} characters.`
+          {result.total > 0
+            ? `${result.total} potential leak(s) found in ${result.characters} characters.`
             : `No leaks found in ${result.characters} characters.`}{" "}
           Scanned {result.scannedSecrets} secrets across {result.scannedEnvironments} environments.
         </Notice>
@@ -141,7 +135,7 @@ export function ScanView({ project }: { project: ProjectDto }) {
               </TableRow>
             </TableHeader>
             <TableBody>
-              {findingPagination.pageItems.map((finding, index) => (
+              {result.findings.map((finding, index) => (
                 <TableRow key={`${finding.type}-${finding.name}-${finding.line}-${index}`}>
                   <TableCell className="font-mono text-xs">{finding.line}</TableCell>
                   <TableCell>
@@ -171,7 +165,7 @@ export function ScanView({ project }: { project: ProjectDto }) {
                   </TableCell>
                 </TableRow>
               ))}
-              {result.findings.length === 0 && (
+              {result.total === 0 && (
                 <TableRow>
                   <TableCell colSpan={5} className="py-8 text-center text-muted-foreground">
                     No findings.
@@ -181,14 +175,14 @@ export function ScanView({ project }: { project: ProjectDto }) {
             </TableBody>
           </Table>
           <Pagination
-            page={findingPagination.page}
-            pageSize={findingPagination.pageSize}
-            total={findingPagination.total}
-            totalPages={findingPagination.totalPages}
-            rangeStart={findingPagination.rangeStart}
-            rangeEnd={findingPagination.rangeEnd}
-            onPageChange={findingPagination.setPage}
-            onPageSizeChange={findingPagination.setPageSize}
+            page={page}
+            pageSize={PAGE_SIZE}
+            total={result.total}
+            totalPages={Math.max(1, Math.ceil(result.total / PAGE_SIZE))}
+            rangeStart={result.total === 0 ? 0 : (page - 1) * PAGE_SIZE + 1}
+            rangeEnd={Math.min(page * PAGE_SIZE, result.total)}
+            onPageChange={(next) => void scan(next)}
+            onPageSizeChange={() => {}}
           />
         </Card>
       )}

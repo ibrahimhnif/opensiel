@@ -1,6 +1,7 @@
 import { and, eq } from "drizzle-orm";
 import type { FastifyInstance } from "fastify";
-import type { ChangeRequestStatus } from "@opensiel/shared";
+import { z } from "zod";
+import type { ChangeRequestAction } from "@opensiel/shared";
 import {
   changeRequestDecisionSchema,
   environmentImportSchema,
@@ -16,9 +17,19 @@ import {
   listChangeRequests,
 } from "../approvals-service.js";
 import { writeAudit } from "../audit.js";
+import { paginationSchema } from "../pagination.js";
 import type { Deps } from "../types.js";
 
-const STATUSES: ChangeRequestStatus[] = ["pending", "approved", "rejected", "cancelled"];
+const ACTIONS: ChangeRequestAction[] = ["set", "delete", "rollback"];
+
+const listQuerySchema = paginationSchema.merge(
+  z.object({
+    status: z.enum(["pending", "approved", "rejected", "cancelled"]).optional(),
+    action: z.enum(["set", "delete", "rollback"]).optional(),
+    sort: z.enum(["requestedAt", "status"]).default("requestedAt"),
+    order: z.enum(["asc", "desc"]).default("desc"),
+  }),
+);
 
 export function registerApprovalRoutes(app: FastifyInstance, deps: Deps): void {
   app.get("/api/projects/:projectId/change-requests", async (request) => {
@@ -26,16 +37,27 @@ export function registerApprovalRoutes(app: FastifyInstance, deps: Deps): void {
     const { projectId } = request.params as { projectId: string };
     await loadProject(deps, actor, projectId);
 
-    const rawStatus = (request.query as { status?: string }).status;
-    if (rawStatus && !STATUSES.includes(rawStatus as ChangeRequestStatus)) {
-      throw badRequest(`status must be one of ${STATUSES.join(", ")}`);
+    const query = parse(listQuerySchema, request.query);
+    if (query.action && !ACTIONS.includes(query.action)) {
+      throw badRequest(`action must be one of ${ACTIONS.join(", ")}`);
     }
 
+    const result = await listChangeRequests(deps, projectId, {
+      status: query.status,
+      requestedById: actor.type === "machine" ? actor.id : undefined,
+      action: query.action,
+      q: query.q,
+      sort: query.sort,
+      order: query.order,
+      limit: query.limit,
+      offset: query.offset,
+    });
+
     return {
-      changeRequests: await listChangeRequests(deps, projectId, {
-        status: rawStatus as ChangeRequestStatus | undefined,
-        requestedById: actor.type === "machine" ? actor.id : undefined,
-      }),
+      changeRequests: result.requests,
+      total: result.total,
+      limit: query.limit,
+      offset: query.offset,
     };
   });
 

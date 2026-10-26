@@ -100,6 +100,36 @@ Register the SP in the IdP with the ACS URL above and the issuer as entity id. M
 With either SSO method: a matching pending invite is joined first; otherwise, if auto-create
 is on, a new organization is created with the user as owner.
 
+## Audit sink
+
+Streams new `audit_logs` rows to an external system. One sink at a time; disabled by default.
+
+| Variable                                | Default          | Description                                       |
+| --------------------------------------- | ---------------- | ------------------------------------------------- |
+| `OPENSIEL_AUDIT_SINK`                   | `off`            | `http`, `splunk`, `datadog`, or `s3`.             |
+| `OPENSIEL_AUDIT_SINK_URL`               | –                | Destination URL for http/splunk/datadog.          |
+| `OPENSIEL_AUDIT_SINK_TOKEN`             | –                | Bearer token, Splunk HEC token, or Datadog key.   |
+| `OPENSIEL_AUDIT_SINK_INTERVAL_SECONDS`  | `60`             | Poll interval.                                    |
+| `OPENSIEL_AUDIT_SINK_BATCH`             | `200`            | Rows per delivery.                                |
+| `OPENSIEL_AUDIT_SINK_BUCKET`            | –                | S3 bucket (required for `s3`).                    |
+| `OPENSIEL_AUDIT_SINK_PREFIX`            | `opensiel-audit` | S3 key prefix.                                    |
+| `OPENSIEL_AUDIT_SINK_REGION`            | `us-east-1`      | S3 region.                                        |
+| `OPENSIEL_AUDIT_SINK_ENDPOINT`          | –                | Custom S3 endpoint (S3-compatible stores).        |
+| `OPENSIEL_AUDIT_SINK_ACCESS_KEY_ID`     | –                | Explicit AWS access key (else the default chain). |
+| `OPENSIEL_AUDIT_SINK_SECRET_ACCESS_KEY` | –                | Explicit AWS secret key.                          |
+
+The worker checkpoints on `audit_logs.seq`, so restarts and multiple replicas do not duplicate
+rows. A failed delivery is retried with exponential backoff (capped at 15 minutes) and recorded
+in `audit_sink_state`. Exports never include secret values.
+
+Payloads:
+
+- `http` → `{ "events": [...] }` with an optional bearer token.
+- `splunk` → newline-delimited HEC events with `sourcetype: opensiel:audit` and
+  `Authorization: Splunk <token>`.
+- `datadog` → array of log objects with `ddsource`/`service` and a `dd-api-key` header.
+- `s3` → NDJSON object per day at `<prefix>/<YYYY-MM-DD>/<first-event-id>.ndjson`.
+
 ## Rate limits
 
 In-process limits (per instance):

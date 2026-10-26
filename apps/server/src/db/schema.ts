@@ -1,5 +1,6 @@
 import { sql } from "drizzle-orm";
 import {
+  bigint,
   boolean,
   index,
   integer,
@@ -36,6 +37,7 @@ export const orgs = pgTable(
     id: uuid("id").primaryKey().defaultRandom(),
     name: text("name").notNull(),
     slug: text("slug").notNull(),
+    mfaRequired: boolean("mfa_required").notNull().default(false),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (table) => [uniqueIndex("orgs_slug_uq").on(table.slug)],
@@ -115,6 +117,7 @@ export const projects = pgTable(
     dekIv: text("dek_iv").notNull(),
     dekTag: text("dek_tag").notNull(),
     kekVersion: integer("kek_version").notNull().default(1),
+    encryptionMode: text("encryption_mode").notNull().default("server"),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (table) => [uniqueIndex("projects_org_slug_uq").on(table.orgId, table.slug)],
@@ -184,6 +187,9 @@ export const secretVersions = pgTable(
     iv: text("iv").notNull(),
     tag: text("tag").notNull(),
     fingerprint: text("fingerprint").notNull(),
+    fingerprintVersion: integer("fingerprint_version").notNull().default(2),
+    encryptionMode: text("encryption_mode").notNull().default("server"),
+    keyVersion: integer("key_version"),
     comment: text("comment"),
     createdByType: text("created_by_type").notNull(),
     createdById: text("created_by_id").notNull(),
@@ -203,6 +209,10 @@ export const identities = pgTable(
     clientId: text("client_id").notNull(),
     secretHash: text("secret_hash").notNull(),
     role: text("role").$type<IdentityRole>().notNull().default("viewer"),
+    tokenVersion: integer("token_version").notNull().default(1),
+    tokenTtlSeconds: integer("token_ttl_seconds").notNull().default(900),
+    ipAllowlist: jsonb("ip_allowlist").$type<string[]>(),
+    hourlyTokenCap: integer("hourly_token_cap"),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     revokedAt: timestamp("revoked_at", { withTimezone: true }),
   },
@@ -223,6 +233,24 @@ export const identityScopes = pgTable(
       .references(() => environments.id, { onDelete: "cascade" }),
   },
   (table) => [primaryKey({ columns: [table.identityId, table.environmentId] })],
+);
+
+export const identityAuthMethods = pgTable(
+  "identity_auth_methods",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    identityId: uuid("identity_id")
+      .notNull()
+      .references(() => identities.id, { onDelete: "cascade" }),
+    type: text("type").notNull().default("jwt"),
+    issuer: text("issuer"),
+    audience: text("audience"),
+    jwksUri: text("jwks_uri"),
+    allowedSubjects: jsonb("allowed_subjects").$type<string[]>(),
+    config: jsonb("config").$type<Record<string, unknown>>(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [index("identity_auth_methods_identity_idx").on(table.identityId)],
 );
 
 export const changeRequests = pgTable(
@@ -347,6 +375,9 @@ export const auditLogs = pgTable(
   "audit_logs",
   {
     id: uuid("id").primaryKey().defaultRandom(),
+    seq: bigint("seq", { mode: "number" })
+      .notNull()
+      .default(sql`nextval('audit_logs_seq')`),
     orgId: uuid("org_id")
       .notNull()
       .references(() => orgs.id, { onDelete: "cascade" }),
@@ -367,6 +398,194 @@ export const auditLogs = pgTable(
   ],
 );
 
+export const transitKeys = pgTable(
+  "transit_keys",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    projectId: uuid("project_id")
+      .notNull()
+      .references(() => projects.id, { onDelete: "cascade" }),
+    name: text("name").notNull(),
+    version: integer("version").notNull().default(1),
+    wrapped: text("wrapped").notNull(),
+    iv: text("iv").notNull(),
+    tag: text("tag").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    uniqueIndex("transit_keys_project_name_version_uq").on(
+      table.projectId,
+      table.name,
+      table.version,
+    ),
+  ],
+);
+
+export const rotationPolicies = pgTable(
+  "rotation_policies",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    projectId: uuid("project_id")
+      .notNull()
+      .references(() => projects.id, { onDelete: "cascade" }),
+    environmentId: uuid("environment_id")
+      .notNull()
+      .references(() => environments.id, { onDelete: "cascade" }),
+    path: text("path").notNull().default("/"),
+    secretKey: text("secret_key").notNull(),
+    provider: text("provider").notNull(),
+    configCiphertext: text("config_ciphertext").notNull(),
+    configIv: text("config_iv").notNull(),
+    configTag: text("config_tag").notNull(),
+    intervalSeconds: integer("interval_seconds").notNull().default(2592000),
+    graceSeconds: integer("grace_seconds").notNull().default(3600),
+    enabled: boolean("enabled").notNull().default(true),
+    nextRunAt: timestamp("next_run_at", { withTimezone: true }).notNull().defaultNow(),
+    lastRunAt: timestamp("last_run_at", { withTimezone: true }),
+    lastStatus: text("last_status"),
+    lastError: text("last_error"),
+    failureCount: integer("failure_count").notNull().default(0),
+    previousCiphertext: text("previous_ciphertext"),
+    previousIv: text("previous_iv"),
+    previousTag: text("previous_tag"),
+    previousRevokeAfter: timestamp("previous_revoke_after", { withTimezone: true }),
+    currentCiphertext: text("current_ciphertext"),
+    currentIv: text("current_iv"),
+    currentTag: text("current_tag"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    uniqueIndex("rotation_policies_target_uq").on(
+      table.projectId,
+      table.environmentId,
+      table.path,
+      table.secretKey,
+    ),
+    index("rotation_policies_due_idx").on(table.enabled, table.nextRunAt),
+  ],
+);
+
+export type RotationPolicyRow = typeof rotationPolicies.$inferSelect;
+
+export const customRoles = pgTable(
+  "custom_roles",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    orgId: uuid("org_id")
+      .notNull()
+      .references(() => orgs.id, { onDelete: "cascade" }),
+    name: text("name").notNull(),
+    permissions: jsonb("permissions").$type<string[]>().notNull().default([]),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [uniqueIndex("custom_roles_org_name_uq").on(table.orgId, table.name)],
+);
+
+export const roleGrants = pgTable(
+  "role_grants",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    orgId: uuid("org_id")
+      .notNull()
+      .references(() => orgs.id, { onDelete: "cascade" }),
+    roleId: uuid("role_id")
+      .notNull()
+      .references(() => customRoles.id, { onDelete: "cascade" }),
+    userId: uuid("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    projectId: uuid("project_id").references(() => projects.id, { onDelete: "cascade" }),
+    environmentId: uuid("environment_id").references(() => environments.id, {
+      onDelete: "cascade",
+    }),
+    path: text("path"),
+    expiresAt: timestamp("expires_at", { withTimezone: true }),
+    createdBy: uuid("created_by")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [index("role_grants_user_idx").on(table.userId, table.orgId)],
+);
+
+export type CustomRoleRow = typeof customRoles.$inferSelect;
+export type RoleGrantRow = typeof roleGrants.$inferSelect;
+
+export const secretSyncs = pgTable(
+  "secret_syncs",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    projectId: uuid("project_id")
+      .notNull()
+      .references(() => projects.id, { onDelete: "cascade" }),
+    environmentId: uuid("environment_id")
+      .notNull()
+      .references(() => environments.id, { onDelete: "cascade" }),
+    path: text("path").notNull().default("/"),
+    provider: text("provider").notNull(),
+    configCiphertext: text("config_ciphertext").notNull(),
+    configIv: text("config_iv").notNull(),
+    configTag: text("config_tag").notNull(),
+    enabled: boolean("enabled").notNull().default(true),
+    intervalSeconds: integer("interval_seconds").notNull().default(300),
+    nextRunAt: timestamp("next_run_at", { withTimezone: true }).notNull().defaultNow(),
+    lastRunAt: timestamp("last_run_at", { withTimezone: true }),
+    lastStatus: text("last_status"),
+    lastError: text("last_error"),
+    failureCount: integer("failure_count").notNull().default(0),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [index("secret_syncs_due_idx").on(table.enabled, table.nextRunAt)],
+);
+
+export type SecretSyncRow = typeof secretSyncs.$inferSelect;
+
+export const userKeys = pgTable("user_keys", {
+  userId: uuid("user_id")
+    .primaryKey()
+    .references(() => users.id, { onDelete: "cascade" }),
+  publicKey: text("public_key").notNull(),
+  wrappedPrivateKey: text("wrapped_private_key").notNull(),
+  privateKeyIv: text("private_key_iv").notNull(),
+  privateKeyTag: text("private_key_tag").notNull(),
+  kdfSalt: text("kdf_salt").notNull(),
+  kdfParams: jsonb("kdf_params").$type<Record<string, unknown>>().notNull().default({}),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+export const projectMemberKeys = pgTable(
+  "project_member_keys",
+  {
+    projectId: uuid("project_id")
+      .notNull()
+      .references(() => projects.id, { onDelete: "cascade" }),
+    userId: uuid("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    wrappedKey: text("wrapped_key").notNull(),
+    iv: text("iv").notNull(),
+    tag: text("tag").notNull(),
+    keyVersion: integer("key_version").notNull().default(1),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [primaryKey({ columns: [table.projectId, table.userId] })],
+);
+
+export type UserKeyRow = typeof userKeys.$inferSelect;
+export type ProjectMemberKeyRow = typeof projectMemberKeys.$inferSelect;
+
+export const awsAuthNonces = pgTable(
+  "aws_auth_nonces",
+  {
+    sigHash: text("sig_hash").primaryKey(),
+    expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+  },
+  (table) => [index("aws_auth_nonces_expires_idx").on(table.expiresAt)],
+);
+
 export type UserRow = typeof users.$inferSelect;
 export type OrgRow = typeof orgs.$inferSelect;
 export type ProjectRow = typeof projects.$inferSelect;
@@ -374,7 +593,50 @@ export type EnvironmentRow = typeof environments.$inferSelect;
 export type SecretRow = typeof secrets.$inferSelect;
 export type SecretVersionRow = typeof secretVersions.$inferSelect;
 export type IdentityRow = typeof identities.$inferSelect;
+export type IdentityAuthMethodRow = typeof identityAuthMethods.$inferSelect;
 export type ChangeRequestRow = typeof changeRequests.$inferSelect;
 export type DynamicSecretConfigRow = typeof dynamicSecretConfigs.$inferSelect;
 export type DynamicSecretLeaseRow = typeof dynamicSecretLeases.$inferSelect;
 export type WebhookRow = typeof webhooks.$inferSelect;
+export type AuditLogRow = typeof auditLogs.$inferSelect;
+export type TransitKeyRow = typeof transitKeys.$inferSelect;
+
+export const auditSinkState = pgTable("audit_sink_state", {
+  id: text("id").primaryKey(),
+  lastSeq: bigint("last_seq", { mode: "number" }).notNull().default(0),
+  failureCount: integer("failure_count").notNull().default(0),
+  nextAttemptAt: timestamp("next_attempt_at", { withTimezone: true }),
+  lastError: text("last_error"),
+  lastSuccessAt: timestamp("last_success_at", { withTimezone: true }),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+export type AuditSinkStateRow = typeof auditSinkState.$inferSelect;
+
+export const userMfa = pgTable("user_mfa", {
+  userId: uuid("user_id")
+    .primaryKey()
+    .references(() => users.id, { onDelete: "cascade" }),
+  secretCiphertext: text("secret_ciphertext").notNull(),
+  secretIv: text("secret_iv").notNull(),
+  secretTag: text("secret_tag").notNull(),
+  enabled: boolean("enabled").notNull().default(false),
+  lastUsedStep: bigint("last_used_step", { mode: "number" }),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  enabledAt: timestamp("enabled_at", { withTimezone: true }),
+});
+
+export type UserMfaRow = typeof userMfa.$inferSelect;
+
+export const userMfaRecoveryCodes = pgTable(
+  "user_mfa_recovery_codes",
+  {
+    userId: uuid("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    codeHash: text("code_hash").notNull(),
+    usedAt: timestamp("used_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [primaryKey({ columns: [table.userId, table.codeHash] })],
+);

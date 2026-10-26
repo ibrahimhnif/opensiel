@@ -2,13 +2,14 @@ import { eq } from "drizzle-orm";
 import type { FastifyInstance } from "fastify";
 import { scanSchema } from "@opensiel/shared";
 import { requireActor } from "../auth.js";
-import { loadProject } from "../access.js";
+import { assertServerManaged, loadProject } from "../access.js";
 import { forbidden, parse } from "../errors.js";
 import { environments } from "../db/schema.js";
 import { loadEnvironmentSecrets } from "../secret-read.js";
 import { scanText } from "../scan.js";
 import type { StoredSecretInput } from "../scan.js";
 import { writeAudit } from "../audit.js";
+import { paginate, paginationSchema } from "../pagination.js";
 import type { Deps } from "../types.js";
 
 export function registerScanRoutes(app: FastifyInstance, deps: Deps): void {
@@ -21,6 +22,7 @@ export function registerScanRoutes(app: FastifyInstance, deps: Deps): void {
       const { projectId } = request.params as { projectId: string };
       const input = parse(scanSchema, request.body);
       const project = await loadProject(deps, actor, projectId);
+      assertServerManaged(project);
 
       const envRows = await deps.db
         .select()
@@ -42,6 +44,8 @@ export function registerScanRoutes(app: FastifyInstance, deps: Deps): void {
       }
 
       const findings = scanText(input.contents, stored);
+      const query = parse(paginationSchema, request.query);
+      const page = paginate(findings, query);
 
       await writeAudit(deps, {
         orgId: actor.orgId,
@@ -61,7 +65,10 @@ export function registerScanRoutes(app: FastifyInstance, deps: Deps): void {
       });
 
       return {
-        findings,
+        findings: page.items,
+        total: page.total,
+        limit: page.limit,
+        offset: page.offset,
         characters: input.contents.length,
         scannedEnvironments: envRows.length,
         scannedSecrets: stored.length,

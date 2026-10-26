@@ -18,8 +18,10 @@ import { Label } from "./ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "./ui/select";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "./ui/table";
 import { Pagination } from "./Pagination";
-import { usePagination } from "../hooks/usePagination";
-import { Notice } from "./Notice";
+import { useServerList } from "../hooks/useServerList";
+import { notify } from "../lib/notify";
+import { useToastMessage } from "../hooks/useToastMessage";
+import { useConfirm } from "./ConfirmProvider";
 
 interface Props {
   project: ProjectDto;
@@ -44,7 +46,7 @@ function statusVariant(status: ChangeRequestStatus) {
 }
 
 export function ApprovalsView({ project, currentUserId, canApprove, onRefresh }: Props) {
-  const [requests, setRequests] = useState<ChangeRequestDto[]>([]);
+  const confirm = useConfirm();
   const [filter, setFilter] = useState<ChangeRequestStatus | "all">("pending");
   const [envs, setEnvs] = useState<EnvironmentDto[]>(project.environments);
   const [error, setError] = useState("");
@@ -54,6 +56,8 @@ export function ApprovalsView({ project, currentUserId, canApprove, onRefresh }:
   const [newEnvName, setNewEnvName] = useState("");
   const [newEnvSlug, setNewEnvSlug] = useState("");
   const [envBusy, setEnvBusy] = useState(false);
+  useToastMessage("success", notice, setNotice);
+  useToastMessage("error", error, setError);
 
   useEffect(() => {
     setEnvs(project.environments);
@@ -79,27 +83,30 @@ export function ApprovalsView({ project, currentUserId, canApprove, onRefresh }:
     void loadImports();
   }, [loadImports]);
 
-  const load = useCallback(async () => {
-    try {
-      const query = filter === "all" ? "" : `?status=${filter}`;
-      const result = await api.get<{ changeRequests: ChangeRequestDto[] }>(
-        `/api/projects/${project.id}/change-requests${query}`,
+  const requestList = useServerList<ChangeRequestDto>({
+    key: `${project.id}:${filter}`,
+    pageSize: 20,
+    initialSort: "requestedAt",
+    initialOrder: "desc",
+    fetcher: async ({ limit, offset, q, sort, order }) => {
+      const params = new URLSearchParams({
+        limit: String(limit),
+        offset: String(offset),
+        sort: sort || "requestedAt",
+        order,
+      });
+      if (filter !== "all") params.set("status", filter);
+      if (q) params.set("q", q);
+      const result = await api.get<{ changeRequests: ChangeRequestDto[]; total: number }>(
+        `/api/projects/${project.id}/change-requests?${params}`,
       );
-      setRequests(result.changeRequests);
-      setError("");
-    } catch (err) {
-      setError(errorMessage(err));
-    }
-  }, [project.id, filter]);
+      return { items: result.changeRequests, total: result.total };
+    },
+  });
 
   useEffect(() => {
-    void load();
-  }, [load]);
-
-  const requestPagination = usePagination(requests, {
-    pageSize: 20,
-    resetKey: `${project.id}:${filter}`,
-  });
+    if (requestList.error) notify.error(requestList.error);
+  }, [requestList.error]);
 
   async function decide(request: ChangeRequestDto, decision: "approve" | "reject") {
     setBusy(true);
@@ -115,7 +122,7 @@ export function ApprovalsView({ project, currentUserId, canApprove, onRefresh }:
             ? `approved and applied ${request.key}`
             : `approval recorded for ${request.key}; waiting for more approvals`,
       );
-      await load();
+      requestList.reload();
     } catch (err) {
       setError(errorMessage(err));
     } finally {
@@ -127,7 +134,7 @@ export function ApprovalsView({ project, currentUserId, canApprove, onRefresh }:
     try {
       await api.post(`/api/projects/${project.id}/change-requests/${request.id}/cancel`);
       setNotice(`cancelled ${request.key}`);
-      await load();
+      requestList.reload();
     } catch (err) {
       setError(errorMessage(err));
     }
@@ -199,7 +206,15 @@ export function ApprovalsView({ project, currentUserId, canApprove, onRefresh }:
   }
 
   async function deleteEnvironment(environment: EnvironmentDto) {
-    if (!window.confirm(`Delete environment ${environment.slug}? It must have no secrets.`)) return;
+    if (
+      !(await confirm({
+        title: `Delete environment ${environment.slug}?`,
+        description: "It must have no secrets.",
+        confirmLabel: "delete",
+        destructive: true,
+      }))
+    )
+      return;
     try {
       await api.del(`/api/projects/${project.id}/environments/${environment.id}`);
       setEnvs((current) => current.filter((entry) => entry.id !== environment.id));
@@ -236,22 +251,17 @@ export function ApprovalsView({ project, currentUserId, canApprove, onRefresh }:
               ))}
             </SelectContent>
           </Select>
-          <Button variant="outline" size="sm" onClick={() => void load()}>
+          <Input
+            className="h-8 w-44"
+            placeholder="Search key, path, requester…"
+            value={requestList.query}
+            onChange={(event) => requestList.setQuery(event.target.value)}
+          />
+          <Button variant="outline" size="sm" onClick={() => requestList.reload()}>
             <RefreshCw className="size-4" /> refresh
           </Button>
         </div>
       </div>
-
-      {notice && (
-        <Notice tone="success" onDismiss={() => setNotice("")}>
-          {notice}
-        </Notice>
-      )}
-      {error && (
-        <Notice tone="error" onDismiss={() => setError("")}>
-          {error}
-        </Notice>
-      )}
 
       {canApprove && (
         <>
@@ -402,7 +412,7 @@ export function ApprovalsView({ project, currentUserId, canApprove, onRefresh }:
               </TableRow>
             </TableHeader>
             <TableBody>
-              {requestPagination.pageItems.map((request) => {
+              {requestList.items.map((request) => {
                 const isOwn = request.requestedById === currentUserId;
                 const pending = request.status === "pending";
                 return (
@@ -480,25 +490,16 @@ export function ApprovalsView({ project, currentUserId, canApprove, onRefresh }:
                   </TableRow>
                 );
               })}
-              {requests.length === 0 && (
+              {requestList.total === 0 && (
                 <TableRow>
                   <TableCell colSpan={6} className="py-8 text-center text-muted-foreground">
-                    No change requests.
+                    {requestList.query ? "No matching change requests." : "No change requests."}
                   </TableCell>
                 </TableRow>
               )}
             </TableBody>
           </Table>
-          <Pagination
-            page={requestPagination.page}
-            pageSize={requestPagination.pageSize}
-            total={requestPagination.total}
-            totalPages={requestPagination.totalPages}
-            rangeStart={requestPagination.rangeStart}
-            rangeEnd={requestPagination.rangeEnd}
-            onPageChange={requestPagination.setPage}
-            onPageSizeChange={requestPagination.setPageSize}
-          />
+          <Pagination {...requestList.pagination} />
         </Card>
       </div>
     </section>

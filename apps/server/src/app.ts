@@ -19,6 +19,14 @@ import { registerDynamicRoutes } from "./routes/dynamic.js";
 import { registerAdminRoutes } from "./routes/admin.js";
 import { registerWebhookRoutes } from "./routes/webhooks.js";
 import { registerSamlRoutes } from "./routes/saml.js";
+import { registerHistoryRoutes } from "./routes/history.js";
+import { registerTransitRoutes } from "./routes/transit.js";
+import { registerMfaRoutes } from "./routes/mfa.js";
+import { registerIdentityAuthRoutes } from "./routes/identity-auth.js";
+import { registerRotationRoutes } from "./routes/rotations.js";
+import { registerRoleRoutes } from "./routes/roles.js";
+import { registerSyncRoutes } from "./routes/syncs.js";
+import { registerE2eeRoutes } from "./routes/e2ee.js";
 import type { Deps } from "./types.js";
 
 export async function buildApp(deps: Deps): Promise<FastifyInstance> {
@@ -84,6 +92,14 @@ export async function buildApp(deps: Deps): Promise<FastifyInstance> {
   registerAdminRoutes(app, deps);
   registerWebhookRoutes(app, deps);
   registerSamlRoutes(app, deps);
+  registerHistoryRoutes(app, deps);
+  registerTransitRoutes(app, deps);
+  registerMfaRoutes(app, deps);
+  registerIdentityAuthRoutes(app, deps);
+  registerRotationRoutes(app, deps);
+  registerRoleRoutes(app, deps);
+  registerSyncRoutes(app, deps);
+  registerE2eeRoutes(app, deps);
 
   app.setErrorHandler((error, request, reply) => {
     if (error instanceof AppError) {
