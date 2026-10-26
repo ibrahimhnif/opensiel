@@ -11,12 +11,13 @@ import {
 } from "@opensiel/shared";
 import { requireActor } from "../auth.js";
 import {
-  assertCanWrite,
   assertEnvScope,
+  assertServerManaged,
   loadEnvironment,
   loadProject,
   normalizePath,
 } from "../access.js";
+import { assertSecretPermission } from "../permissions.js";
 import { AppError, badRequest, notFound, parse } from "../errors.js";
 import { secretVersions, secrets } from "../db/schema.js";
 import type { SecretRow } from "../db/schema.js";
@@ -26,13 +27,16 @@ import { loadEnvironmentSecrets } from "../secret-read.js";
 import { parseImportContents } from "../dotenv.js";
 import { dispatchEvent } from "../webhooks.js";
 import { applySecretDelete, applySecretRollback, applySecretWrite } from "../secrets-service.js";
+import { paginate, paginationSchema, sortRows } from "../pagination.js";
 import type { Actor, Deps } from "../types.js";
 
-const listQuerySchema = z.object({
-  env: slugSchema,
-  path: secretPathSchema.optional(),
-  recursive: z.enum(["true", "false"]).optional(),
-});
+const listQuerySchema = z
+  .object({
+    env: slugSchema,
+    path: secretPathSchema.optional(),
+    recursive: z.enum(["true", "false"]).optional(),
+  })
+  .merge(paginationSchema);
 
 const secretQuerySchema = z.object({
   env: slugSchema,
@@ -105,6 +109,7 @@ export function registerSecretRoutes(app: FastifyInstance, deps: Deps): void {
     const { projectId } = request.params as { projectId: string };
     const query = parse(listQuerySchema, request.query);
     const project = await loadProject(deps, actor, projectId);
+    assertServerManaged(project);
     const environment = await loadEnvironment(deps, project.id, query.env);
     if (actor.type === "machine") assertEnvScope(actor, environment.id);
 
@@ -118,21 +123,51 @@ export function registerSecretRoutes(app: FastifyInstance, deps: Deps): void {
       actor.type === "machine" ? { allowedEnvironmentIds: actor.envIds } : {},
     );
 
-    const values = loaded
-      .filter((secret) => matchesPath(secret.path, path, recursive))
-      .sort((a, b) => a.path.localeCompare(b.path) || a.key.localeCompare(b.key))
-      .map((secret) => ({
-        key: secret.key,
-        value: secret.value,
-        path: secret.path,
-        version: secret.version,
-        createdAt: secret.createdAt.toISOString(),
-        updatedAt: secret.updatedAt.toISOString(),
-        importedFrom: secret.importedFrom,
-      }));
+    let filtered = loaded.filter((secret) => matchesPath(secret.path, path, recursive));
+    if (query.q) {
+      const needle = query.q.toLowerCase();
+      filtered = filtered.filter(
+        (secret) =>
+          secret.key.toLowerCase().includes(needle) || secret.path.toLowerCase().includes(needle),
+      );
+    }
+
+    const pageQuery = {
+      limit: query.limit ?? 25,
+      offset: query.offset ?? 0,
+      order: query.order ?? ("asc" as const),
+      q: query.q,
+      sort: query.sort,
+    };
+    const sorted = sortRows(
+      filtered.sort((a, b) => a.path.localeCompare(b.path) || a.key.localeCompare(b.key)),
+      pageQuery,
+      {
+        key: (secret) => secret.key,
+        path: (secret) => secret.path,
+        version: (secret) => secret.version,
+        updatedAt: (secret) => secret.updatedAt.getTime(),
+        createdAt: (secret) => secret.createdAt.getTime(),
+      },
+    );
+    const page = paginate(sorted, pageQuery);
+    const values = page.items.map((secret) => ({
+      key: secret.key,
+      value: secret.value,
+      path: secret.path,
+      version: secret.version,
+      createdAt: secret.createdAt.toISOString(),
+      updatedAt: secret.updatedAt.toISOString(),
+      importedFrom: secret.importedFrom,
+    }));
 
     await auditRead(deps, actor, project.id, environment.slug, path, values.length, request.ip);
-    return { secrets: values };
+    return {
+      secrets: values,
+      total: page.total,
+      limit: page.limit,
+      offset: page.offset,
+    };
   });
 
   app.get("/api/projects/:projectId/secrets/:key", async (request) => {
@@ -140,6 +175,7 @@ export function registerSecretRoutes(app: FastifyInstance, deps: Deps): void {
     const { projectId, key } = request.params as { projectId: string; key: string };
     const query = parse(secretQuerySchema, request.query);
     const project = await loadProject(deps, actor, projectId);
+    assertServerManaged(project);
     const environment = await loadEnvironment(deps, project.id, query.env);
     if (actor.type === "machine") assertEnvScope(actor, environment.id);
 
@@ -169,16 +205,22 @@ export function registerSecretRoutes(app: FastifyInstance, deps: Deps): void {
 
   app.post("/api/projects/:projectId/secrets", async (request, reply) => {
     const actor = await requireActor(deps, request);
-    assertCanWrite(actor);
     const { projectId } = request.params as { projectId: string };
     const input = parse(setSecretSchema, request.body);
     const project = await loadProject(deps, actor, projectId);
+    assertServerManaged(project);
     const environment = await loadEnvironment(deps, project.id, input.env);
     if (actor.type === "machine") assertEnvScope(actor, environment.id);
 
     const path = normalizePath(input.path);
     const key = parse(secretKeySchema, input.key);
     parse(secretPathSchema, path);
+
+    await assertSecretPermission(deps, actor, "secret:write", {
+      projectId: project.id,
+      environmentId: environment.id,
+      path,
+    });
 
     if (environment.approvalRequired) {
       const changeRequest = await createChangeRequest(
@@ -237,14 +279,19 @@ export function registerSecretRoutes(app: FastifyInstance, deps: Deps): void {
 
   app.post("/api/projects/:projectId/secrets/import", async (request, reply) => {
     const actor = await requireActor(deps, request);
-    assertCanWrite(actor);
     const { projectId } = request.params as { projectId: string };
     const input = parse(importSecretsSchema, request.body);
     const project = await loadProject(deps, actor, projectId);
+    assertServerManaged(project);
     const environment = await loadEnvironment(deps, project.id, input.env);
     if (actor.type === "machine") assertEnvScope(actor, environment.id);
 
     const path = normalizePath(input.path);
+    await assertSecretPermission(deps, actor, "secret:write", {
+      projectId: project.id,
+      environmentId: environment.id,
+      path,
+    });
     const entries = parseImportContents(input.contents, input.format ?? "env");
     for (const entry of entries) {
       if (entry.value.length > 100_000) {
@@ -342,14 +389,19 @@ export function registerSecretRoutes(app: FastifyInstance, deps: Deps): void {
 
   app.delete("/api/projects/:projectId/secrets/:key", async (request, reply) => {
     const actor = await requireActor(deps, request);
-    assertCanWrite(actor);
     const { projectId, key } = request.params as { projectId: string; key: string };
     const query = parse(secretQuerySchema, request.query);
     const project = await loadProject(deps, actor, projectId);
+    assertServerManaged(project);
     const environment = await loadEnvironment(deps, project.id, query.env);
     if (actor.type === "machine") assertEnvScope(actor, environment.id);
 
     const path = normalizePath(query.path);
+    await assertSecretPermission(deps, actor, "secret:delete", {
+      projectId: project.id,
+      environmentId: environment.id,
+      path,
+    });
     await findSecret(deps, project.id, environment.id, path, key);
 
     if (environment.approvalRequired) {
@@ -393,40 +445,64 @@ export function registerSecretRoutes(app: FastifyInstance, deps: Deps): void {
     const { projectId, key } = request.params as { projectId: string; key: string };
     const query = parse(secretQuerySchema, request.query);
     const project = await loadProject(deps, actor, projectId);
+    assertServerManaged(project);
     const environment = await loadEnvironment(deps, project.id, query.env);
     if (actor.type === "machine") assertEnvScope(actor, environment.id);
 
     const path = normalizePath(query.path);
     const secret = await findSecret(deps, project.id, environment.id, path, key);
-    const rows = await deps.db
+    const allRows = await deps.db
       .select()
       .from(secretVersions)
       .where(eq(secretVersions.secretId, secret.id))
       .orderBy(desc(secretVersions.version));
 
+    const versionQuery = parse(paginationSchema.merge(secretQuerySchema), request.query);
+    const versionPageQuery = {
+      limit: versionQuery.limit ?? 25,
+      offset: versionQuery.offset ?? 0,
+      order: versionQuery.order ?? ("asc" as const),
+      q: versionQuery.q,
+      sort: versionQuery.sort,
+    };
+    const filteredVersions = sortRows(allRows, versionPageQuery, {
+      version: (row) => row.version,
+      createdAt: (row) => row.createdAt.getTime(),
+    });
+    const versionPage = paginate(filteredVersions, versionPageQuery);
+
     return {
-      versions: rows.map((row) => ({
+      versions: versionPage.items.map((row) => ({
         version: row.version,
         comment: row.comment,
         fingerprint: row.fingerprint,
+        fingerprintVersion: row.fingerprintVersion,
         createdByType: row.createdByType,
         createdById: row.createdById,
         createdAt: row.createdAt.toISOString(),
         current: row.version === secret.latestVersion,
       })),
+      total: versionPage.total,
+      limit: versionPage.limit,
+      offset: versionPage.offset,
     };
   });
 
   app.post("/api/projects/:projectId/secrets/:key/rollback", async (request, reply) => {
     const actor = await requireActor(deps, request);
-    assertCanWrite(actor);
     const { projectId, key } = request.params as { projectId: string; key: string };
     const input = parse(rollbackSchema, request.body);
     const project = await loadProject(deps, actor, projectId);
+    assertServerManaged(project);
     const environment = await loadEnvironment(deps, project.id, input.env);
     if (actor.type === "machine") assertEnvScope(actor, environment.id);
 
     const path = normalizePath(input.path);
+    await assertSecretPermission(deps, actor, "secret:write", {
+      projectId: project.id,
+      environmentId: environment.id,
+      path,
+    });
     const secret = await findSecret(deps, project.id, environment.id, path, key);
     const targetRows = await deps.db
       .select()
@@ -498,6 +574,7 @@ export function registerSecretRoutes(app: FastifyInstance, deps: Deps): void {
     const { projectId } = request.params as { projectId: string };
     const query = parse(exportQuerySchema, request.query);
     const project = await loadProject(deps, actor, projectId);
+    assertServerManaged(project);
     const environment = await loadEnvironment(deps, project.id, query.env);
     if (actor.type === "machine") assertEnvScope(actor, environment.id);
 

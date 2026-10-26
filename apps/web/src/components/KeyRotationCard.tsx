@@ -4,7 +4,8 @@ import { api, errorMessage } from "../api";
 import { Badge } from "./ui/badge";
 import { Button } from "./ui/button";
 import { Card } from "./ui/card";
-import { Notice } from "./Notice";
+import { useToastMessage } from "../hooks/useToastMessage";
+import { useConfirm } from "./ConfirmProvider";
 
 interface KeyStatus {
   currentVersion: number;
@@ -14,10 +15,13 @@ interface KeyStatus {
 }
 
 export function KeyRotationCard() {
+  const confirm = useConfirm();
   const [status, setStatus] = useState<KeyStatus | null>(null);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const [busy, setBusy] = useState(false);
+  useToastMessage("success", notice, setNotice);
+  useToastMessage("error", error, setError);
 
   const load = useCallback(async () => {
     try {
@@ -34,9 +38,13 @@ export function KeyRotationCard() {
 
   async function rotate() {
     if (
-      !window.confirm(
-        "Rewrap every project data key with the next master key? This is safe while the old key is still configured.",
-      )
+      !(await confirm({
+        title: "Rotate the master key?",
+        description:
+          "Rewrap every project data key with the next master key. This is safe while the old key is still configured.",
+        confirmLabel: "rotate keys",
+        destructive: true,
+      }))
     )
       return;
     setBusy(true);
@@ -65,17 +73,6 @@ export function KeyRotationCard() {
         the next key to <code>OPENSIEL_MASTER_KEY</code> and remove the old one.
       </p>
       <Card className="space-y-3 p-4">
-        {notice && (
-          <Notice tone="success" onDismiss={() => setNotice("")}>
-            {notice}
-          </Notice>
-        )}
-        {error && (
-          <Notice tone="error" onDismiss={() => setError("")}>
-            {error}
-          </Notice>
-        )}
-
         {status ? (
           <div className="flex flex-wrap items-center justify-between gap-3">
             <div className="space-y-1 text-sm">

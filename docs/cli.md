@@ -48,6 +48,10 @@ opensiel login --api-url https://opensiel.example.com --token "$TOKEN"
 `opensiel login` stores a session token in the config file. For automation, prefer machine
 identities (see below).
 
+If TOTP is enabled on the account, login prompts for a 6-digit code (or a recovery code)
+before storing the token. Accounts in an organization with a required MFA policy must enroll
+in the web UI first.
+
 ## Link a project
 
 ```bash
@@ -67,9 +71,28 @@ opensiel secrets set DATABASE_URL=postgres://localhost/app --env dev
 opensiel secrets set FEATURE_FLAG=on --env dev --comment "enable checkout"
 
 opensiel secrets versions DATABASE_URL --env dev
+opensiel secrets diff DATABASE_URL --from 2 --to 4 --env dev --reveal
 opensiel secrets rollback DATABASE_URL --version 1 --env dev
 opensiel secrets delete OLD_KEY --env dev
 ```
+
+### Version diff and point-in-time restore
+
+```bash
+# compare two versions (values are masked unless --reveal is passed)
+opensiel secrets diff DATABASE_URL --from 1 --to 3 --env dev
+
+# preview the environment as it was at a timestamp
+opensiel secrets restore --at 2026-10-22T10:00:00Z --env prod
+
+# apply it: creates a new version for every changed key, revives deleted keys,
+# and deletes keys that did not exist yet at that time
+opensiel secrets restore --at 2026-10-22T10:00:00Z --env prod --apply
+```
+
+Restores are additive: history is never rewritten. The command is a dry run unless `--apply`
+is passed, and only owners/admins can apply a restore. Environments with approvals enabled
+refuse bulk restores — restore secrets one at a time there.
 
 Values may use references (`${OTHER_KEY}`). Folder paths are supported with `--path /backend`;
 `secrets list` shows the path in the key column.
@@ -92,6 +115,24 @@ keys get a new version. Importing into an approval-required environment is refus
 changes one at a time there.
 
 `export` only includes root-folder secrets.
+
+## Encryption with transit keys
+
+Encrypt application data without managing keys yourself. The plaintext is read from stdin by
+default, so it does not land in shell history:
+
+```bash
+echo -n "card=4111" | opensiel crypto encrypt --context user:42
+opensiel crypto decrypt 'osl1.default.1.…' --context user:42
+
+opensiel crypto keys list
+opensiel crypto keys create billing
+opensiel crypto keys rotate billing
+```
+
+The context is bound to the ciphertext; decrypting with a different context fails with
+`decrypt_failed`. Named keys default to `default` and are created on first use.
+`keys create` and `keys rotate` require an owner or admin.
 
 ## Run a command with secrets
 
@@ -121,6 +162,40 @@ OPENSIEL_TOKEN="$TOKEN" opensiel run --projectId <uuid> --env prod -- node serve
 ```
 
 Machine tokens expire after 15 minutes; request a new one in each job.
+
+### JWT auth (Kubernetes, CI OIDC)
+
+If the identity has a trusted-JWT auth method configured, exchange a workload token (for
+example a projected Kubernetes service-account token) instead of a client secret:
+
+```bash
+TOKEN=$(curl -s -X POST "$OPENSIEL_API/api/auth/token/jwt" \
+  -H 'content-type: application/json' \
+  -d "{\"clientId\":\"$CLIENT_ID\",\"jwt\":\"$WORKLOAD_JWT\"}" \
+  | jq -r .accessToken)
+
+OPENSIEL_TOKEN="$TOKEN" opensiel run --env prod -- node server.js
+```
+
+The token must be issued by the configured issuer for the configured audience and, when an
+allowlist is set, match an allowed subject. See
+[Kubernetes → workload identity](kubernetes.md#workload-identity-with-service-account-tokens).
+
+### AWS IAM auth
+
+If the identity trusts an AWS principal, sign a `sts:GetCallerIdentity` request (for example
+with the AWS CLI or SDK) and post the signed headers:
+
+```bash
+curl -s -X POST "$OPENSIEL_API/api/auth/token/aws" \
+  -H 'content-type: application/json' \
+  -d "{\"clientId\":\"$CLIENT_ID\",\"authorization\":\"AWS4-HMAC-SHA256 ...\",\"amzDate\":\"20261022T140000Z\",\"securityToken\":\"$SESSION_TOKEN\"}" \
+  | jq -r .accessToken
+```
+
+The signature must be for `POST https://sts.amazonaws.com/` with body
+`Action=GetCallerIdentity&Version=2011-06-15`. Requests older than five minutes or replayed
+with the same signature are rejected, and the caller ARN must match the identity's allowlist.
 
 ## Other commands
 

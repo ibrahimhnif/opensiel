@@ -10,12 +10,12 @@ import {
   clearSessionCookie,
   createSession,
   hashPassword,
-  MACHINE_TOKEN_TTL_SECONDS,
+  MFA_CHALLENGE_TTL_SECONDS,
   requireActor,
   requireUser,
   revokeSession,
   setSessionCookie,
-  signMachineToken,
+  signMfaChallenge,
   verifyMachineSecret,
   verifyPassword,
   SESSION_COOKIE,
@@ -28,12 +28,13 @@ import {
   orgs,
   users,
   identities,
-  identityScopes,
   projects,
+  userMfa,
 } from "../db/schema.js";
 import { createProject, DEFAULT_ENVIRONMENTS } from "../projects-service.js";
 import { slugify, uniqueOrgSlug } from "../access.js";
 import { writeAudit } from "../audit.js";
+import { issueIdentityToken } from "../identity-token.js";
 import type { Actor, Deps } from "../types.js";
 
 function userDto(actor: Extract<Actor, { type: "user" }>) {
@@ -142,6 +143,39 @@ export function registerAuthRoutes(app: FastifyInstance, deps: Deps): void {
       const row = rows[0];
       const valid = row ? await verifyPassword(row.user.passwordHash, input.password) : false;
       if (!row || !valid) throw unauthorized("invalid email or password");
+
+      const mfaRows = await deps.db
+        .select()
+        .from(userMfa)
+        .where(eq(userMfa.userId, row.user.id))
+        .limit(1);
+      if (mfaRows[0]?.enabled) {
+        const challengeToken = await signMfaChallenge(deps.env, row.user.id, "login");
+        await writeAudit(deps, {
+          orgId: row.org.id,
+          actorType: "user",
+          actorId: row.user.id,
+          actorName: row.user.name,
+          action: "mfa.challenge",
+          resourceType: "user",
+          resourceId: row.user.id,
+          metadata: {},
+          ip: request.ip,
+        });
+        return {
+          mfaRequired: true,
+          challengeToken,
+          expiresIn: MFA_CHALLENGE_TTL_SECONDS,
+        };
+      }
+
+      if (row.org.mfaRequired) {
+        return reply.code(403).send({
+          error: "mfa_enrollment_required",
+          message: "this organization requires MFA; enroll to continue",
+          enrollmentToken: await signMfaChallenge(deps.env, row.user.id, "enroll"),
+        });
+      }
 
       const token = await createSession(deps.db, row.user.id);
       setSessionCookie(reply, token, deps.env.secureCookies);
@@ -300,65 +334,42 @@ export function registerAuthRoutes(app: FastifyInstance, deps: Deps): void {
     },
   );
 
+  const universalToken = async (request: FastifyRequest) => {
+    const input = parse(tokenRequestSchema, request.body);
+    const rows = await deps.db
+      .select()
+      .from(identities)
+      .where(eq(identities.clientId, input.clientId))
+      .limit(1);
+    const identity = rows[0];
+    if (
+      !identity ||
+      identity.revokedAt ||
+      !verifyMachineSecret(identity.secretHash, input.clientSecret)
+    ) {
+      throw unauthorized("invalid client credentials");
+    }
+
+    const projectRows = await deps.db
+      .select()
+      .from(projects)
+      .where(eq(projects.id, identity.projectId))
+      .limit(1);
+    const project = projectRows[0];
+    if (!project) throw unauthorized("invalid client credentials");
+
+    return issueIdentityToken(deps, identity, project, request.ip, "universal");
+  };
+
   app.post(
     "/api/auth/token",
     { config: { rateLimit: { max: 20, timeWindow: "1 minute" } } },
-    async (request) => {
-      const input = parse(tokenRequestSchema, request.body);
-      const rows = await deps.db
-        .select()
-        .from(identities)
-        .where(eq(identities.clientId, input.clientId))
-        .limit(1);
-      const identity = rows[0];
-      if (
-        !identity ||
-        identity.revokedAt ||
-        !verifyMachineSecret(identity.secretHash, input.clientSecret)
-      ) {
-        throw unauthorized("invalid client credentials");
-      }
+    universalToken,
+  );
 
-      const projectRows = await deps.db
-        .select()
-        .from(projects)
-        .where(eq(projects.id, identity.projectId))
-        .limit(1);
-      const project = projectRows[0];
-      if (!project) throw unauthorized("invalid client credentials");
-
-      const scopes = await deps.db
-        .select()
-        .from(identityScopes)
-        .where(eq(identityScopes.identityId, identity.id));
-
-      const accessToken = await signMachineToken(deps.env, {
-        identityId: identity.id,
-        name: identity.name,
-        role: identity.role,
-        projectId: identity.projectId,
-        orgId: project.orgId,
-        envIds: scopes.map((scope) => scope.environmentId),
-      });
-
-      await writeAudit(deps, {
-        orgId: project.orgId,
-        projectId: project.id,
-        actorType: "machine",
-        actorId: identity.id,
-        actorName: identity.name,
-        action: "identity.token",
-        resourceType: "identity",
-        resourceId: identity.id,
-        metadata: { clientId: sha256(input.clientId).slice(0, 12) },
-        ip: request.ip,
-      });
-
-      return {
-        accessToken,
-        expiresIn: MACHINE_TOKEN_TTL_SECONDS,
-        tokenType: "Bearer",
-      };
-    },
+  app.post(
+    "/api/auth/token/universal",
+    { config: { rateLimit: { max: 20, timeWindow: "1 minute" } } },
+    universalToken,
   );
 }

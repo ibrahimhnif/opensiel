@@ -1,7 +1,10 @@
 import { buildApp } from "./app.js";
+import { startAuditSink } from "./audit-sink.js";
 import { createDb } from "./db/client.js";
 import { runMigrations } from "./db/migrate.js";
 import { revokeExpiredLeases } from "./dynamic.js";
+import { startRotationScheduler } from "./rotation.js";
+import { startSyncScheduler } from "./sync.js";
 import { loadEnv } from "./env.js";
 import { resolveMasterKey } from "./kms.js";
 
@@ -33,9 +36,16 @@ const reaper =
       }, 60_000);
 reaper?.unref();
 
+const auditSink = startAuditSink(deps);
+const rotations = startRotationScheduler(deps);
+const syncs = startSyncScheduler(deps);
+
 const shutdown = async (signal: string) => {
   app.log.info({ signal }, "shutting down");
   if (reaper) clearInterval(reaper);
+  if (auditSink) clearInterval(auditSink);
+  if (rotations) clearInterval(rotations);
+  if (syncs) clearInterval(syncs);
   await app.close();
   await sql.end({ timeout: 5 });
   process.exit(0);

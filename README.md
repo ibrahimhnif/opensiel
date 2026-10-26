@@ -63,12 +63,17 @@ Hosted docs: <https://opensiel.liostech.id/docs/> (the same pages are in [`docs/
 | **Versioning & rollback**   | Every write is an immutable version. Roll back creates a new version and keeps history.                                                                 |
 | **Approvals**               | Opt-in per environment. Writes, deletes, and rollbacks become change requests that need N approvals from owners/admins; requesters cannot self-approve. |
 | **Team management**         | Email invites, roles (`owner`, `admin`, `member`, `viewer`), last-owner protection, session revocation on removal.                                      |
-| **Machine identities**      | Client credentials, 15-minute tokens, environment scopes, `viewer`/`member` roles.                                                                      |
+| **Scoped roles**            | Custom roles with project/environment/path grants and optional expiry, layered on built-in roles.                                                       |
+| **Machine identities**      | Client credentials, trusted JWTs (Kubernetes/CI OIDC), AWS SigV4, short-lived tokens, environment scopes.                                               |
 | **References & imports**    | `${KEY}` / `${/path/KEY}` resolution and cross-environment imports, resolved at read time.                                                              |
 | **Bulk import**             | Paste or upload a `.env` (or flat JSON); existing keys get a new version.                                                                               |
 | **SSO**                     | OIDC (authorization code + PKCE) and SAML (signed assertions), with invite-based or automatic organization provisioning.                                |
+| **MFA**                     | TOTP with single-use recovery codes, per-organization enforcement for password logins.                                                                  |
 | **Secret scanning**         | Scan pasted text or files for stored secrets and common credential patterns, with masked findings.                                                      |
 | **Dynamic credentials**     | Issue short-lived PostgreSQL roles with a TTL; revoke manually or let the reaper drop them at expiry.                                                   |
+| **Secret rotation**         | Schedule static-secret rotation with dual-phase rollover (PostgreSQL roles or an HTTP rotator), grace windows, and retries.                             |
+| **Secret syncs**            | Push an environment to AWS/GCP/Azure, Vercel, Cloudflare, GitHub Actions, Kubernetes, or a webhook on a schedule.                                       |
+| **End-to-end encryption**   | Opt-in per project: keys stay client-side; the server stores only ciphertext and metadata.                                                              |
 | **Webhooks**                | HMAC-SHA256 signed event deliveries with retries and delivery status.                                                                                   |
 | **Master key rotation**     | Rewrap project data keys to a new KEK without re-encrypting secrets; optional AWS KMS.                                                                  |
 | **Audit log**               | Writes, reads, rollbacks, SSO logins, leases, and webhooks — values are never recorded.                                                                 |

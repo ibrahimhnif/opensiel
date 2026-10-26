@@ -158,7 +158,7 @@ const program = new Command();
 program
   .name("opensiel")
   .description("opensiel — self-hosted secrets manager CLI")
-  .version("0.1.0")
+  .version("0.1.1")
   .option("--api-url <url>", "opensiel server URL")
   .option("--token <token>", "session or machine token");
 
@@ -190,10 +190,25 @@ program
 
     const email = (options.email as string | undefined) ?? (await prompt("email: "));
     const password = (options.password as string | undefined) ?? (await prompt("password: "));
-    const result = await apiRequest<{ token: string; user: { email: string; name: string } }>(
-      "/api/auth/login",
-      { method: "POST", body: { email, password }, apiUrl },
-    );
+    const result = await apiRequest<{
+      token?: string;
+      user: { email: string; name: string };
+      mfaRequired?: boolean;
+      challengeToken?: string;
+    }>("/api/auth/login", { method: "POST", body: { email, password }, apiUrl });
+
+    if (result.mfaRequired && result.challengeToken) {
+      const code = await prompt("MFA code: ");
+      const completed = await apiRequest<{ token: string; user: { email: string; name: string } }>(
+        "/api/auth/mfa/login",
+        { method: "POST", body: { challengeToken: result.challengeToken, code }, apiUrl },
+      );
+      writeConfig({ apiUrl, token: completed.token });
+      console.log(`logged in as ${completed.user.email} (${apiUrl})`);
+      return;
+    }
+
+    if (!result.token) fail("login did not return a token");
     writeConfig({ apiUrl, token: result.token });
     console.log(`logged in as ${result.user.email} (${apiUrl})`);
   });
@@ -403,6 +418,7 @@ secrets
         version: number;
         comment: string | null;
         fingerprint: string;
+        fingerprintVersion: number;
         createdByType: string;
         createdAt: string;
         current: boolean;
@@ -442,6 +458,88 @@ secrets
         ? `rollback of ${key} submitted for approval (${result.changeRequest.id})`
         : `rolled back ${key} to v${options.version} (new version v${result.secret?.version})`,
     );
+  });
+
+secrets
+  .command("diff <key>")
+  .description("compare two versions of a secret")
+  .option("--env <env>")
+  .option("--path <path>")
+  .option("--from <version>", "older version")
+  .option("--to <version>", "newer version")
+  .option("--reveal", "print full values instead of masked ones")
+  .action(async (key: string, options) => {
+    const projectId = resolveProjectId();
+    const env = resolveEnv(options.env as string | undefined);
+    const query = new URLSearchParams({ env });
+    if (options.path) query.set("path", options.path as string);
+    if (options.from) query.set("from", String(options.from));
+    if (options.to) query.set("to", String(options.to));
+    if (options.reveal) query.set("reveal", "true");
+    const { diff } = await apiRequest<{
+      diff: {
+        changed: boolean;
+        revealed: boolean;
+        from: { version: number; value: string };
+        to: { version: number; value: string };
+      };
+    }>(`/api/projects/${projectId}/secrets/${encodeURIComponent(key)}/diff?${query}`);
+
+    if (!diff.changed) {
+      console.log(`no change between v${diff.from.version} and v${diff.to.version}`);
+      return;
+    }
+    console.log(`- v${diff.from.version}: ${diff.from.value}`);
+    console.log(`+ v${diff.to.version}: ${diff.to.value}`);
+    if (!diff.revealed) console.log("values are masked; pass --reveal to print them");
+  });
+
+secrets
+  .command("restore")
+  .description("preview or restore an environment to a point in time")
+  .requiredOption("--at <timestamp>", "ISO timestamp, for example 2026-10-22T10:00:00Z")
+  .option("--env <env>")
+  .option("--apply", "apply the restore (default is a dry run)")
+  .action(async (options) => {
+    const projectId = resolveProjectId();
+    const env = resolveEnv(options.env as string | undefined);
+    const result = await apiRequest<{
+      dryRun: boolean;
+      restored: number;
+      revived: number;
+      deleted: number;
+      changes: {
+        key: string;
+        path: string;
+        action: string;
+        currentVersion: number;
+        targetVersion: number | null;
+      }[];
+    }>(`/api/projects/${projectId}/point-in-time/restore`, {
+      method: "POST",
+      body: { env, at: options.at, dryRun: !options.apply },
+    });
+
+    if (result.changes.length === 0) {
+      console.log(`no changes needed for ${env} at ${options.at}`);
+      return;
+    }
+    printTable(
+      ["ACTION", "KEY", "CURRENT", "TARGET"],
+      result.changes.map((change) => [
+        change.action,
+        change.path === "/" ? change.key : `${change.path}/${change.key}`,
+        `v${change.currentVersion}`,
+        change.targetVersion === null ? "-" : `v${change.targetVersion}`,
+      ]),
+    );
+    if (result.dryRun) {
+      console.log("dry run; pass --apply to restore");
+    } else {
+      console.log(
+        `restored ${result.restored}, revived ${result.revived}, deleted ${result.deleted}`,
+      );
+    }
   });
 
 program
@@ -494,6 +592,91 @@ program
       if (signal) process.kill(process.pid, signal);
       process.exit(code ?? 1);
     });
+  });
+
+const crypto = program
+  .command("crypto")
+  .description("encrypt and decrypt data with project transit keys");
+
+crypto
+  .command("encrypt [value]")
+  .description("encrypt a value (reads stdin when no value is given)")
+  .option("--key <name>", "transit key name", "default")
+  .option("--context <context>", "binding context for the ciphertext")
+  .action(async (value: string | undefined, options) => {
+    const projectId = resolveProjectId();
+    const plaintext = value === undefined ? readFileSync(0, "utf8").replace(/\r?\n$/, "") : value;
+    if (!plaintext) fail("nothing to encrypt");
+
+    const result = await apiRequest<{ ciphertext: string; key: string; keyVersion: number }>(
+      `/api/projects/${projectId}/crypto/encrypt`,
+      {
+        method: "POST",
+        body: { plaintext, key: options.key, context: options.context },
+      },
+    );
+    process.stdout.write(`${result.ciphertext}\n`);
+  });
+
+crypto
+  .command("decrypt <ciphertext>")
+  .description("decrypt a transit envelope")
+  .option("--context <context>", "binding context used at encryption time")
+  .action(async (ciphertext: string, options) => {
+    const projectId = resolveProjectId();
+    const result = await apiRequest<{ plaintext: string }>(
+      `/api/projects/${projectId}/crypto/decrypt`,
+      { method: "POST", body: { ciphertext, context: options.context } },
+    );
+    process.stdout.write(result.plaintext);
+  });
+
+const cryptoKeys = crypto.command("keys").description("manage transit keys");
+
+cryptoKeys
+  .command("list")
+  .description("list transit key names")
+  .action(async () => {
+    const projectId = resolveProjectId();
+    const { keys } = await apiRequest<{
+      keys: { name: string; version: number; createdAt: string }[];
+    }>(`/api/projects/${projectId}/crypto/keys`);
+    if (keys.length === 0) {
+      console.log("no transit keys");
+      return;
+    }
+    printTable(
+      ["NAME", "VERSION", "CREATED"],
+      keys.map((key) => [
+        key.name,
+        String(key.version),
+        key.createdAt.slice(0, 19).replace("T", " "),
+      ]),
+    );
+  });
+
+cryptoKeys
+  .command("create <name>")
+  .description("create a named transit key")
+  .action(async (name: string) => {
+    const projectId = resolveProjectId();
+    const result = await apiRequest<{ key: { name: string; version: number } }>(
+      `/api/projects/${projectId}/crypto/keys`,
+      { method: "POST", body: { name } },
+    );
+    console.log(`created transit key ${result.key.name} (v${result.key.version})`);
+  });
+
+cryptoKeys
+  .command("rotate <name>")
+  .description("rotate a named transit key")
+  .action(async (name: string) => {
+    const projectId = resolveProjectId();
+    const result = await apiRequest<{ key: { name: string; version: number } }>(
+      `/api/projects/${projectId}/crypto/keys/${encodeURIComponent(name)}/rotate`,
+      { method: "POST" },
+    );
+    console.log(`rotated transit key ${result.key.name} to v${result.key.version}`);
   });
 
 program

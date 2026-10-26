@@ -60,6 +60,48 @@ Keep the old key until step 4. Projects on an unknown key version fail closed wi
 When using AWS KMS, wrap the new master key with KMS and update
 `OPENSIEL_KMS_WRAPPED_MASTER_KEY` after rewrapping projects.
 
+## Secret syncs
+
+The API runs a sync scheduler every 60 seconds (advisory-locked across replicas).
+
+```sql
+select id, provider, environment_id, path, enabled, last_status, last_error,
+       failure_count, last_run_at, next_run_at
+from secret_syncs
+order by next_run_at;
+```
+
+- Manual run: `POST /api/projects/:id/syncs/:syncId/run` (owner/admin).
+- A failed run keeps the previous provider state and backs off exponentially (max one hour).
+- Only secrets at the configured path are pushed; removing a secret locally does not delete the
+  remote copy.
+- Provider configs are encrypted at rest; rotate credentials by deleting and recreating the
+  sync until config editing is added.
+- Kubernetes needs an API URL, a bearer token, a namespace, and a Secret name; provide
+  `caData` (base64) for a private CA or `skipTlsVerify` for local clusters.
+- AWS/GCP/Azure use the standard SDK credential chain unless explicit credentials are set in
+  the config.
+
+## Secret rotation
+
+The API runs a rotation scheduler every 60 seconds (advisory-locked across replicas).
+
+```sql
+select id, secret_key, provider, enabled, last_status, last_error,
+       failure_count, last_run_at, next_run_at, previous_revoke_after
+from rotation_policies
+order by next_run_at;
+```
+
+- A failed rotation keeps the current secret value and backs off exponentially (max one hour).
+- `previous_revoke_after` shows when the retired credential will be revoked. To force it now,
+  set the timestamp to the past and wait for the next tick.
+- Manual runs: `POST /api/projects/:id/rotations/:rotationId/rotate` (owner/admin).
+- PostgreSQL rotation needs an admin connection that can `ALTER ROLE`; both roles should have
+  the same grants, and the application reads whichever username is currently in the secret.
+- HTTP rotation endpoints receive `{ projectId, environment, path, key }` and must return
+  `{ value }` or `{ username, password }`; revoke receives the stored credential.
+
 ## Dynamic credential leases
 
 - The API drops roles at expiry with a sweep every 60 seconds.
@@ -93,6 +135,24 @@ delete from audit_logs where created_at < now() - interval '90 days';
 ```
 
 Run it deliberately; audit history is part of the product.
+
+### Shipping audit logs
+
+Set `OPENSIEL_AUDIT_SINK` to `http`, `splunk`, `datadog`, or `s3` (see
+[Configuration](configuration.md#audit-sink)). The worker starts with the API and delivers new
+rows every `OPENSIEL_AUDIT_SINK_INTERVAL_SECONDS`.
+
+Check progress and failures:
+
+```sql
+select id, last_seq, failure_count, last_error, last_success_at, next_attempt_at
+from audit_sink_state;
+```
+
+A non-zero `failure_count` with a future `next_attempt_at` means the sink is in backoff; the
+same message is written to the server log. Fix the endpoint and wait for the backoff to expire
+(or reset `next_attempt_at`). The checkpoint never advances past a failed batch, so events are
+not lost.
 
 ## Disaster recovery checklist
 

@@ -8,6 +8,8 @@ import { Landing } from "./components/Landing";
 import { Login } from "./components/Login";
 import { Dashboard } from "./components/Dashboard";
 import { AcceptInvite } from "./components/AcceptInvite";
+import { ConfirmProvider } from "./components/ConfirmProvider";
+import { Toaster } from "./components/ui/sonner";
 
 interface BootstrapConfig {
   initialized: boolean;
@@ -93,71 +95,76 @@ export function App() {
   const redirectTarget = nextParam.startsWith("/app") ? nextParam : "/app";
 
   return (
-    <Routes>
-      <Route
-        path="/"
-        element={
-          inviteToken ? (
-            <Navigate to={`/invite?token=${encodeURIComponent(inviteToken)}`} replace />
-          ) : (
-            <Landing authenticated={Boolean(user)} />
-          )
-        }
-      />
-      <Route
-        path="/login"
-        element={
-          user ? (
-            <Navigate to={redirectTarget} replace />
-          ) : (
-            <Login
-              config={config}
-              initialError={ssoError}
-              onLogin={(nextUser) => {
-                setUser(nextUser);
-                navigate(redirectTarget, { replace: true });
-              }}
-            />
-          )
-        }
-      />
-      <Route
-        path="/app"
-        element={
-          user ? (
-            <Dashboard
-              user={user}
-              onSignedOut={() => {
-                setUser(null);
-                navigate("/", { replace: true });
-              }}
-            />
-          ) : (
-            <Navigate
-              to={`/login?next=${encodeURIComponent(location.pathname + location.search)}`}
-              replace
-            />
-          )
-        }
-      />
-      <Route
-        path="/invite"
-        element={
-          acceptToken ? (
-            <AcceptInvite
-              token={acceptToken}
-              onDone={(nextUser) => {
-                setUser(nextUser);
-                navigate("/app", { replace: true });
-              }}
-              onCancel={() => navigate("/")}
-            />
-          ) : (
-            <Navigate to="/" replace />
-          )
-        }
-      />
-      <Route path="*" element={<Landing authenticated={Boolean(user)} />} />
-    </Routes>
+    <>
+      <ConfirmProvider>
+        <Routes>
+          <Route
+            path="/"
+            element={
+              inviteToken ? (
+                <Navigate to={`/invite?token=${encodeURIComponent(inviteToken)}`} replace />
+              ) : (
+                <Landing authenticated={Boolean(user)} />
+              )
+            }
+          />
+          <Route
+            path="/login"
+            element={
+              user ? (
+                <Navigate to={redirectTarget} replace />
+              ) : (
+                <Login
+                  config={config}
+                  initialError={ssoError}
+                  onLogin={(nextUser) => {
+                    setUser(nextUser);
+                    navigate(redirectTarget, { replace: true });
+                  }}
+                />
+              )
+            }
+          />
+          <Route
+            path="/app"
+            element={
+              user ? (
+                <Dashboard
+                  user={user}
+                  onSignedOut={() => {
+                    setUser(null);
+                    navigate("/", { replace: true });
+                  }}
+                />
+              ) : (
+                <Navigate
+                  to={`/login?next=${encodeURIComponent(location.pathname + location.search)}`}
+                  replace
+                />
+              )
+            }
+          />
+          <Route
+            path="/invite"
+            element={
+              acceptToken ? (
+                <AcceptInvite
+                  token={acceptToken}
+                  onDone={(nextUser) => {
+                    setUser(nextUser);
+                    navigate("/app", { replace: true });
+                  }}
+                  onCancel={() => navigate("/")}
+                />
+              ) : (
+                <Navigate to="/" replace />
+              )
+            }
+          />
+          <Route path="*" element={<Landing authenticated={Boolean(user)} />} />
+        </Routes>
+      </ConfirmProvider>
+      <Toaster />
+    </>
   );
 }

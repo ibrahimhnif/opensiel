@@ -105,6 +105,9 @@ export interface ScanResult {
   characters: number;
   scannedEnvironments: number;
   scannedSecrets: number;
+  total: number;
+  limit: number;
+  offset: number;
 }
 
 export const createDynamicConfigSchema = z.object({
@@ -157,6 +160,7 @@ export const webhookEvents = [
   "secret.deleted",
   "secret.rollback",
   "secret.import",
+  "secret.restore",
   "change_request.created",
   "change_request.approved",
   "change_request.rejected",
@@ -186,18 +190,302 @@ export interface WebhookDto {
   createdAt: string;
 }
 
+export const identityIpSchema = z
+  .string()
+  .trim()
+  .max(64)
+  .regex(/^[0-9a-fA-F:.]+(\/\d{1,3})?$/, "use an IP address or CIDR range");
+
 export const createIdentitySchema = z.object({
   name: nameSchema,
   role: identityRoleSchema.default("viewer"),
   environmentIds: z.array(z.string().uuid()).min(1, "pick at least one environment"),
+  tokenTtlSeconds: z.number().int().min(60).max(86_400).optional(),
+  ipAllowlist: z.array(identityIpSchema).max(50).nullable().optional(),
+  hourlyTokenCap: z.number().int().min(1).max(100_000).nullable().optional(),
 });
 export type CreateIdentityInput = z.infer<typeof createIdentitySchema>;
+
+export const updateIdentitySchema = z.object({
+  name: nameSchema.optional(),
+  role: identityRoleSchema.optional(),
+  environmentIds: z.array(z.string().uuid()).min(1).optional(),
+  tokenTtlSeconds: z.number().int().min(60).max(86_400).optional(),
+  ipAllowlist: z.array(identityIpSchema).max(50).nullable().optional(),
+  hourlyTokenCap: z.number().int().min(1).max(100_000).nullable().optional(),
+});
+export type UpdateIdentityInput = z.infer<typeof updateIdentitySchema>;
 
 export const tokenRequestSchema = z.object({
   clientId: z.string().min(1).max(200),
   clientSecret: z.string().min(1).max(500),
 });
 export type TokenRequest = z.infer<typeof tokenRequestSchema>;
+
+export const identityJwtTokenSchema = z.object({
+  clientId: z.string().min(1).max(200),
+  jwt: z.string().min(20).max(20_000),
+});
+export type IdentityJwtTokenInput = z.infer<typeof identityJwtTokenSchema>;
+
+export const createIdentityJwtAuthMethodSchema = z.object({
+  type: z.literal("jwt").optional(),
+  issuer: z.string().url().max(500),
+  audience: z.string().min(1).max(500),
+  jwksUri: z.string().url().max(500),
+  allowedSubjects: z.array(z.string().min(1).max(500)).max(50).optional(),
+});
+
+export const createIdentityAwsAuthMethodSchema = z.object({
+  type: z.literal("aws"),
+  allowedArns: z.array(z.string().min(10).max(2048)).min(1).max(50),
+});
+
+export const createIdentityAuthMethodSchema = z.union([
+  createIdentityJwtAuthMethodSchema,
+  createIdentityAwsAuthMethodSchema,
+]);
+export type CreateIdentityAuthMethodInput = z.infer<typeof createIdentityAuthMethodSchema>;
+
+export const identityAwsTokenSchema = z.object({
+  clientId: z.string().min(1).max(200),
+  authorization: z.string().min(20).max(4000),
+  amzDate: z.string().regex(/^\d{8}T\d{6}Z$/, "expected YYYYMMDDTHHMMSSZ"),
+  securityToken: z.string().min(1).max(4000).optional(),
+});
+export type IdentityAwsTokenInput = z.infer<typeof identityAwsTokenSchema>;
+
+export interface IdentityAuthMethodDto {
+  id: string;
+  type: string;
+  issuer: string | null;
+  audience: string | null;
+  jwksUri: string | null;
+  allowedSubjects: string[] | null;
+  allowedArns: string[] | null;
+  createdAt: string;
+}
+
+export const rotationHttpConfigSchema = z.object({
+  createUrl: z.string().url().max(2000),
+  revokeUrl: z.string().url().max(2000).optional(),
+  headers: z.record(z.string()).optional(),
+  valueTemplate: z.string().max(2000).optional(),
+});
+export type RotationHttpConfig = z.infer<typeof rotationHttpConfigSchema>;
+
+const roleNameSchema = z
+  .string()
+  .regex(/^[A-Za-z_][A-Za-z0-9_]{0,62}$/, "use a valid PostgreSQL role name");
+
+export const rotationPostgresConfigSchema = z.object({
+  adminUrl: z
+    .string()
+    .max(4000)
+    .refine((value) => /^postgres(ql)?:\/\//.test(value), "must be a postgres:// URL"),
+  username: roleNameSchema,
+  alternateUsername: roleNameSchema,
+  valueTemplate: z.string().max(2000).default("{{username}}:{{password}}"),
+  ssl: z.boolean().optional(),
+});
+export type RotationPostgresConfig = z.infer<typeof rotationPostgresConfigSchema>;
+
+export const createRotationSchema = z
+  .object({
+    key: secretKeySchema,
+    env: slugSchema,
+    path: secretPathSchema.optional(),
+    provider: z.enum(["http", "postgres"]),
+    config: z.record(z.unknown()),
+    intervalSeconds: z.number().int().min(300).max(31_536_000).default(2_592_000),
+    graceSeconds: z.number().int().min(0).max(604_800).default(3600),
+    enabled: z.boolean().optional(),
+  })
+  .refine((value) => value.intervalSeconds > value.graceSeconds, {
+    message: "intervalSeconds must be greater than graceSeconds",
+    path: ["intervalSeconds"],
+  });
+export type CreateRotationInput = z.infer<typeof createRotationSchema>;
+
+export const updateRotationSchema = z.object({
+  enabled: z.boolean().optional(),
+  intervalSeconds: z.number().int().min(300).max(31_536_000).optional(),
+});
+export type UpdateRotationInput = z.infer<typeof updateRotationSchema>;
+
+export interface RotationPolicyDto {
+  id: string;
+  key: string;
+  path: string;
+  environmentSlug: string;
+  provider: string;
+  intervalSeconds: number;
+  graceSeconds: number;
+  enabled: boolean;
+  nextRunAt: string;
+  lastRunAt: string | null;
+  lastStatus: string | null;
+  lastError: string | null;
+  failureCount: number;
+  previousRevokeAfter: string | null;
+  createdAt: string;
+}
+
+export const grantablePermissions = [
+  "secret:read",
+  "secret:write",
+  "secret:delete",
+  "project:read",
+  "audit:read",
+] as const;
+export type GrantablePermission = (typeof grantablePermissions)[number];
+export const grantablePermissionSchema = z.enum(grantablePermissions);
+
+export const createCustomRoleSchema = z.object({
+  name: nameSchema,
+  permissions: z.array(grantablePermissionSchema).min(1).max(20),
+});
+export type CreateCustomRoleInput = z.infer<typeof createCustomRoleSchema>;
+
+export const createRoleGrantSchema = z.object({
+  userId: z.string().uuid(),
+  roleId: z.string().uuid(),
+  projectId: z.string().uuid().optional(),
+  environmentId: z.string().uuid().optional(),
+  path: secretPathSchema.optional(),
+  expiresAt: z.string().datetime({ offset: true }).optional(),
+});
+export type CreateRoleGrantInput = z.infer<typeof createRoleGrantSchema>;
+
+export interface CustomRoleDto {
+  id: string;
+  name: string;
+  permissions: GrantablePermission[];
+  createdAt: string;
+}
+
+export interface RoleGrantDto {
+  id: string;
+  userId: string;
+  userName: string;
+  roleId: string;
+  roleName: string;
+  permissions: string[];
+  projectId: string | null;
+  environmentId: string | null;
+  path: string | null;
+  expiresAt: string | null;
+  createdAt: string;
+}
+
+export const syncWebhookConfigSchema = z.object({
+  url: z.string().url().max(2000),
+  headers: z.record(z.string()).optional(),
+});
+export type SyncWebhookConfig = z.infer<typeof syncWebhookConfigSchema>;
+
+export const syncVercelConfigSchema = z.object({
+  token: z.string().min(1).max(500),
+  vercelProjectId: z.string().min(1).max(200),
+  teamId: z.string().min(1).max(200).optional(),
+  target: z
+    .array(z.enum(["production", "preview", "development"]))
+    .min(1)
+    .default(["production"]),
+});
+export type SyncVercelConfig = z.infer<typeof syncVercelConfigSchema>;
+
+export const syncCloudflareConfigSchema = z.object({
+  token: z.string().min(1).max(500),
+  accountId: z.string().min(1).max(200),
+  scriptName: z.string().min(1).max(200),
+});
+export type SyncCloudflareConfig = z.infer<typeof syncCloudflareConfigSchema>;
+
+export const syncGithubConfigSchema = z.object({
+  token: z.string().min(1).max(500),
+  owner: z.string().min(1).max(200),
+  repo: z.string().min(1).max(200),
+  environment: z.string().min(1).max(200).optional(),
+});
+export type SyncGithubConfig = z.infer<typeof syncGithubConfigSchema>;
+
+export const syncAwsConfigSchema = z.object({
+  region: z.string().min(1).max(50),
+  prefix: z.string().max(200).optional(),
+  accessKeyId: z.string().max(500).optional(),
+  secretAccessKey: z.string().max(1000).optional(),
+  endpoint: z.string().url().max(500).optional(),
+});
+export type SyncAwsConfig = z.infer<typeof syncAwsConfigSchema>;
+
+export const syncGcpConfigSchema = z.object({
+  projectId: z.string().min(1).max(200),
+  prefix: z.string().max(200).optional(),
+  credentialsJson: z.string().max(20_000).optional(),
+});
+export type SyncGcpConfig = z.infer<typeof syncGcpConfigSchema>;
+
+export const syncAzureConfigSchema = z.object({
+  vaultUrl: z.string().url().max(500),
+  tenantId: z.string().min(1).max(200),
+  clientId: z.string().min(1).max(200),
+  clientSecret: z.string().min(1).max(1000),
+  prefix: z.string().max(200).optional(),
+});
+export type SyncAzureConfig = z.infer<typeof syncAzureConfigSchema>;
+
+export const syncKubernetesConfigSchema = z.object({
+  apiUrl: z.string().url().max(500),
+  token: z.string().min(1).max(10_000),
+  namespace: z.string().min(1).max(253),
+  secretName: z.string().min(1).max(253),
+  caData: z.string().max(100_000).optional(),
+  skipTlsVerify: z.boolean().optional(),
+});
+export type SyncKubernetesConfig = z.infer<typeof syncKubernetesConfigSchema>;
+
+export const secretSyncProviders = [
+  "webhook",
+  "vercel",
+  "cloudflare",
+  "github",
+  "aws",
+  "gcp",
+  "azure",
+  "kubernetes",
+] as const;
+
+export const createSecretSyncSchema = z.object({
+  env: slugSchema,
+  path: secretPathSchema.optional(),
+  provider: z.enum(secretSyncProviders),
+  config: z.record(z.unknown()),
+  intervalSeconds: z.number().int().min(60).max(86_400).default(300),
+  enabled: z.boolean().optional(),
+});
+export type CreateSecretSyncInput = z.infer<typeof createSecretSyncSchema>;
+
+export const updateSecretSyncSchema = z.object({
+  enabled: z.boolean().optional(),
+  intervalSeconds: z.number().int().min(60).max(86_400).optional(),
+});
+export type UpdateSecretSyncInput = z.infer<typeof updateSecretSyncSchema>;
+
+export interface SecretSyncDto {
+  id: string;
+  environmentSlug: string;
+  path: string;
+  provider: string;
+  enabled: boolean;
+  intervalSeconds: number;
+  nextRunAt: string;
+  lastRunAt: string | null;
+  lastStatus: string | null;
+  lastError: string | null;
+  failureCount: number;
+  createdAt: string;
+}
 
 export const inviteMemberSchema = z.object({
   email: emailSchema,
@@ -213,6 +501,42 @@ export const acceptInviteSchema = z.object({
   password: passwordSchema.optional(),
 });
 export type AcceptInviteInput = z.infer<typeof acceptInviteSchema>;
+
+export const mfaSetupSchema = z.object({
+  enrollmentToken: z.string().min(20).max(2000).optional(),
+});
+
+export const mfaVerifySchema = z.object({
+  code: z.string().trim().min(6).max(10),
+  enrollmentToken: z.string().min(20).max(2000).optional(),
+});
+export type MfaVerifyInput = z.infer<typeof mfaVerifySchema>;
+
+export const mfaDisableSchema = z.object({
+  password: z.string().min(1).max(200),
+  code: z.string().trim().min(6).max(20),
+});
+export type MfaDisableInput = z.infer<typeof mfaDisableSchema>;
+
+export const mfaLoginSchema = z.object({
+  challengeToken: z.string().min(20).max(2000),
+  code: z.string().trim().min(6).max(64),
+});
+export type MfaLoginInput = z.infer<typeof mfaLoginSchema>;
+
+export const mfaPolicySchema = z.object({ required: z.boolean() });
+export type MfaPolicyInput = z.infer<typeof mfaPolicySchema>;
+
+export interface MfaStatusDto {
+  enabled: boolean;
+  recoveryCodesRemaining: number;
+  orgRequired: boolean;
+}
+
+export interface MfaSetupDto {
+  secret: string;
+  otpauthUrl: string;
+}
 
 export interface MemberDto {
   userId: string;
@@ -331,10 +655,104 @@ export interface SecretVersionDto {
   version: number;
   comment: string | null;
   fingerprint: string;
+  fingerprintVersion: number;
   createdByType: string;
   createdById: string;
   createdAt: string;
   current: boolean;
+}
+
+export const secretDiffQuerySchema = z.object({
+  env: slugSchema,
+  path: secretPathSchema.optional(),
+  from: z.coerce.number().int().positive().optional(),
+  to: z.coerce.number().int().positive().optional(),
+  reveal: z.enum(["true", "false"]).optional(),
+});
+export type SecretDiffQuery = z.infer<typeof secretDiffQuerySchema>;
+
+export interface SecretDiffDto {
+  key: string;
+  path: string;
+  env: string;
+  changed: boolean;
+  revealed: boolean;
+  from: { version: number; value: string; createdAt: string };
+  to: { version: number; value: string; createdAt: string };
+}
+
+export const pointInTimeQuerySchema = z.object({
+  env: slugSchema,
+  at: z.string().datetime({ offset: true }),
+});
+export type PointInTimeQuery = z.infer<typeof pointInTimeQuerySchema>;
+
+export const restorePointInTimeSchema = z.object({
+  env: slugSchema,
+  at: z.string().datetime({ offset: true }),
+  dryRun: z.boolean().optional(),
+});
+export type RestorePointInTimeInput = z.infer<typeof restorePointInTimeSchema>;
+
+export type PointInTimeAction = "restore" | "revive" | "delete" | "none";
+
+export interface PointInTimeEntryDto {
+  key: string;
+  path: string;
+  action: PointInTimeAction;
+  currentVersion: number;
+  targetVersion: number | null;
+}
+
+export interface PointInTimePreviewDto {
+  at: string;
+  env: string;
+  secretCount: number;
+  changes: PointInTimeEntryDto[];
+}
+
+export interface PointInTimeRestoreResult {
+  at: string;
+  env: string;
+  dryRun: boolean;
+  restored: number;
+  revived: number;
+  deleted: number;
+  changes: PointInTimeEntryDto[];
+}
+
+export const transitKeyNameSchema = z
+  .string()
+  .trim()
+  .regex(/^[a-z0-9][a-z0-9-]{0,63}$/, "use lowercase letters, digits, and dashes");
+
+export const createTransitKeySchema = z.object({ name: transitKeyNameSchema });
+
+export const transitEncryptSchema = z.object({
+  plaintext: z.string().min(1).max(64_000),
+  context: z.string().max(500).optional(),
+  key: transitKeyNameSchema.optional(),
+});
+export type TransitEncryptInput = z.infer<typeof transitEncryptSchema>;
+
+export const transitDecryptSchema = z.object({
+  ciphertext: z.string().min(1).max(120_000),
+  context: z.string().max(500).optional(),
+});
+export type TransitDecryptInput = z.infer<typeof transitDecryptSchema>;
+
+export interface TransitKeyDto {
+  id: string;
+  name: string;
+  version: number;
+  createdAt: string;
+}
+
+export interface TransitEncryptResult {
+  ciphertext: string;
+  key: string;
+  keyVersion: number;
+  algorithm: string;
 }
 
 export interface IdentityDto {
@@ -343,6 +761,9 @@ export interface IdentityDto {
   clientId: string;
   role: IdentityRole;
   environmentIds: string[];
+  tokenTtlSeconds: number;
+  ipAllowlist: string[] | null;
+  hourlyTokenCap: number | null;
   createdAt: string;
   revokedAt: string | null;
 }
@@ -364,3 +785,82 @@ export interface AuditLogDto {
   ip: string | null;
   createdAt: string;
 }
+
+export const encryptionModeSchema = z.enum(["server", "e2ee"]);
+export type EncryptionMode = z.infer<typeof encryptionModeSchema>;
+
+export const setEncryptionModeSchema = z.object({ mode: encryptionModeSchema });
+
+export const userKeyUploadSchema = z.object({
+  publicKey: z.string().min(20).max(2000),
+  wrappedPrivateKey: z.string().min(20).max(20_000),
+  privateKeyIv: z.string().min(8).max(200),
+  privateKeyTag: z.string().min(8).max(200),
+  kdfSalt: z.string().min(8).max(200),
+  kdfParams: z.record(z.unknown()),
+});
+export type UserKeyUpload = z.infer<typeof userKeyUploadSchema>;
+
+export interface UserKeyDto {
+  publicKey: string;
+  wrappedPrivateKey: string;
+  privateKeyIv: string;
+  privateKeyTag: string;
+  kdfSalt: string;
+  kdfParams: Record<string, unknown>;
+}
+
+export const projectKeyUploadSchema = z.object({
+  keys: z
+    .array(
+      z.object({
+        userId: z.string().uuid(),
+        wrappedKey: z.string().min(20).max(40_000),
+        iv: z.string().min(8).max(200),
+        tag: z.string().min(8).max(200),
+        keyVersion: z.number().int().min(1).max(1_000_000).optional(),
+      }),
+    )
+    .min(1)
+    .max(500),
+});
+export type ProjectKeyUpload = z.infer<typeof projectKeyUploadSchema>;
+
+export interface ProjectKeyDto {
+  wrappedKey: string;
+  iv: string;
+  tag: string;
+  keyVersion: number;
+}
+
+export interface ProjectKeysDto {
+  mode: EncryptionMode;
+  key: ProjectKeyDto | null;
+  members: { userId: string; publicKey: string }[];
+}
+
+export const e2eeSecretWriteSchema = z.object({
+  env: slugSchema,
+  path: secretPathSchema.optional(),
+  key: secretKeySchema,
+  ciphertext: z.string().min(1).max(300_000),
+  iv: z.string().min(8).max(200),
+  tag: z.string().min(8).max(200),
+  keyVersion: z.number().int().min(1).max(1_000_000).optional(),
+  comment: z.string().max(500).optional(),
+});
+export type E2eeSecretWriteInput = z.infer<typeof e2eeSecretWriteSchema>;
+
+export interface E2eeSecretDto {
+  key: string;
+  path: string;
+  version: number;
+  ciphertext: string;
+  iv: string;
+  tag: string;
+  keyVersion: number | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export * from "./e2ee.js";

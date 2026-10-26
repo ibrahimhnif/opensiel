@@ -133,6 +133,45 @@ spec:
 
 Set `OPENSIEL_PUBLIC_URL` to the HTTPS URL so cookies are `Secure` and SSO callbacks match.
 
+## Workload identity with service-account tokens
+
+Instead of shipping a client secret, a workload can exchange its projected service-account
+token for an opensiel machine token.
+
+1. Configure the cluster with a service-account issuer and JWKS (most managed clusters already
+   do; self-managed clusters set `--service-account-issuer` and expose
+   `/openid/v1/jwks`).
+2. In **Identities**, create an identity, then add an auth method with:
+   - issuer: the cluster's service-account issuer, for example
+     `https://kubernetes.default.svc.cluster.local`
+   - audience: `opensiel`
+   - JWKS URL: `<issuer>/openid/v1/jwks` (reachable from the opensiel pod)
+   - optional allowed subjects, for example `system:serviceaccount:apps:web`
+3. Project a token with the same audience and exchange it:
+
+```yaml
+volumes:
+  - name: opensiel-token
+    projected:
+      sources:
+        - serviceAccountToken:
+            path: token
+            audience: opensiel
+            expirationSeconds: 3600
+```
+
+```bash
+TOKEN=$(curl -s -X POST "$OPENSIEL_API/api/auth/token/jwt" \
+  -H 'content-type: application/json' \
+  -d "{\"clientId\":\"$OPENSIEL_CLIENT_ID\",\"jwt\":\"$(cat /var/run/secrets/opensiel/token)\"}" \
+  | jq -r .accessToken)
+
+OPENSIEL_TOKEN="$TOKEN" opensiel run --env prod -- node server.js
+```
+
+Tokens are verified on the server against the configured issuer, audience, and JWKS; no client
+secret is stored in the workload.
+
 ## Injecting secrets into pods
 
 There is no Kubernetes operator yet. The simplest pattern is an init container that exchanges
