@@ -10,8 +10,21 @@ import { buildApp } from "../src/app.js";
 import { createDb } from "../src/db/client.js";
 import type { Database } from "../src/db/client.js";
 import { runMigrations } from "../src/db/migrate.js";
-import { generateMasterKey, parseMasterKey } from "../src/crypto.js";
+import { runAuditSinkOnce } from "../src/audit-sink.js";
+import { revokeExpiredRotationCredentials } from "../src/rotation.js";
+import { base32Decode, currentTotpStep, totpCode } from "../src/mfa.js";
+import { generateMasterKey, parseMasterKey, sha256 } from "../src/crypto.js";
 import type { Env } from "../src/env.js";
+import {
+  decryptSecret,
+  encryptSecret,
+  generateIdentity,
+  generateProjectKey,
+  secretAad,
+  unlockIdentity,
+  unwrapProjectKey,
+  wrapProjectKey,
+} from "@opensiel/shared";
 
 const databaseUrl = process.env.TEST_DATABASE_URL;
 
@@ -33,6 +46,7 @@ if (!databaseUrl) {
     rateLimit: false,
     isProd: false,
     secureCookies: false,
+    awsStsEndpoint: "https://sts.amazonaws.com",
   };
 
   let app: FastifyInstance;
@@ -43,6 +57,7 @@ if (!databaseUrl) {
   let idpName = "";
   let idpPrivateKey: Awaited<ReturnType<typeof generateKeyPair>>["privateKey"];
   let idpJwk: Record<string, unknown>;
+  let stsArn = "arn:aws:iam::123456789012:role/ci-deploy";
   const idpCodes = new Map<string, { nonce: string; email: string; name: string }>();
 
   let hookReceiver: FastifyInstance;
@@ -53,6 +68,14 @@ if (!databaseUrl) {
   }
   const hookQueue: ReceivedHook[] = [];
   const hookWaiters: ((hook: ReceivedHook) => void)[] = [];
+  const auditQueue: string[] = [];
+  let auditFail = false;
+  const rotationCalls: { created: Record<string, unknown>[]; revoked: Record<string, unknown>[] } =
+    { created: [], revoked: [] };
+  let rotationCreateCount = 0;
+  const syncBodies: Record<string, unknown>[] = [];
+  let syncFail = false;
+  const kubeSecrets = new Map<string, Record<string, string>>();
 
   function nextHook(timeoutMs = 3000): Promise<ReceivedHook> {
     const queued = hookQueue.shift();
@@ -217,11 +240,15 @@ if (!databaseUrl) {
     prodId: string;
   }
 
-  async function signup(email: string): Promise<Session> {
+  function totpNow(secret: string): string {
+    return totpCode(base32Decode(secret), currentTotpStep());
+  }
+
+  async function signup(email: string, name = "Test User"): Promise<Session> {
     const response = await app.inject({
       method: "POST",
       url: "/api/auth/signup",
-      payload: { email, password: "correct-horse-battery", name: "Test User" },
+      payload: { email, password: "correct-horse-battery", name },
     });
     expect(response.statusCode).toBe(201);
     const body = response.json<{ token: string; projectId: string }>();
@@ -312,6 +339,16 @@ if (!databaseUrl) {
       return reply.redirect(url.toString());
     });
     idp.get("/jwks", async () => ({ keys: [idpJwk] }));
+    idp.post("/sts", async (request, reply) => {
+      if (!request.headers.authorization) {
+        return reply.code(403).send({ error: "missing authorization" });
+      }
+      return reply
+        .type("text/xml")
+        .send(
+          `<GetCallerIdentityResponse><GetCallerIdentityResult><Arn>${stsArn}</Arn></GetCallerIdentityResult></GetCallerIdentityResponse>`,
+        );
+    });
     idp.post("/token", async (request, reply) => {
       const body = request.body as Record<string, string>;
       if (body.client_id !== "test-client" || body.client_secret !== "test-secret") {
@@ -347,6 +384,7 @@ if (!databaseUrl) {
     const address = idp.server.address();
     const idpPort = typeof address === "object" && address ? address.port : 0;
     idpIssuer = `http://127.0.0.1:${idpPort}`;
+    env.awsStsEndpoint = `${idpIssuer}/sts`;
 
     hookReceiver = Fastify();
     hookReceiver.addContentTypeParser(
@@ -363,6 +401,50 @@ if (!databaseUrl) {
       if (waiter) waiter(received);
       else hookQueue.push(received);
       return reply.code(200).send({ ok: true });
+    });
+    hookReceiver.post("/audit", async (request, reply) => {
+      if (auditFail) return reply.code(500).send({ ok: false });
+      auditQueue.push(request.body as string);
+      return reply.code(200).send({ ok: true });
+    });
+    hookReceiver.post("/rotate/create", async (request, reply) => {
+      rotationCreateCount += 1;
+      rotationCalls.created.push(JSON.parse(request.body as string) as Record<string, unknown>);
+      return reply.send({
+        value: `rotated-value-${rotationCreateCount}`,
+        credentialId: `cred-${rotationCreateCount}`,
+      });
+    });
+    hookReceiver.post("/rotate/revoke", async (request, reply) => {
+      rotationCalls.revoked.push(JSON.parse(request.body as string) as Record<string, unknown>);
+      return reply.send({ ok: true });
+    });
+    hookReceiver.post("/sync-target", async (request, reply) => {
+      if (syncFail) return reply.code(500).send({ ok: false });
+      syncBodies.push(JSON.parse(request.body as string) as Record<string, unknown>);
+      return reply.send({ ok: true });
+    });
+    hookReceiver.get("/api/v1/namespaces/:namespace/secrets/:name", async (request, reply) => {
+      const { name } = request.params as { name: string };
+      const data = kubeSecrets.get(name);
+      if (!data) return reply.code(404).send({ error: "not found" });
+      return reply.send({ metadata: { name, resourceVersion: "1" }, data });
+    });
+    hookReceiver.post("/api/v1/namespaces/:namespace/secrets", async (request, reply) => {
+      const body = JSON.parse(request.body as string) as {
+        metadata: { name: string };
+        data: Record<string, string>;
+      };
+      kubeSecrets.set(body.metadata.name, body.data);
+      return reply.code(201).send({ ok: true });
+    });
+    hookReceiver.put("/api/v1/namespaces/:namespace/secrets/:name", async (request, reply) => {
+      const { name } = request.params as { name: string };
+      const body = JSON.parse(request.body as string) as {
+        data: Record<string, string>;
+      };
+      kubeSecrets.set(name, body.data);
+      return reply.send({ ok: true });
     });
     await hookReceiver.listen({ port: 0, host: "127.0.0.1" });
     const hookAddress = hookReceiver.server.address();
@@ -461,7 +543,13 @@ if (!databaseUrl) {
       url: `${base}/DATABASE_URL/versions?env=dev`,
       headers: auth,
     });
-    expect(versions.json<{ versions: unknown[] }>().versions).toHaveLength(2);
+    const versionRows = versions.json<{
+      versions: { version: number; fingerprint: string; fingerprintVersion: number }[];
+    }>().versions;
+    expect(versionRows).toHaveLength(2);
+    expect(versionRows.every((row) => row.fingerprintVersion === 2)).toBe(true);
+    expect(versionRows.map((row) => row.fingerprint)).not.toContain(sha256("v1"));
+    expect(versionRows.map((row) => row.fingerprint)).not.toContain(sha256("v2"));
 
     const rollback = await app.inject({
       method: "POST",
@@ -485,6 +573,100 @@ if (!databaseUrl) {
       headers: auth,
     });
     expect(exported.body).toContain("DATABASE_URL=v1");
+  });
+
+  it("diffs versions and restores an environment to a point in time", async () => {
+    const session = await signup(`pitr-${Date.now()}@test.dev`);
+    const auth = { authorization: `Bearer ${session.token}` };
+    const base = `/api/projects/${session.projectId}/secrets`;
+
+    await app.inject({
+      method: "POST",
+      url: base,
+      headers: auth,
+      payload: { key: "GREETING", value: "one", env: "dev" },
+    });
+    await new Promise((resolve) => setTimeout(resolve, 25));
+    await app.inject({
+      method: "POST",
+      url: base,
+      headers: auth,
+      payload: { key: "GREETING", value: "two", env: "dev" },
+    });
+
+    const history = await app.inject({
+      method: "GET",
+      url: `${base}/GREETING/versions?env=dev`,
+      headers: auth,
+    });
+    const versions = history.json<{
+      versions: { version: number; createdAt: string }[];
+    }>().versions;
+    expect(versions).toHaveLength(2);
+    const v1 = versions.find((row) => row.version === 1)!;
+    const v2 = versions.find((row) => row.version === 2)!;
+    const cutoff = new Date(
+      (new Date(v1.createdAt).getTime() + new Date(v2.createdAt).getTime()) / 2,
+    ).toISOString();
+
+    const masked = await app.inject({
+      method: "GET",
+      url: `${base}/GREETING/diff?env=dev&from=1&to=2`,
+      headers: auth,
+    });
+    expect(masked.statusCode).toBe(200);
+    expect(masked.json<{ diff: { changed: boolean; revealed: boolean } }>().diff).toMatchObject({
+      changed: true,
+      revealed: false,
+    });
+
+    const revealed = await app.inject({
+      method: "GET",
+      url: `${base}/GREETING/diff?env=dev&from=1&to=2&reveal=true`,
+      headers: auth,
+    });
+    expect(
+      revealed.json<{ diff: { from: { value: string }; to: { value: string } } }>().diff,
+    ).toMatchObject({ from: { value: "one" }, to: { value: "two" } });
+
+    const preview = await app.inject({
+      method: "GET",
+      url: `/api/projects/${session.projectId}/point-in-time?env=dev&at=${encodeURIComponent(cutoff)}`,
+      headers: auth,
+    });
+    expect(preview.statusCode).toBe(200);
+    expect(preview.json<{ changes: unknown[] }>().changes).toHaveLength(1);
+
+    const dryRun = await app.inject({
+      method: "POST",
+      url: `/api/projects/${session.projectId}/point-in-time/restore`,
+      headers: auth,
+      payload: { env: "dev", at: cutoff, dryRun: true },
+    });
+    expect(dryRun.statusCode).toBe(200);
+    expect(dryRun.json<{ restored: number; dryRun: boolean }>()).toMatchObject({
+      restored: 0,
+      dryRun: true,
+    });
+
+    const restore = await app.inject({
+      method: "POST",
+      url: `/api/projects/${session.projectId}/point-in-time/restore`,
+      headers: auth,
+      payload: { env: "dev", at: cutoff },
+    });
+    expect(restore.statusCode).toBe(200);
+    expect(restore.json<{ restored: number }>().restored).toBe(1);
+
+    const current = await app.inject({
+      method: "GET",
+      url: `${base}/GREETING?env=dev`,
+      headers: auth,
+    });
+    expect(current.json<{ secret: { value: string; version: number } }>().secret).toMatchObject({
+      value: "one",
+      version: 3,
+    });
   });
 
   it("isolates organizations", async () => {
@@ -802,6 +984,1371 @@ if (!databaseUrl) {
       .logs;
     expect(logs.some((log) => log.action === "secret.write")).toBe(true);
     expect(JSON.stringify(logs)).not.toContain("super-secret-value");
+  });
+
+  it("exports audit logs as csv and jsonl without secret values", async () => {
+    const session = await signup(`audit-export-${Date.now()}@test.dev`);
+    const auth = { authorization: `Bearer ${session.token}` };
+
+    await app.inject({
+      method: "POST",
+      url: `/api/projects/${session.projectId}/secrets`,
+      headers: auth,
+      payload: { key: "EXPORTED", value: "export-payload-xyz", env: "dev" },
+    });
+
+    const csv = await app.inject({
+      method: "GET",
+      url: "/api/audit/export?format=csv",
+      headers: auth,
+    });
+    expect(csv.statusCode).toBe(200);
+    expect(csv.headers["content-type"]).toContain("text/csv");
+    expect(csv.headers["content-disposition"]).toContain("attachment");
+    const [header, ...rows] = csv.body.trim().split("\n");
+    expect(header).toBe(
+      "id,createdAt,actorType,actorId,actorName,action,resourceType,resourceId,projectId,ip,metadata",
+    );
+    expect(rows.some((row) => row.includes("secret.write"))).toBe(true);
+    expect(csv.body).not.toContain("export-payload-xyz");
+
+    const formula = await signup(`audit-formula-${Date.now()}@test.dev`, "=1+1");
+    await app.inject({
+      method: "POST",
+      url: `/api/projects/${formula.projectId}/secrets`,
+      headers: { authorization: `Bearer ${formula.token}` },
+      payload: { key: "SAFE", value: "x", env: "dev" },
+    });
+    const formulaCsv = await app.inject({
+      method: "GET",
+      url: "/api/audit/export?format=csv",
+      headers: { authorization: `Bearer ${formula.token}` },
+    });
+    expect(formulaCsv.body).toContain("'=1+1");
+    expect(formulaCsv.body).not.toMatch(/,=1\+1,/);
+
+    const jsonl = await app.inject({
+      method: "GET",
+      url: "/api/audit/export?format=jsonl",
+      headers: auth,
+    });
+    expect(jsonl.statusCode).toBe(200);
+    const entries = jsonl.body
+      .trim()
+      .split("\n")
+      .map((line) => JSON.parse(line) as { action: string; metadata: unknown });
+    expect(entries.some((entry) => entry.action === "secret.write")).toBe(true);
+    expect(entries.some((entry) => entry.action === "audit.export")).toBe(true);
+    expect(JSON.stringify(entries)).not.toContain("export-payload-xyz");
+
+    const filtered = await app.inject({
+      method: "GET",
+      url: "/api/audit/export?format=jsonl&action=secret.write",
+      headers: auth,
+    });
+    const filteredEntries = filtered.body
+      .trim()
+      .split("\n")
+      .map((line) => JSON.parse(line) as { action: string });
+    expect(filteredEntries.length).toBeGreaterThan(0);
+    expect(filteredEntries.every((entry) => entry.action === "secret.write")).toBe(true);
+
+    const other = await signup(`audit-other-${Date.now()}@test.dev`);
+    const otherCsv = await app.inject({
+      method: "GET",
+      url: "/api/audit/export?format=csv",
+      headers: { authorization: `Bearer ${other.token}` },
+    });
+    expect(otherCsv.body).not.toContain("EXPORTED");
+  });
+
+  it("delivers audit events to the configured sink with a checkpoint", async () => {
+    const session = await signup(`audit-sink-${Date.now()}@test.dev`);
+    const auth = { authorization: `Bearer ${session.token}` };
+    const sinkEnv: Env = {
+      ...env,
+      auditSink: {
+        type: "http",
+        url: hookUrl.replace(/\/hook$/, "/audit"),
+        intervalSeconds: 60,
+        batchSize: 500,
+      },
+    };
+    const sinkDeps = { env: sinkEnv, db: database.db, sql: database.sql };
+    await database.sql`
+      update audit_sink_state
+      set next_attempt_at = null, failure_count = 0, last_error = null
+      where id = 'default'
+    `;
+
+    for (let attempt = 0; attempt < 50; attempt += 1) {
+      const drained = await runAuditSinkOnce(sinkDeps);
+      if (drained.sent === 0) break;
+    }
+    auditQueue.length = 0;
+
+    await app.inject({
+      method: "POST",
+      url: `/api/projects/${session.projectId}/secrets`,
+      headers: auth,
+      payload: { key: "SINK_KEY", value: "sink-secret-value", env: "dev" },
+    });
+
+    const delivered = await runAuditSinkOnce(sinkDeps);
+    expect(delivered.sent).toBe(1);
+    expect(auditQueue).toHaveLength(1);
+    const payload = JSON.parse(auditQueue[0]) as {
+      events: { action: string; metadata: unknown }[];
+    };
+    expect(payload.events.map((event) => event.action)).toEqual(["secret.write"]);
+    expect(payload.events).toHaveLength(1);
+    expect(auditQueue[0]).not.toContain("sink-secret-value");
+
+    const idle = await runAuditSinkOnce(sinkDeps);
+    expect(idle.sent).toBe(0);
+  });
+
+  it("backs off after a sink delivery failure", async () => {
+    const session = await signup(`audit-sink-fail-${Date.now()}@test.dev`);
+    const auth = { authorization: `Bearer ${session.token}` };
+    const sinkEnv: Env = {
+      ...env,
+      auditSink: {
+        type: "http",
+        url: hookUrl.replace(/\/hook$/, "/audit"),
+        intervalSeconds: 60,
+        batchSize: 500,
+      },
+    };
+    const sinkDeps = { env: sinkEnv, db: database.db, sql: database.sql };
+
+    await app.inject({
+      method: "POST",
+      url: `/api/projects/${session.projectId}/secrets`,
+      headers: auth,
+      payload: { key: "SINK_RETRY", value: "retry-value", env: "dev" },
+    });
+
+    auditFail = true;
+    try {
+      const failed = await runAuditSinkOnce(sinkDeps);
+      expect(failed.sent).toBe(0);
+      expect(failed.error).toContain("500");
+
+      const skipped = await runAuditSinkOnce(sinkDeps);
+      expect(skipped.sent).toBe(0);
+      expect(skipped.skipped).toBe("backoff");
+    } finally {
+      auditFail = false;
+      await database.sql`
+        update audit_sink_state
+        set next_attempt_at = null, failure_count = 0, last_error = null
+        where id = 'default'
+      `;
+    }
+  });
+
+  it("encrypts and decrypts payloads with project transit keys", async () => {
+    const session = await signup(`transit-${Date.now()}@test.dev`);
+    const auth = { authorization: `Bearer ${session.token}` };
+    const base = `/api/projects/${session.projectId}/crypto`;
+
+    const encrypted = await app.inject({
+      method: "POST",
+      url: `${base}/encrypt`,
+      headers: auth,
+      payload: { plaintext: "card=4111", context: "user:1" },
+    });
+    expect(encrypted.statusCode).toBe(200);
+    const envelope = encrypted.json<{
+      ciphertext: string;
+      key: string;
+      keyVersion: number;
+      algorithm: string;
+    }>();
+    expect(envelope).toMatchObject({ key: "default", keyVersion: 1, algorithm: "AES-256-GCM" });
+    expect(envelope.ciphertext.startsWith("osl1.default.1.")).toBe(true);
+
+    const decrypted = await app.inject({
+      method: "POST",
+      url: `${base}/decrypt`,
+      headers: auth,
+      payload: { ciphertext: envelope.ciphertext, context: "user:1" },
+    });
+    expect(decrypted.statusCode).toBe(200);
+    expect(decrypted.json<{ plaintext: string }>().plaintext).toBe("card=4111");
+
+    for (const context of ["user:2", undefined]) {
+      const denied = await app.inject({
+        method: "POST",
+        url: `${base}/decrypt`,
+        headers: auth,
+        payload: { ciphertext: envelope.ciphertext, context },
+      });
+      expect(denied.statusCode).toBe(400);
+      expect(denied.json<{ error: string }>().error).toBe("decrypt_failed");
+    }
+
+    const malformed = await app.inject({
+      method: "POST",
+      url: `${base}/decrypt`,
+      headers: auth,
+      payload: { ciphertext: "not-an-envelope" },
+    });
+    expect(malformed.statusCode).toBe(400);
+    expect(malformed.json<{ error: string }>().error).toBe("invalid_ciphertext");
+
+    const unknown = await app.inject({
+      method: "POST",
+      url: `${base}/decrypt`,
+      headers: auth,
+      payload: { ciphertext: "osl1.ghost.1.aXY=.dGFn.abc" },
+    });
+    expect(unknown.statusCode).toBe(400);
+    expect(unknown.json<{ error: string }>().error).toBe("unknown_transit_key");
+
+    const created = await app.inject({
+      method: "POST",
+      url: `${base}/keys`,
+      headers: auth,
+      payload: { name: "billing" },
+    });
+    expect(created.statusCode).toBe(201);
+    expect(created.json<{ key: { name: string; version: number } }>().key).toMatchObject({
+      name: "billing",
+      version: 1,
+    });
+
+    const duplicate = await app.inject({
+      method: "POST",
+      url: `${base}/keys`,
+      headers: auth,
+      payload: { name: "billing" },
+    });
+    expect(duplicate.statusCode).toBe(409);
+
+    const withNamedKey = await app.inject({
+      method: "POST",
+      url: `${base}/encrypt`,
+      headers: auth,
+      payload: { plaintext: "invoice", key: "billing" },
+    });
+    expect(withNamedKey.statusCode).toBe(200);
+    const named = withNamedKey.json<{ ciphertext: string; keyVersion: number }>();
+    expect(named.ciphertext.startsWith("osl1.billing.1.")).toBe(true);
+
+    const rotated = await app.inject({
+      method: "POST",
+      url: `${base}/keys/billing/rotate`,
+      headers: auth,
+    });
+    expect(rotated.statusCode).toBe(200);
+    expect(rotated.json<{ key: { version: number } }>().key.version).toBe(2);
+
+    const afterRotation = await app.inject({
+      method: "POST",
+      url: `${base}/encrypt`,
+      headers: auth,
+      payload: { plaintext: "invoice", key: "billing" },
+    });
+    expect(afterRotation.json<{ keyVersion: number }>().keyVersion).toBe(2);
+
+    const oldCiphertext = await app.inject({
+      method: "POST",
+      url: `${base}/decrypt`,
+      headers: auth,
+      payload: { ciphertext: named.ciphertext },
+    });
+    expect(oldCiphertext.statusCode).toBe(200);
+    expect(oldCiphertext.json<{ plaintext: string }>().plaintext).toBe("invoice");
+
+    const keys = await app.inject({ method: "GET", url: `${base}/keys`, headers: auth });
+    expect(keys.json<{ keys: { name: string; version: number }[] }>().keys).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ name: "billing", version: 2 }),
+        expect.objectContaining({ name: "default", version: 1 }),
+      ]),
+    );
+  });
+
+  it("enforces identity token policy and revokes outstanding tokens", async () => {
+    const session = await signup(`identity-policy-${Date.now()}@test.dev`);
+    const auth = { authorization: `Bearer ${session.token}` };
+    const base = `/api/projects/${session.projectId}/identities`;
+
+    const created = await app.inject({
+      method: "POST",
+      url: base,
+      headers: auth,
+      payload: {
+        name: "ci",
+        role: "viewer",
+        environmentIds: [session.devId],
+        tokenTtlSeconds: 60,
+        ipAllowlist: ["127.0.0.1/32"],
+        hourlyTokenCap: 2,
+      },
+    });
+    expect(created.statusCode).toBe(201);
+    const identity = created.json<{
+      identity: { id: string; clientId: string; clientSecret: string; tokenTtlSeconds: number };
+    }>().identity;
+    expect(identity.tokenTtlSeconds).toBe(60);
+
+    const credentials = { clientId: identity.clientId, clientSecret: identity.clientSecret };
+    const first = await app.inject({
+      method: "POST",
+      url: "/api/auth/token",
+      payload: credentials,
+    });
+    expect(first.statusCode).toBe(200);
+    expect(first.json<{ expiresIn: number }>().expiresIn).toBe(60);
+    const firstToken = first.json<{ accessToken: string }>().accessToken;
+
+    const second = await app.inject({
+      method: "POST",
+      url: "/api/auth/token",
+      payload: credentials,
+    });
+    expect(second.statusCode).toBe(200);
+
+    const third = await app.inject({
+      method: "POST",
+      url: "/api/auth/token",
+      payload: credentials,
+    });
+    expect(third.statusCode).toBe(429);
+    expect(third.json<{ error: string }>().error).toBe("token_limit_reached");
+
+    const patched = await app.inject({
+      method: "PATCH",
+      url: `${base}/${identity.id}`,
+      headers: auth,
+      payload: { role: "member", ipAllowlist: ["10.0.0.0/8"], hourlyTokenCap: null },
+    });
+    expect(patched.statusCode).toBe(200);
+    expect(
+      patched.json<{ identity: { role: string; ipAllowlist: string[] } }>().identity,
+    ).toMatchObject({ role: "member", ipAllowlist: ["10.0.0.0/8"] });
+
+    const stale = await app.inject({
+      method: "GET",
+      url: `/api/projects/${session.projectId}/secrets?env=dev`,
+      headers: { authorization: `Bearer ${firstToken}` },
+    });
+    expect(stale.statusCode).toBe(401);
+
+    const blocked = await app.inject({
+      method: "POST",
+      url: "/api/auth/token",
+      payload: credentials,
+    });
+    expect(blocked.statusCode).toBe(403);
+
+    const restored = await app.inject({
+      method: "PATCH",
+      url: `${base}/${identity.id}`,
+      headers: auth,
+      payload: { ipAllowlist: ["127.0.0.1/32"], tokenTtlSeconds: 3600 },
+    });
+    expect(restored.statusCode).toBe(200);
+
+    const renewed = await app.inject({
+      method: "POST",
+      url: "/api/auth/token",
+      payload: credentials,
+    });
+    expect(renewed.statusCode).toBe(200);
+    const renewedToken = renewed.json<{ accessToken: string; expiresIn: number }>();
+    expect(renewedToken.expiresIn).toBe(3600);
+
+    const write = await app.inject({
+      method: "POST",
+      url: `/api/projects/${session.projectId}/secrets`,
+      headers: { authorization: `Bearer ${renewedToken.accessToken}` },
+      payload: { key: "FROM_MACHINE", value: "ok", env: "dev" },
+    });
+    expect(write.statusCode).toBe(201);
+
+    const revoked = await app.inject({
+      method: "POST",
+      url: `${base}/${identity.id}/revoke`,
+      headers: auth,
+    });
+    expect(revoked.statusCode).toBe(200);
+
+    const afterRevoke = await app.inject({
+      method: "GET",
+      url: `/api/projects/${session.projectId}/secrets?env=dev`,
+      headers: { authorization: `Bearer ${renewedToken.accessToken}` },
+    });
+    expect(afterRevoke.statusCode).toBe(401);
+
+    const newToken = await app.inject({
+      method: "POST",
+      url: "/api/auth/token",
+      payload: credentials,
+    });
+    expect(newToken.statusCode).toBe(401);
+  });
+
+  it("enrolls TOTP, requires it at login, and consumes recovery codes", async () => {
+    const email = `mfa-${Date.now()}@test.dev`;
+    const password = "correct-horse-battery";
+    const session = await signup(email);
+    const auth = { authorization: `Bearer ${session.token}` };
+
+    const setup = await app.inject({
+      method: "POST",
+      url: "/api/auth/mfa/setup",
+      headers: auth,
+    });
+    expect(setup.statusCode).toBe(200);
+    const { secret, otpauthUrl: uri } = setup.json<{ secret: string; otpauthUrl: string }>();
+    expect(uri.startsWith("otpauth://totp/")).toBe(true);
+
+    const enabled = await app.inject({
+      method: "POST",
+      url: "/api/auth/mfa/verify",
+      headers: auth,
+      payload: { code: totpNow(secret) },
+    });
+    expect(enabled.statusCode).toBe(201);
+    const recoveryCodes = enabled.json<{ recoveryCodes: string[] }>().recoveryCodes;
+    expect(recoveryCodes).toHaveLength(10);
+
+    const status = await app.inject({ method: "GET", url: "/api/auth/mfa", headers: auth });
+    expect(status.json()).toMatchObject({
+      enabled: true,
+      recoveryCodesRemaining: 10,
+      orgRequired: false,
+    });
+
+    const first = await app.inject({
+      method: "POST",
+      url: "/api/auth/login",
+      payload: { email, password },
+    });
+    expect(first.statusCode).toBe(200);
+    const challenge = first.json<{ mfaRequired: boolean; challengeToken: string }>();
+    expect(challenge.mfaRequired).toBe(true);
+    expect(challenge).not.toHaveProperty("token");
+
+    const usedCode = totpNow(secret);
+    const second = await app.inject({
+      method: "POST",
+      url: "/api/auth/mfa/login",
+      payload: { challengeToken: challenge.challengeToken, code: usedCode },
+    });
+    expect(second.statusCode).toBe(200);
+    const token = second.json<{ token: string }>().token;
+    expect(token).toBeTruthy();
+
+    const me = await app.inject({
+      method: "GET",
+      url: "/api/auth/me",
+      headers: { authorization: `Bearer ${token}` },
+    });
+    expect(me.statusCode).toBe(200);
+
+    const replay = await app.inject({
+      method: "POST",
+      url: "/api/auth/mfa/login",
+      payload: { challengeToken: challenge.challengeToken, code: usedCode },
+    });
+    expect(replay.statusCode).toBe(401);
+
+    const recovery = await app.inject({
+      method: "POST",
+      url: "/api/auth/mfa/login",
+      payload: { challengeToken: challenge.challengeToken, code: recoveryCodes[0] },
+    });
+    expect(recovery.statusCode).toBe(200);
+    expect(recovery.json<{ recoveryCodesRemaining: number }>().recoveryCodesRemaining).toBe(9);
+
+    const reuse = await app.inject({
+      method: "POST",
+      url: "/api/auth/mfa/login",
+      payload: { challengeToken: challenge.challengeToken, code: recoveryCodes[0] },
+    });
+    expect(reuse.statusCode).toBe(401);
+
+    const wrongPassword = await app.inject({
+      method: "POST",
+      url: "/api/auth/mfa/disable",
+      headers: auth,
+      payload: { password: "not-the-password", code: totpNow(secret) },
+    });
+    expect(wrongPassword.statusCode).toBe(401);
+
+    const disabled = await app.inject({
+      method: "POST",
+      url: "/api/auth/mfa/disable",
+      headers: auth,
+      payload: { password, code: totpNow(secret) },
+    });
+    expect(disabled.statusCode).toBe(200);
+
+    const plain = await app.inject({
+      method: "POST",
+      url: "/api/auth/login",
+      payload: { email, password },
+    });
+    expect(plain.statusCode).toBe(200);
+    expect(plain.json()).toHaveProperty("token");
+  });
+
+  it("enforces the organization MFA policy during enrollment", async () => {
+    const email = `mfa-policy-${Date.now()}@test.dev`;
+    const password = "correct-horse-battery";
+    const session = await signup(email);
+    const auth = { authorization: `Bearer ${session.token}` };
+
+    const policy = await app.inject({
+      method: "PATCH",
+      url: "/api/org/mfa",
+      headers: auth,
+      payload: { required: true },
+    });
+    expect(policy.statusCode).toBe(200);
+
+    const blocked = await app.inject({
+      method: "POST",
+      url: "/api/auth/login",
+      payload: { email, password },
+    });
+    expect(blocked.statusCode).toBe(403);
+    expect(blocked.json<{ error: string }>().error).toBe("mfa_enrollment_required");
+    const enrollmentToken = blocked.json<{ enrollmentToken: string }>().enrollmentToken;
+
+    const setup = await app.inject({
+      method: "POST",
+      url: "/api/auth/mfa/setup",
+      payload: { enrollmentToken },
+    });
+    expect(setup.statusCode).toBe(200);
+    const { secret } = setup.json<{ secret: string }>();
+
+    const verify = await app.inject({
+      method: "POST",
+      url: "/api/auth/mfa/verify",
+      payload: { enrollmentToken, code: totpNow(secret) },
+    });
+    expect(verify.statusCode).toBe(201);
+    const token = verify.json<{ token: string }>().token;
+    expect(token).toBeTruthy();
+
+    const me = await app.inject({
+      method: "GET",
+      url: "/api/auth/me",
+      headers: { authorization: `Bearer ${token}` },
+    });
+    expect(me.statusCode).toBe(200);
+
+    const disable = await app.inject({
+      method: "POST",
+      url: "/api/auth/mfa/disable",
+      headers: { authorization: `Bearer ${token}` },
+      payload: { password, code: totpNow(secret) },
+    });
+    expect(disable.statusCode).toBe(403);
+
+    const login = await app.inject({
+      method: "POST",
+      url: "/api/auth/login",
+      payload: { email, password },
+    });
+    expect(login.json<{ mfaRequired: boolean }>().mfaRequired).toBe(true);
+
+    const status = await app.inject({
+      method: "GET",
+      url: "/api/auth/mfa",
+      headers: { authorization: `Bearer ${token}` },
+    });
+    expect(status.json()).toMatchObject({ enabled: true, orgRequired: true });
+  });
+
+  it("exchanges trusted JWTs for machine tokens", async () => {
+    const session = await signup(`jwt-identity-${Date.now()}@test.dev`);
+    const auth = { authorization: `Bearer ${session.token}` };
+    const base = `/api/projects/${session.projectId}/identities`;
+
+    const created = await app.inject({
+      method: "POST",
+      url: base,
+      headers: auth,
+      payload: { name: "workload", role: "viewer", environmentIds: [session.devId] },
+    });
+    expect(created.statusCode).toBe(201);
+    const identity = created.json<{ identity: { id: string; clientId: string } }>().identity;
+
+    const method = await app.inject({
+      method: "POST",
+      url: `${base}/${identity.id}/auth-methods`,
+      headers: auth,
+      payload: {
+        issuer: idpIssuer,
+        audience: "opensiel-workload",
+        jwksUri: `${idpIssuer}/jwks`,
+        allowedSubjects: ["workload-1"],
+      },
+    });
+    expect(method.statusCode).toBe(201);
+
+    async function sign(subject: string, audience: string): Promise<string> {
+      return new SignJWT({})
+        .setProtectedHeader({ alg: "RS256", kid: "test-key" })
+        .setSubject(subject)
+        .setIssuer(idpIssuer)
+        .setAudience(audience)
+        .setIssuedAt()
+        .setExpirationTime("5m")
+        .sign(idpPrivateKey);
+    }
+
+    const exchanged = await app.inject({
+      method: "POST",
+      url: "/api/auth/token/jwt",
+      payload: {
+        clientId: identity.clientId,
+        jwt: await sign("workload-1", "opensiel-workload"),
+      },
+    });
+    expect(exchanged.statusCode).toBe(200);
+    const machineToken = exchanged.json<{ accessToken: string }>().accessToken;
+
+    const read = await app.inject({
+      method: "GET",
+      url: `/api/projects/${session.projectId}/secrets?env=dev`,
+      headers: { authorization: `Bearer ${machineToken}` },
+    });
+    expect(read.statusCode).toBe(200);
+
+    for (const candidate of [
+      await sign("workload-1", "other-audience"),
+      await sign("workload-2", "opensiel-workload"),
+    ]) {
+      const denied = await app.inject({
+        method: "POST",
+        url: "/api/auth/token/jwt",
+        payload: { clientId: identity.clientId, jwt: candidate },
+      });
+      expect(denied.statusCode).toBe(401);
+    }
+
+    const listed = await app.inject({
+      method: "GET",
+      url: `${base}/${identity.id}/auth-methods`,
+      headers: auth,
+    });
+    expect(listed.json<{ methods: unknown[] }>().methods).toHaveLength(1);
+  });
+
+  it("exchanges AWS signed requests for machine tokens", async () => {
+    const session = await signup(`aws-identity-${Date.now()}@test.dev`);
+    const auth = { authorization: `Bearer ${session.token}` };
+    const base = `/api/projects/${session.projectId}/identities`;
+
+    const created = await app.inject({
+      method: "POST",
+      url: base,
+      headers: auth,
+      payload: { name: "aws", role: "viewer", environmentIds: [session.devId] },
+    });
+    expect(created.statusCode).toBe(201);
+    const identity = created.json<{
+      identity: { id: string; clientId: string; clientSecret: string };
+    }>().identity;
+
+    const method = await app.inject({
+      method: "POST",
+      url: `${base}/${identity.id}/auth-methods`,
+      headers: auth,
+      payload: {
+        type: "aws",
+        allowedArns: ["arn:aws:iam::123456789012:role/ci-deploy"],
+      },
+    });
+    expect(method.statusCode).toBe(201);
+    expect(method.json<{ method: { allowedArns: string[] } }>().method.allowedArns).toEqual([
+      "arn:aws:iam::123456789012:role/ci-deploy",
+    ]);
+
+    const amzDate = (offsetMs = 0) =>
+      new Date(Date.now() + offsetMs)
+        .toISOString()
+        .replace(/\.\d{3}Z$/, "Z")
+        .replace(/[-:]/g, "");
+    const authorizationHeader = (signature: string) =>
+      `AWS4-HMAC-SHA256 Credential=AKIAEXAMPLE/${new Date()
+        .toISOString()
+        .slice(0, 10)
+        .replace(
+          /-/g,
+          "",
+        )}/us-east-1/sts/aws4_request, SignedHeaders=host;x-amz-date, Signature=${signature}`;
+
+    stsArn = "arn:aws:sts::123456789012:assumed-role/ci-deploy/session-1";
+    const signature = "a".repeat(64);
+    const payload = {
+      clientId: identity.clientId,
+      authorization: authorizationHeader(signature),
+      amzDate: amzDate(),
+    };
+
+    const first = await app.inject({
+      method: "POST",
+      url: "/api/auth/token/aws",
+      payload,
+    });
+    expect(first.statusCode).toBe(200);
+    const machineToken = first.json<{ accessToken: string }>().accessToken;
+
+    const read = await app.inject({
+      method: "GET",
+      url: `/api/projects/${session.projectId}/secrets?env=dev`,
+      headers: { authorization: `Bearer ${machineToken}` },
+    });
+    expect(read.statusCode).toBe(200);
+
+    const replay = await app.inject({
+      method: "POST",
+      url: "/api/auth/token/aws",
+      payload,
+    });
+    expect(replay.statusCode).toBe(401);
+
+    const stale = await app.inject({
+      method: "POST",
+      url: "/api/auth/token/aws",
+      payload: {
+        clientId: identity.clientId,
+        authorization: authorizationHeader("b".repeat(64)),
+        amzDate: amzDate(-10 * 60_000),
+      },
+    });
+    expect(stale.statusCode).toBe(401);
+
+    stsArn = "arn:aws:iam::999999999999:role/other";
+    const denied = await app.inject({
+      method: "POST",
+      url: "/api/auth/token/aws",
+      payload: {
+        clientId: identity.clientId,
+        authorization: authorizationHeader("c".repeat(64)),
+        amzDate: amzDate(),
+      },
+    });
+    expect(denied.statusCode).toBe(401);
+
+    const universal = await app.inject({
+      method: "POST",
+      url: "/api/auth/token/universal",
+      payload: { clientId: identity.clientId, clientSecret: identity.clientSecret },
+    });
+    expect(universal.statusCode).toBe(200);
+  });
+
+  it("rotates a secret and revokes the previous credential after grace", async () => {
+    const session = await signup(`rotation-${Date.now()}@test.dev`);
+    const auth = { authorization: `Bearer ${session.token}` };
+    const base = `/api/projects/${session.projectId}`;
+    const hookBase = hookUrl.replace(/\/hook$/, "");
+    rotationCalls.created.length = 0;
+    rotationCalls.revoked.length = 0;
+
+    await app.inject({
+      method: "POST",
+      url: `${base}/secrets`,
+      headers: auth,
+      payload: { key: "ROTATE_ME", value: "initial", env: "dev" },
+    });
+
+    const created = await app.inject({
+      method: "POST",
+      url: `${base}/rotations`,
+      headers: auth,
+      payload: {
+        key: "ROTATE_ME",
+        env: "dev",
+        provider: "http",
+        config: {
+          createUrl: `${hookBase}/rotate/create`,
+          revokeUrl: `${hookBase}/rotate/revoke`,
+        },
+        intervalSeconds: 3600,
+        graceSeconds: 300,
+      },
+    });
+    expect(created.statusCode).toBe(201);
+    const rotation = created.json<{ rotation: { id: string } }>().rotation;
+
+    const first = await app.inject({
+      method: "POST",
+      url: `${base}/rotations/${rotation.id}/rotate`,
+      headers: auth,
+    });
+    expect(first.statusCode).toBe(200);
+    expect(first.json<{ result: { status: string } }>().result.status).toBe("success");
+
+    const afterFirst = await app.inject({
+      method: "GET",
+      url: `${base}/secrets/ROTATE_ME?env=dev`,
+      headers: auth,
+    });
+    expect(afterFirst.json<{ secret: { value: string } }>().secret.value).toBe("rotated-value-1");
+    expect(rotationCalls.created[0]).toMatchObject({
+      key: "ROTATE_ME",
+      environment: "dev",
+    });
+    expect(rotationCalls.revoked).toHaveLength(0);
+
+    const second = await app.inject({
+      method: "POST",
+      url: `${base}/rotations/${rotation.id}/rotate`,
+      headers: auth,
+    });
+    expect(second.statusCode).toBe(200);
+    const afterSecond = await app.inject({
+      method: "GET",
+      url: `${base}/secrets/ROTATE_ME?env=dev`,
+      headers: auth,
+    });
+    expect(afterSecond.json<{ secret: { value: string } }>().secret.value).toBe("rotated-value-2");
+    expect(rotationCalls.revoked).toHaveLength(0);
+
+    await database.sql`
+      update rotation_policies
+      set previous_revoke_after = now() - interval '1 second'
+      where id = ${rotation.id}
+    `;
+    const revoked = await revokeExpiredRotationCredentials({
+      env,
+      db: database.db,
+      sql: database.sql,
+    });
+    expect(revoked).toBe(1);
+    expect(rotationCalls.revoked[0]).toMatchObject({ credentialId: "cred-1" });
+  });
+
+  it("rotates a PostgreSQL role password with dual-phase credentials", async () => {
+    const databaseUrl = process.env.TEST_DATABASE_URL!;
+    const session = await signup(`rotation-pg-${Date.now()}@test.dev`);
+    const auth = { authorization: `Bearer ${session.token}` };
+    const base = `/api/projects/${session.projectId}`;
+
+    await database.sql`drop role if exists rot_a`;
+    await database.sql`drop role if exists rot_b`;
+    await database.sql`create role rot_a login password 'initial-a'`;
+    await database.sql`create role rot_b login password 'initial-b'`;
+
+    const connect = async (username: string, password: string) => {
+      const url = new URL(databaseUrl);
+      url.username = username;
+      url.password = password;
+      const client = postgres(url.toString(), { max: 1, onnotice: () => {} });
+      try {
+        await client`select 1`;
+        return true;
+      } finally {
+        await client.end({ timeout: 5 });
+      }
+    };
+
+    try {
+      const created = await app.inject({
+        method: "POST",
+        url: `${base}/rotations`,
+        headers: auth,
+        payload: {
+          key: "PG_CREDENTIAL",
+          env: "dev",
+          provider: "postgres",
+          config: {
+            adminUrl: databaseUrl,
+            username: "rot_a",
+            alternateUsername: "rot_b",
+          },
+          intervalSeconds: 3600,
+          graceSeconds: 300,
+        },
+      });
+      expect(created.statusCode).toBe(201);
+      const rotation = created.json<{ rotation: { id: string } }>().rotation;
+
+      const first = await app.inject({
+        method: "POST",
+        url: `${base}/rotations/${rotation.id}/rotate`,
+        headers: auth,
+      });
+      expect(first.json<{ result: { status: string } }>().result.status).toBe("success");
+
+      const afterFirst = await app.inject({
+        method: "GET",
+        url: `${base}/secrets/PG_CREDENTIAL?env=dev`,
+        headers: auth,
+      });
+      const firstValue = afterFirst.json<{ secret: { value: string } }>().secret.value;
+      const [firstUser, firstPassword] = firstValue.split(":");
+      expect(firstUser).toBe("rot_a");
+      expect(await connect(firstUser, firstPassword)).toBe(true);
+
+      const second = await app.inject({
+        method: "POST",
+        url: `${base}/rotations/${rotation.id}/rotate`,
+        headers: auth,
+      });
+      expect(second.json<{ result: { status: string } }>().result.status).toBe("success");
+
+      const afterSecond = await app.inject({
+        method: "GET",
+        url: `${base}/secrets/PG_CREDENTIAL?env=dev`,
+        headers: auth,
+      });
+      const secondValue = afterSecond.json<{ secret: { value: string } }>().secret.value;
+      const [secondUser, secondPassword] = secondValue.split(":");
+      expect(secondUser).toBe("rot_b");
+      expect(await connect(secondUser, secondPassword)).toBe(true);
+
+      await database.sql`
+        update rotation_policies
+        set previous_revoke_after = now() - interval '1 second'
+        where id = ${rotation.id}
+      `;
+      const revoked = await revokeExpiredRotationCredentials({
+        env,
+        db: database.db,
+        sql: database.sql,
+      });
+      expect(revoked).toBe(1);
+      await expect(connect(firstUser, firstPassword)).rejects.toThrow();
+    } finally {
+      await database.sql`drop role if exists rot_a`;
+      await database.sql`drop role if exists rot_b`;
+    }
+  });
+
+  it("grants scoped custom-role permissions with temporary access", async () => {
+    const owner = await signup(`rbac-owner-${Date.now()}@test.dev`);
+    const auth = { authorization: `Bearer ${owner.token}` };
+    const viewerEmail = `rbac-viewer-${Date.now()}@test.dev`;
+
+    const invite = await app.inject({
+      method: "POST",
+      url: "/api/org/invites",
+      headers: auth,
+      payload: { email: viewerEmail, role: "viewer" },
+    });
+    expect(invite.statusCode).toBe(201);
+    const accepted = await app.inject({
+      method: "POST",
+      url: "/api/auth/accept-invite",
+      payload: {
+        token: invite.json<{ token: string }>().token,
+        name: "Viewer",
+        password: "viewer-password-123",
+      },
+    });
+    expect(accepted.statusCode).toBe(201);
+    const viewer = accepted.json<{ token: string; user: { id: string } }>();
+    const viewerAuth = { authorization: `Bearer ${viewer.token}` };
+
+    const denied = await app.inject({
+      method: "POST",
+      url: `/api/projects/${owner.projectId}/secrets`,
+      headers: viewerAuth,
+      payload: { key: "RBAC_KEY", value: "x", env: "dev" },
+    });
+    expect(denied.statusCode).toBe(403);
+
+    const roleResponse = await app.inject({
+      method: "POST",
+      url: "/api/org/roles",
+      headers: auth,
+      payload: { name: "dev-writer", permissions: ["secret:write"] },
+    });
+    expect(roleResponse.statusCode).toBe(201);
+    const role = roleResponse.json<{ role: { id: string } }>().role;
+
+    const grant = await app.inject({
+      method: "POST",
+      url: "/api/org/grants",
+      headers: auth,
+      payload: {
+        userId: viewer.user.id,
+        roleId: role.id,
+        environmentId: owner.devId,
+        path: "/",
+      },
+    });
+    expect(grant.statusCode).toBe(201);
+    const grantId = grant.json<{ grant: { id: string } }>().grant.id;
+
+    const allowed = await app.inject({
+      method: "POST",
+      url: `/api/projects/${owner.projectId}/secrets`,
+      headers: viewerAuth,
+      payload: { key: "RBAC_KEY", value: "x", env: "dev" },
+    });
+    expect(allowed.statusCode).toBe(201);
+
+    for (const payload of [
+      { key: "RBAC_KEY", value: "x", env: "prod" },
+      { key: "RBAC_KEY", value: "x", env: "dev", path: "/backend" },
+    ]) {
+      const outside = await app.inject({
+        method: "POST",
+        url: `/api/projects/${owner.projectId}/secrets`,
+        headers: viewerAuth,
+        payload,
+      });
+      expect(outside.statusCode).toBe(403);
+    }
+
+    await database.sql`
+      update role_grants set expires_at = now() - interval '1 minute' where id = ${grantId}
+    `;
+    const expired = await app.inject({
+      method: "POST",
+      url: `/api/projects/${owner.projectId}/secrets`,
+      headers: viewerAuth,
+      payload: { key: "RBAC_KEY", value: "y", env: "dev" },
+    });
+    expect(expired.statusCode).toBe(403);
+  });
+
+  it("syncs environment secrets to a webhook provider and records failures", async () => {
+    const session = await signup(`sync-${Date.now()}@test.dev`);
+    const auth = { authorization: `Bearer ${session.token}` };
+    const base = `/api/projects/${session.projectId}`;
+    const hookBase = hookUrl.replace(/\/hook$/, "");
+    syncBodies.length = 0;
+    syncFail = false;
+
+    await app.inject({
+      method: "POST",
+      url: `${base}/secrets`,
+      headers: auth,
+      payload: { key: "ROOT_KEY", value: "root-value", env: "dev" },
+    });
+    await app.inject({
+      method: "POST",
+      url: `${base}/secrets`,
+      headers: auth,
+      payload: { key: "FOLDER_KEY", value: "folder-value", env: "dev", path: "/backend" },
+    });
+
+    const created = await app.inject({
+      method: "POST",
+      url: `${base}/syncs`,
+      headers: auth,
+      payload: {
+        env: "dev",
+        path: "/",
+        provider: "webhook",
+        config: { url: `${hookBase}/sync-target` },
+        intervalSeconds: 300,
+      },
+    });
+    expect(created.statusCode).toBe(201);
+    const sync = created.json<{ sync: { id: string } }>().sync;
+
+    const run = await app.inject({
+      method: "POST",
+      url: `${base}/syncs/${sync.id}/run`,
+      headers: auth,
+    });
+    expect(run.statusCode).toBe(200);
+    expect(run.json<{ result: { status: string; count: number } }>().result).toMatchObject({
+      status: "success",
+      count: 1,
+    });
+    expect(syncBodies).toHaveLength(1);
+    expect(syncBodies[0]).toMatchObject({
+      environment: "dev",
+      path: "/",
+      secrets: { ROOT_KEY: "root-value" },
+    });
+    expect(JSON.stringify(syncBodies[0])).not.toContain("folder-value");
+
+    syncFail = true;
+    const failed = await app.inject({
+      method: "POST",
+      url: `${base}/syncs/${sync.id}/run`,
+      headers: auth,
+    });
+    expect(failed.json<{ result: { status: string } }>().result.status).toBe("error");
+    syncFail = false;
+
+    const rows = await database.sql<
+      { failure_count: number; last_status: string; last_error: string }[]
+    >`select failure_count, last_status, last_error from secret_syncs where id = ${sync.id}`;
+    expect(rows[0]).toMatchObject({ failure_count: 1, last_status: "error" });
+
+    const listed = await app.inject({
+      method: "GET",
+      url: `${base}/syncs`,
+      headers: auth,
+    });
+    expect(listed.json<{ syncs: { lastStatus: string }[] }>().syncs[0].lastStatus).toBe("error");
+  });
+
+  it("syncs secrets to a Kubernetes Secret", async () => {
+    const session = await signup(`sync-kube-${Date.now()}@test.dev`);
+    const auth = { authorization: `Bearer ${session.token}` };
+    const base = `/api/projects/${session.projectId}`;
+    const hookBase = hookUrl.replace(/\/hook$/, "");
+    kubeSecrets.clear();
+
+    await app.inject({
+      method: "POST",
+      url: `${base}/secrets`,
+      headers: auth,
+      payload: { key: "K8S_KEY", value: "kube-value", env: "dev" },
+    });
+
+    const created = await app.inject({
+      method: "POST",
+      url: `${base}/syncs`,
+      headers: auth,
+      payload: {
+        env: "dev",
+        path: "/",
+        provider: "kubernetes",
+        config: {
+          apiUrl: hookBase,
+          token: "test-token",
+          namespace: "apps",
+          secretName: "app-secrets",
+        },
+        intervalSeconds: 300,
+      },
+    });
+    expect(created.statusCode).toBe(201);
+    const sync = created.json<{ sync: { id: string } }>().sync;
+
+    const run = await app.inject({
+      method: "POST",
+      url: `${base}/syncs/${sync.id}/run`,
+      headers: auth,
+    });
+    expect(run.json<{ result: { status: string; count: number } }>().result).toMatchObject({
+      status: "success",
+      count: 1,
+    });
+
+    const stored = kubeSecrets.get("app-secrets");
+    expect(stored).toBeTruthy();
+    expect(Buffer.from(stored!.K8S_KEY, "base64").toString("utf8")).toBe("kube-value");
+  });
+
+  it("stores end-to-end encrypted secrets without server plaintext", async () => {
+    const session = await signup(`e2ee-${Date.now()}@test.dev`);
+    const auth = { authorization: `Bearer ${session.token}` };
+    const base = `/api/projects/${session.projectId}`;
+
+    const mode = await app.inject({
+      method: "PATCH",
+      url: `${base}/encryption`,
+      headers: auth,
+      payload: { mode: "e2ee" },
+    });
+    expect(mode.statusCode).toBe(200);
+
+    const kdf = { t: 1, m: 1024, p: 1, dkLen: 32 };
+    const identity = generateIdentity("e2ee-password-123", kdf);
+    const uploaded = await app.inject({
+      method: "PUT",
+      url: "/api/auth/keys",
+      headers: auth,
+      payload: {
+        publicKey: identity.publicKey,
+        wrappedPrivateKey: identity.wrappedPrivateKey.ciphertext,
+        privateKeyIv: identity.wrappedPrivateKey.iv,
+        privateKeyTag: identity.wrappedPrivateKey.tag,
+        kdfSalt: identity.wrappedPrivateKey.salt,
+        kdfParams: identity.wrappedPrivateKey.kdf,
+      },
+    });
+    expect(uploaded.statusCode).toBe(200);
+
+    const me = await app.inject({ method: "GET", url: "/api/auth/me", headers: auth });
+    const userId = me.json<{ user: { id: string } }>().user.id;
+
+    const projectKey = generateProjectKey();
+    const wrapped = wrapProjectKey(projectKey, identity.publicKey);
+    const keysUpload = await app.inject({
+      method: "PUT",
+      url: `${base}/keys`,
+      headers: auth,
+      payload: { keys: [{ userId, ...wrapped, keyVersion: 1 }] },
+    });
+    expect(keysUpload.statusCode).toBe(200);
+
+    const aad = secretAad(session.projectId, "dev", "/", "E2EE_KEY");
+    const payload = encryptSecret(projectKey, "server-never-sees-this", aad);
+    const written = await app.inject({
+      method: "POST",
+      url: `${base}/secrets/ciphertext`,
+      headers: auth,
+      payload: {
+        env: "dev",
+        key: "E2EE_KEY",
+        ciphertext: payload.ciphertext,
+        iv: payload.iv,
+        tag: payload.tag,
+        keyVersion: 1,
+      },
+    });
+    expect(written.statusCode).toBe(201);
+    expect(written.json<{ secret: { version: number } }>().secret.version).toBe(1);
+
+    const listed = await app.inject({
+      method: "GET",
+      url: `${base}/secrets/ciphertext?env=dev`,
+      headers: auth,
+    });
+    expect(listed.statusCode).toBe(200);
+    const secrets = listed.json<{
+      secrets: { key: string; ciphertext: string; iv: string; tag: string }[];
+    }>().secrets;
+    expect(secrets).toHaveLength(1);
+    expect(secrets[0].key).toBe("E2EE_KEY");
+    expect(secrets[0].ciphertext).not.toContain("server-never-sees-this");
+    expect(
+      decryptSecret(
+        projectKey,
+        { ciphertext: secrets[0].ciphertext, iv: secrets[0].iv, tag: secrets[0].tag },
+        aad,
+      ),
+    ).toBe("server-never-sees-this");
+
+    const keys = await app.inject({
+      method: "GET",
+      url: `${base}/keys`,
+      headers: auth,
+    });
+    const keysBody = keys.json<{
+      mode: string;
+      key: { wrappedKey: string; iv: string; tag: string };
+      members: { userId: string; publicKey: string }[];
+    }>();
+    expect(keysBody.mode).toBe("e2ee");
+    expect(
+      keysBody.members.some(
+        (member) => member.userId === userId && member.publicKey === identity.publicKey,
+      ),
+    ).toBe(true);
+    const unlocked = unlockIdentity("e2ee-password-123", identity.wrappedPrivateKey);
+    expect(unwrapProjectKey(unlocked.privateKey, keysBody.key)).toBe(projectKey);
+
+    const plainRead = await app.inject({
+      method: "GET",
+      url: `${base}/secrets?env=dev`,
+      headers: auth,
+    });
+    expect(plainRead.statusCode).toBe(409);
+    expect(plainRead.json<{ error: string }>().error).toBe("feature_unavailable_in_e2ee");
+
+    const plainWrite = await app.inject({
+      method: "POST",
+      url: `${base}/secrets`,
+      headers: auth,
+      payload: { key: "NOPE", value: "x", env: "dev" },
+    });
+    expect(plainWrite.statusCode).toBe(409);
+
+    const switchBack = await app.inject({
+      method: "PATCH",
+      url: `${base}/encryption`,
+      headers: auth,
+      payload: { mode: "server" },
+    });
+    expect(switchBack.statusCode).toBe(409);
+  });
+
+  it("paginates, filters, and sorts list endpoints server-side", async () => {
+    const session = await signup(`paging-${Date.now()}@test.dev`);
+    const auth = { authorization: `Bearer ${session.token}` };
+    const base = `/api/projects/${session.projectId}`;
+
+    for (const key of ["ALPHA", "BETA", "GAMMA", "DELTA"]) {
+      const created = await app.inject({
+        method: "POST",
+        url: `${base}/secrets`,
+        headers: auth,
+        payload: { key, value: key.toLowerCase(), env: "dev" },
+      });
+      expect(created.statusCode).toBe(201);
+    }
+
+    const first = await app.inject({
+      method: "GET",
+      url: `${base}/secrets?env=dev&limit=2&offset=0&sort=key&order=asc`,
+      headers: auth,
+    });
+    const firstBody = first.json<{
+      secrets: { key: string }[];
+      total: number;
+      limit: number;
+      offset: number;
+    }>();
+    expect(firstBody).toMatchObject({ total: 4, limit: 2, offset: 0 });
+    expect(firstBody.secrets.map((secret) => secret.key)).toEqual(["ALPHA", "BETA"]);
+
+    const second = await app.inject({
+      method: "GET",
+      url: `${base}/secrets?env=dev&limit=2&offset=2&sort=key&order=asc`,
+      headers: auth,
+    });
+    expect(
+      second.json<{ secrets: { key: string }[] }>().secrets.map((secret) => secret.key),
+    ).toEqual(["DELTA", "GAMMA"]);
+
+    const descending = await app.inject({
+      method: "GET",
+      url: `${base}/secrets?env=dev&limit=4&offset=0&sort=key&order=desc`,
+      headers: auth,
+    });
+    expect(
+      descending.json<{ secrets: { key: string }[] }>().secrets.map((secret) => secret.key),
+    ).toEqual(["GAMMA", "DELTA", "BETA", "ALPHA"]);
+
+    const filtered = await app.inject({
+      method: "GET",
+      url: `${base}/secrets?env=dev&q=AM&limit=20&offset=0`,
+      headers: auth,
+    });
+    const filteredBody = filtered.json<{ secrets: { key: string }[]; total: number }>();
+    expect(filteredBody.total).toBe(1);
+    expect(filteredBody.secrets.map((secret) => secret.key)).toEqual(["GAMMA"]);
+
+    const audit = await app.inject({
+      method: "GET",
+      url: `/api/audit?projectId=${session.projectId}&limit=1&offset=0&sort=createdAt&order=desc&q=secret.write`,
+      headers: auth,
+    });
+    const auditBody = audit.json<{ logs: unknown[]; total: number; limit: number }>();
+    expect(auditBody.logs).toHaveLength(1);
+    expect(auditBody.limit).toBe(1);
+    expect(auditBody.total).toBeGreaterThanOrEqual(4);
+
+    const role = await app.inject({
+      method: "POST",
+      url: "/api/org/roles",
+      headers: auth,
+      payload: { name: `Paging ${Date.now()}`, permissions: ["secret:read"] },
+    });
+    expect(role.statusCode).toBe(201);
+    const roles = await app.inject({
+      method: "GET",
+      url: "/api/org/roles?limit=1&offset=0&sort=name&order=asc",
+      headers: auth,
+    });
+    const rolesBody = roles.json<{ roles: unknown[]; total: number; limit: number }>();
+    expect(rolesBody.roles).toHaveLength(1);
+    expect(rolesBody.limit).toBe(1);
+    expect(rolesBody.total).toBeGreaterThanOrEqual(1);
   });
 
   it("invites teammates into the same organization", async () => {
@@ -1562,6 +3109,82 @@ if (!databaseUrl) {
     const actions = audit.json<{ logs: { action: string }[] }>().logs.map((log) => log.action);
     expect(actions).toContain("webhook.create");
     expect(actions).toContain("webhook.test");
+  });
+
+  it("supports custom environments such as UAT", async () => {
+    const session = await signup(`envs-${Date.now()}@test.dev`);
+    const auth = { authorization: `Bearer ${session.token}` };
+    const projectId = session.projectId;
+
+    const created = await app.inject({
+      method: "POST",
+      url: `/api/projects/${projectId}/environments`,
+      headers: auth,
+      payload: { name: "UAT" },
+    });
+    expect(created.statusCode).toBe(201);
+    const environment = created.json<{
+      environment: { id: string; slug: string; position: number };
+    }>().environment;
+    expect(environment.slug).toBe("uat");
+    expect(environment.position).toBe(3);
+
+    const list = await app.inject({
+      method: "GET",
+      url: `/api/projects/${projectId}/environments`,
+      headers: auth,
+    });
+    expect(list.json<{ environments: unknown[] }>().environments).toHaveLength(4);
+
+    const set = await app.inject({
+      method: "POST",
+      url: `/api/projects/${projectId}/secrets`,
+      headers: auth,
+      payload: { env: "uat", key: "UAT_API_KEY", value: "uat-value" },
+    });
+    expect(set.statusCode).toBe(201);
+    const read = await app.inject({
+      method: "GET",
+      url: `/api/projects/${projectId}/secrets?env=uat`,
+      headers: auth,
+    });
+    expect(
+      read
+        .json<{ secrets: { key: string; value: string }[] }>()
+        .secrets.find((secret) => secret.key === "UAT_API_KEY")?.value,
+    ).toBe("uat-value");
+
+    const blocked = await app.inject({
+      method: "DELETE",
+      url: `/api/projects/${projectId}/environments/${environment.id}`,
+      headers: auth,
+    });
+    expect(blocked.statusCode).toBe(409);
+
+    const viewer = await inviteAndAccept(
+      session.token,
+      `env-viewer-${Date.now()}@test.dev`,
+      "viewer",
+    );
+    const forbidden = await app.inject({
+      method: "POST",
+      url: `/api/projects/${projectId}/environments`,
+      headers: { authorization: `Bearer ${viewer.token}` },
+      payload: { name: "QA" },
+    });
+    expect(forbidden.statusCode).toBe(403);
+
+    await app.inject({
+      method: "DELETE",
+      url: `/api/projects/${projectId}/secrets/UAT_API_KEY?env=uat`,
+      headers: auth,
+    });
+    const deleted = await app.inject({
+      method: "DELETE",
+      url: `/api/projects/${projectId}/environments/${environment.id}`,
+      headers: auth,
+    });
+    expect(deleted.statusCode).toBe(200);
   });
 
   it("rotates project data keys to the next master key", async () => {

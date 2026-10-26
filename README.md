@@ -23,6 +23,7 @@
   <a href="#screenshots">Screenshots</a> ·
   <a href="#architecture">Architecture</a> ·
   <a href="#configuration">Configuration</a> ·
+  <a href="docs/README.md">Docs</a> ·
   <a href="https://opensiel.liostech.id">Live demo</a>
 </p>
 
@@ -35,6 +36,25 @@ identities, SSO — without an enterprise plan, and without handing secrets to a
 The core is MIT licensed. There is no license server, no phone-home gate, and no feature
 flag that unlocks a paid tier.
 
+> **Live demo:** <https://opensiel.liostech.id> — `demo@opensiel.dev` / `demo-password-123`
+> (read-only shared account).
+
+## Documentation
+
+Hosted docs: <https://opensiel.liostech.id/docs/> (the same pages are in [`docs/`](docs/)).
+
+| Guide                                                           | What it covers                                     |
+| --------------------------------------------------------------- | -------------------------------------------------- |
+| [Getting started](docs/getting-started.md)                      | Docker Compose, owner account, invites, CLI.       |
+| [Local development](docs/local-development.md)                  | Monorepo setup, dev servers, tests, seeding.       |
+| [Configuration](docs/configuration.md)                          | Every env var, OIDC/SAML, AWS KMS, rotation.       |
+| [CLI](docs/cli.md) · [SDK](docs/sdk.md)                         | Inject secrets and integrate apps.                 |
+| [Use cases](docs/use-cases.md)                                  | CI/CD, Kubernetes, dynamic credentials, approvals. |
+| [CI/CD](docs/ci-cd.md)                                          | GitHub Actions and GitLab recipes.                 |
+| [Kubernetes](docs/kubernetes.md)                                | Deploy, TLS, pod injection, scaling.               |
+| [Operations](docs/operations.md)                                | Backups, restore, rotation, monitoring.            |
+| [Troubleshooting](docs/troubleshooting.md) · [FAQ](docs/faq.md) | Common errors and answers.                         |
+
 ## Features
 
 |                             |                                                                                                                                                         |
@@ -43,18 +63,41 @@ flag that unlocks a paid tier.
 | **Versioning & rollback**   | Every write is an immutable version. Roll back creates a new version and keeps history.                                                                 |
 | **Approvals**               | Opt-in per environment. Writes, deletes, and rollbacks become change requests that need N approvals from owners/admins; requesters cannot self-approve. |
 | **Team management**         | Email invites, roles (`owner`, `admin`, `member`, `viewer`), last-owner protection, session revocation on removal.                                      |
-| **Machine identities**      | Client credentials, 15-minute tokens, environment scopes, `viewer`/`member` roles.                                                                      |
+| **Scoped roles**            | Custom roles with project/environment/path grants and optional expiry, layered on built-in roles.                                                       |
+| **Machine identities**      | Client credentials, trusted JWTs (Kubernetes/CI OIDC), AWS SigV4, short-lived tokens, environment scopes.                                               |
 | **References & imports**    | `${KEY}` / `${/path/KEY}` resolution and cross-environment imports, resolved at read time.                                                              |
 | **Bulk import**             | Paste or upload a `.env` (or flat JSON); existing keys get a new version.                                                                               |
 | **SSO**                     | OIDC (authorization code + PKCE) and SAML (signed assertions), with invite-based or automatic organization provisioning.                                |
+| **MFA**                     | TOTP with single-use recovery codes, per-organization enforcement for password logins.                                                                  |
 | **Secret scanning**         | Scan pasted text or files for stored secrets and common credential patterns, with masked findings.                                                      |
 | **Dynamic credentials**     | Issue short-lived PostgreSQL roles with a TTL; revoke manually or let the reaper drop them at expiry.                                                   |
+| **Secret rotation**         | Schedule static-secret rotation with dual-phase rollover (PostgreSQL roles or an HTTP rotator), grace windows, and retries.                             |
+| **Secret syncs**            | Push an environment to AWS/GCP/Azure, Vercel, Cloudflare, GitHub Actions, Kubernetes, or a webhook on a schedule.                                       |
+| **End-to-end encryption**   | Opt-in per project: keys stay client-side; the server stores only ciphertext and metadata.                                                              |
 | **Webhooks**                | HMAC-SHA256 signed event deliveries with retries and delivery status.                                                                                   |
 | **Master key rotation**     | Rewrap project data keys to a new KEK without re-encrypting secrets; optional AWS KMS.                                                                  |
 | **Audit log**               | Writes, reads, rollbacks, SSO logins, leases, and webhooks — values are never recorded.                                                                 |
-| **CLI & SDK**               | `opensiel run --env dev -- npm run dev`, `opensiel secrets import .env`, and `@opensiel/sdk`.                                                           |
+| **CLI & SDK**               | `opensiel run --env dev -- npm run dev`, `opensiel secrets import .env`, and `@liostech/opensiel-sdk`.                                                  |
 
 ## Quickstart
+
+### One command
+
+```bash
+curl -fsSL https://opensiel.liostech.id/install.sh | bash
+```
+
+The installer checks Docker, generates the keys, and starts PostgreSQL and opensiel in
+`~/.opensiel`. Open <http://localhost:8787>; the first signup becomes the owner.
+
+Options: `--port`, `--dir`, `--version`, `--url`, `--no-start`. With `curl | bash`, pass them
+after `bash -s --`, for example:
+
+```bash
+curl -fsSL https://opensiel.liostech.id/install.sh | bash -s -- --port 9000
+```
+
+### From source
 
 ```bash
 git clone https://github.com/ibrahimhnif/opensiel.git
@@ -74,8 +117,7 @@ The first account becomes the instance owner. Then turn off open signup (see
 ### CLI
 
 ```bash
-pnpm --filter @opensiel/cli build
-export PATH="$PWD/apps/cli/dist:$PATH"
+npm install -g @liostech/opensiel-cli
 
 opensiel login --api-url http://localhost:8787
 opensiel init --project default --env dev
@@ -85,14 +127,34 @@ opensiel run --env dev -- npm run dev
 
 ### SDK
 
+```bash
+npm install @liostech/opensiel-sdk
+```
+
 ```ts
-import { OpensielClient } from "@opensiel/sdk";
+import { OpensielClient } from "@liostech/opensiel-sdk";
 
 const client = new OpensielClient({ apiUrl: "http://localhost:8787" });
 await client.loginWithClientCredentials(clientId, clientSecret);
 
 const { secrets } = await client.listSecrets(projectId, "dev");
 ```
+
+### GitHub Actions
+
+```yaml
+- uses: ibrahimhnif/opensiel@v0.1.0
+  with:
+    api-url: https://opensiel.example.com
+    project: web-app
+    env: prod
+    client-id: ${{ secrets.OPENSIEL_CLIENT_ID }}
+    client-secret: ${{ secrets.OPENSIEL_CLIENT_SECRET }}
+```
+
+Exports root-folder secrets to `GITHUB_ENV`, with values masked in the log. Set `output-file`
+if a dotenv file is needed.
+See [CI/CD](docs/ci-cd.md#reusable-github-action) for the inputs and outputs.
 
 ## Screenshots
 
@@ -152,9 +214,9 @@ See [docs/architecture.md](docs/architecture.md) for the data model, flows, and 
 
 ## Self-hosting
 
-The published image is `ghcr.io/<owner>/opensiel`. Manifests in [`deploy/k8s`](deploy/k8s)
-cover the namespace, PostgreSQL, the app, and an ingress. Replace the `OWNER` placeholders and
-create the secrets out of band:
+The published image is `ghcr.io/ibrahimhnif/opensiel`. The Helm chart is the recommended
+Kubernetes path; raw manifests in [`deploy/k8s`](deploy/k8s) work without Helm. See
+[Kubernetes](docs/kubernetes.md) for both.
 
 ```bash
 kubectl apply -f deploy/k8s/namespace.yaml

@@ -1,21 +1,51 @@
 {
-  "name": "@opensiel/sdk",
-  "version": "0.1.0",
-  "private": true,
+  "name": "@liostech/opensiel-sdk",
+  "version": "0.1.1",
+  "description": "Typed Node client for opensiel, a self-hosted secrets manager with approvals, versioning, and SSO.",
+  "keywords": [
+    "opensiel",
+    "secrets",
+    "secrets-management",
+    "secrets-manager",
+    "sdk",
+    "typescript"
+  ],
+  "license": "MIT",
+  "author": "opensiel contributors",
+  "homepage": "https://opensiel.liostech.id/docs/sdk",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/ibrahimhnif/opensiel.git",
+    "directory": "packages/sdk"
+  },
+  "bugs": {
+    "url": "https://github.com/ibrahimhnif/opensiel/issues"
+  },
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "exports": {
     ".": {
       "types": "./dist/index.d.ts",
-      "import": "./dist/index.js"
+      "import": "./dist/index.js",
+      "default": "./dist/index.js"
     }
   },
   "files": [
-    "dist"
+    "dist",
+    "README.md",
+    "LICENSE"
   ],
+  "sideEffects": false,
+  "engines": {
+    "node": ">=20"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
   "scripts": {
     "build": "tsup src/index.ts --format esm --dts --clean",
+    "prepack": "pnpm build",
     "typecheck": "tsc --noEmit",
     "test": "vitest run --passWithNoTests"
   },

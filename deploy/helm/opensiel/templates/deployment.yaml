@@ -1,0 +1,80 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "opensiel.fullname" . }}
+  labels:
+    {{- include "opensiel.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.replicaCount }}
+  revisionHistoryLimit: 3
+  selector:
+    matchLabels:
+      {{- include "opensiel.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      {{- with .Values.podAnnotations }}
+      annotations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      labels:
+        {{- include "opensiel.selectorLabels" . | nindent 8 }}
+    spec:
+      automountServiceAccountToken: {{ .Values.serviceAccount.automount }}
+      serviceAccountName: {{ include "opensiel.serviceAccountName" . }}
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      securityContext:
+        {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      containers:
+        - name: opensiel
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          ports:
+            - name: http
+              containerPort: 8787
+              protocol: TCP
+          envFrom:
+            - secretRef:
+                name: {{ include "opensiel.secretName" . }}
+          env:
+            - name: NODE_ENV
+              value: production
+            - name: PORT
+              value: "8787"
+            - name: HOST
+              value: 0.0.0.0
+            - name: OPENSIEL_WEB_DIR
+              value: apps/web/dist
+            - name: OPENSIEL_PUBLIC_URL
+              value: {{ include "opensiel.publicUrl" . | quote }}
+            - name: OPENSIEL_ALLOW_SIGNUP
+              value: {{ .Values.env.OPENSIEL_ALLOW_SIGNUP | quote }}
+            - name: OPENSIEL_AUTO_MIGRATE
+              value: {{ .Values.env.OPENSIEL_AUTO_MIGRATE | quote }}
+            - name: OPENSIEL_RATE_LIMIT
+              value: {{ .Values.env.OPENSIEL_RATE_LIMIT | quote }}
+            {{- with .Values.extraEnv }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
+          securityContext:
+            {{- toYaml .Values.securityContext | nindent 12 }}
+          readinessProbe:
+            {{- toYaml .Values.readinessProbe | nindent 12 }}
+          livenessProbe:
+            {{- toYaml .Values.livenessProbe | nindent 12 }}
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}

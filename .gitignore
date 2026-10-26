@@ -8,3 +8,6 @@ coverage/
 opensiel-data/
 .env.deploy
 deploy/k8s/*.local.yaml
+docs/.vitepress/dist/
+docs/.vitepress/cache/
+.env.opensiel

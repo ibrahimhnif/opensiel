@@ -8,24 +8,32 @@ import { Card } from "./ui/card";
 import { Input } from "./ui/input";
 import { Label } from "./ui/label";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "./ui/table";
+import { Pagination } from "./Pagination";
 import { Textarea } from "./ui/textarea";
 import { Notice } from "./Notice";
+import { useToastMessage } from "../hooks/useToastMessage";
+
+const PAGE_SIZE = 20;
 
 export function ScanView({ project }: { project: ProjectDto }) {
   const [contents, setContents] = useState("");
   const [result, setResult] = useState<ScanResult | null>(null);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
+  const [page, setPage] = useState(1);
+  useToastMessage("error", error, setError);
 
-  async function scan() {
+  async function scan(pageNumber = 1) {
     if (!contents.trim()) return;
     setBusy(true);
     setError("");
     try {
-      const response = await api.post<ScanResult>(`/api/projects/${project.id}/scan`, {
-        contents,
-      });
+      const response = await api.post<ScanResult>(
+        `/api/projects/${project.id}/scan?limit=${PAGE_SIZE}&offset=${(pageNumber - 1) * PAGE_SIZE}`,
+        { contents },
+      );
       setResult(response);
+      setPage(pageNumber);
     } catch (err) {
       setError(errorMessage(err));
     } finally {
@@ -38,6 +46,7 @@ export function ScanView({ project }: { project: ProjectDto }) {
     if (!file) return;
     setContents(await file.text());
     setResult(null);
+    setPage(1);
   }
 
   return (
@@ -52,19 +61,13 @@ export function ScanView({ project }: { project: ProjectDto }) {
         </div>
       </div>
 
-      {error && (
-        <Notice tone="error" onDismiss={() => setError("")}>
-          {error}
-        </Notice>
-      )}
-
       {result && (
         <Notice
           tone={result.findings.length > 0 ? "error" : "success"}
           onDismiss={() => setResult(null)}
         >
-          {result.findings.length > 0
-            ? `${result.findings.length} potential leak(s) found in ${result.characters} characters.`
+          {result.total > 0
+            ? `${result.total} potential leak(s) found in ${result.characters} characters.`
             : `No leaks found in ${result.characters} characters.`}{" "}
           Scanned {result.scannedSecrets} secrets across {result.scannedEnvironments} environments.
         </Notice>
@@ -162,7 +165,7 @@ export function ScanView({ project }: { project: ProjectDto }) {
                   </TableCell>
                 </TableRow>
               ))}
-              {result.findings.length === 0 && (
+              {result.total === 0 && (
                 <TableRow>
                   <TableCell colSpan={5} className="py-8 text-center text-muted-foreground">
                     No findings.
@@ -171,6 +174,16 @@ export function ScanView({ project }: { project: ProjectDto }) {
               )}
             </TableBody>
           </Table>
+          <Pagination
+            page={page}
+            pageSize={PAGE_SIZE}
+            total={result.total}
+            totalPages={Math.max(1, Math.ceil(result.total / PAGE_SIZE))}
+            rangeStart={result.total === 0 ? 0 : (page - 1) * PAGE_SIZE + 1}
+            rangeEnd={Math.min(page * PAGE_SIZE, result.total)}
+            onPageChange={(next) => void scan(next)}
+            onPageSizeChange={() => {}}
+          />
         </Card>
       )}
     </section>

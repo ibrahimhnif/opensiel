@@ -16,6 +16,7 @@ import {
   revokeLease,
 } from "../dynamic.js";
 import { writeAudit } from "../audit.js";
+import { paginate, paginationSchema, sortRows } from "../pagination.js";
 import type { Deps } from "../types.js";
 
 function configDto(config: DynamicSecretConfigRow): DynamicConfigDto {
@@ -54,14 +55,35 @@ export function registerDynamicRoutes(app: FastifyInstance, deps: Deps): void {
     assertCanAdmin(actor);
     const { projectId } = request.params as { projectId: string };
     const project = await loadProject(deps, actor, projectId);
+    const query = parse(paginationSchema, request.query);
 
-    const rows = await deps.db
+    const allRows = await deps.db
       .select()
       .from(dynamicSecretConfigs)
       .where(eq(dynamicSecretConfigs.projectId, project.id))
       .orderBy(dynamicSecretConfigs.createdAt);
 
-    return { configurations: rows.map(configDto) };
+    const needle = query.q?.toLowerCase();
+    const filtered = needle
+      ? allRows.filter(
+          (row) =>
+            row.name.toLowerCase().includes(needle) || row.provider.toLowerCase().includes(needle),
+        )
+      : allRows;
+    const sorted = sortRows(filtered, query, {
+      name: (row) => row.name,
+      provider: (row) => row.provider,
+      ttlSeconds: (row) => row.ttlSeconds,
+      createdAt: (row) => row.createdAt.getTime(),
+    });
+    const page = paginate(sorted, query);
+
+    return {
+      configurations: page.items.map(configDto),
+      total: page.total,
+      limit: page.limit,
+      offset: page.offset,
+    };
   });
 
   app.post("/api/projects/:projectId/dynamic-secrets", async (request, reply) => {
@@ -155,19 +177,36 @@ export function registerDynamicRoutes(app: FastifyInstance, deps: Deps): void {
     assertCanAdmin(actor);
     const { projectId } = request.params as { projectId: string };
     const project = await loadProject(deps, actor, projectId);
+    const query = parse(paginationSchema, request.query);
 
     const rows = await deps.db
       .select({ lease: dynamicSecretLeases, config: dynamicSecretConfigs })
       .from(dynamicSecretLeases)
       .innerJoin(dynamicSecretConfigs, eq(dynamicSecretConfigs.id, dynamicSecretLeases.configId))
-      .where(eq(dynamicSecretLeases.projectId, project.id))
-      .orderBy(dynamicSecretLeases.createdAt);
+      .where(eq(dynamicSecretLeases.projectId, project.id));
+
+    const needle = query.q?.toLowerCase();
+    const filtered = needle
+      ? rows.filter(
+          (row) =>
+            row.lease.username.toLowerCase().includes(needle) ||
+            row.lease.createdByName.toLowerCase().includes(needle) ||
+            row.config.name.toLowerCase().includes(needle),
+        )
+      : rows;
+    const sorted = sortRows(filtered, query, {
+      username: (row) => row.lease.username,
+      configName: (row) => row.config.name,
+      createdAt: (row) => row.lease.createdAt.getTime(),
+      expiresAt: (row) => row.lease.expiresAt.getTime(),
+    });
+    const page = paginate(sorted, query);
 
     return {
-      leases: rows
-        .slice()
-        .reverse()
-        .map((row) => leaseDto(row.lease, row.config.name)),
+      leases: page.items.map((row) => leaseDto(row.lease, row.config.name)),
+      total: page.total,
+      limit: page.limit,
+      offset: page.offset,
     };
   });
 

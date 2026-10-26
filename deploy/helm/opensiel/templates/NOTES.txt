@@ -1,0 +1,23 @@
+opensiel has been deployed.
+
+{{- if .Values.ingress.enabled }}
+URL: {{ include "opensiel.publicUrl" . }}
+{{- else }}
+The Service is ClusterIP. Port-forward it with:
+
+  kubectl port-forward svc/{{ include "opensiel.fullname" . }} {{ .Values.service.port }}:{{ .Values.service.port }} -n {{ .Release.Namespace }}
+{{- end }}
+
+The first signup becomes the owner. After creating your account, close signup:
+
+  helm upgrade {{ .Release.Name }} oci://ghcr.io/ibrahimhnif/charts/opensiel \
+    -n {{ .Release.Namespace }} --reuse-values --set env.OPENSIEL_ALLOW_SIGNUP=false
+
+Back up the master key separately from the database:
+
+  kubectl -n {{ .Release.Namespace }} get secret {{ include "opensiel.secretName" . }} \
+    -o jsonpath='{.data.OPENSIEL_MASTER_KEY}' | base64 -d
+
+Health check:
+
+  helm test {{ .Release.Name }} -n {{ .Release.Namespace }}

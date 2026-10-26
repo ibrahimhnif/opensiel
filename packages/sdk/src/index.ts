@@ -23,10 +23,96 @@ export interface SecretVersion {
   version: number;
   comment: string | null;
   fingerprint: string;
+  fingerprintVersion: number;
   createdByType: string;
   createdById: string;
   createdAt: string;
   current: boolean;
+}
+
+export interface SecretDiff {
+  key: string;
+  path: string;
+  env: string;
+  changed: boolean;
+  revealed: boolean;
+  from: { version: number; value: string; createdAt: string };
+  to: { version: number; value: string; createdAt: string };
+}
+
+export type PointInTimeAction = "restore" | "revive" | "delete" | "none";
+
+export interface PointInTimeEntry {
+  key: string;
+  path: string;
+  action: PointInTimeAction;
+  currentVersion: number;
+  targetVersion: number | null;
+}
+
+export interface PointInTimePreview {
+  at: string;
+  env: string;
+  secretCount: number;
+  changes: PointInTimeEntry[];
+}
+
+export interface PointInTimeRestoreResult {
+  at: string;
+  env: string;
+  dryRun: boolean;
+  restored: number;
+  revived: number;
+  deleted: number;
+  changes: PointInTimeEntry[];
+}
+
+export interface TransitKey {
+  id: string;
+  name: string;
+  version: number;
+  createdAt: string;
+}
+
+export interface TransitEncryptResult {
+  ciphertext: string;
+  key: string;
+  keyVersion: number;
+  algorithm: string;
+}
+
+export interface UserKey {
+  publicKey: string;
+  wrappedPrivateKey: string;
+  privateKeyIv: string;
+  privateKeyTag: string;
+  kdfSalt: string;
+  kdfParams: Record<string, unknown>;
+}
+
+export interface ProjectKeyBundle {
+  wrappedKey: string;
+  iv: string;
+  tag: string;
+  keyVersion: number;
+}
+
+export interface ProjectKeys {
+  mode: "server" | "e2ee";
+  key: ProjectKeyBundle | null;
+  members: { userId: string; publicKey: string }[];
+}
+
+export interface E2eeSecret {
+  key: string;
+  path: string;
+  version: number;
+  ciphertext: string;
+  iv: string;
+  tag: string;
+  keyVersion: number | null;
+  createdAt: string;
+  updatedAt: string;
 }
 
 export interface ChangeRequestSummary {
@@ -59,6 +145,13 @@ export class OpensielError extends Error {
   }
 }
 
+export class MfaRequiredError extends Error {
+  constructor(public readonly challengeToken: string) {
+    super("multi-factor authentication required");
+    this.name = "MfaRequiredError";
+  }
+}
+
 export class OpensielClient {
   private apiUrl: string;
   private token?: string;
@@ -73,12 +166,29 @@ export class OpensielClient {
   }
 
   async login(email: string, password: string): Promise<{ token: string }> {
-    const result = await this.request<{ token: string }>("/api/auth/login", {
+    const result = await this.request<{
+      token?: string;
+      mfaRequired?: boolean;
+      challengeToken?: string;
+    }>("/api/auth/login", {
       method: "POST",
       body: { email, password },
     });
+    if (result.mfaRequired && result.challengeToken) {
+      throw new MfaRequiredError(result.challengeToken);
+    }
+    if (!result.token) throw new OpensielError(500, "login did not return a token");
     this.token = result.token;
-    return result;
+    return { token: result.token };
+  }
+
+  async loginMfa(challengeToken: string, code: string): Promise<{ token: string }> {
+    const result = await this.request<{ token: string }>("/api/auth/mfa/login", {
+      method: "POST",
+      body: { challengeToken, code },
+    });
+    this.token = result.token;
+    return { token: result.token };
   }
 
   async loginWithClientCredentials(
@@ -182,6 +292,132 @@ export class OpensielClient {
     return this.request(
       `/api/projects/${projectId}/secrets/${encodeURIComponent(key)}/versions?${query}`,
     );
+  }
+
+  diffSecret(
+    projectId: string,
+    env: string,
+    key: string,
+    options: { path?: string; from?: number; to?: number; reveal?: boolean } = {},
+  ): Promise<{ diff: SecretDiff }> {
+    const query = new URLSearchParams({ env });
+    if (options.path) query.set("path", options.path);
+    if (options.from !== undefined) query.set("from", String(options.from));
+    if (options.to !== undefined) query.set("to", String(options.to));
+    if (options.reveal) query.set("reveal", "true");
+    return this.request(
+      `/api/projects/${projectId}/secrets/${encodeURIComponent(key)}/diff?${query}`,
+    );
+  }
+
+  previewPointInTime(projectId: string, env: string, at: string): Promise<PointInTimePreview> {
+    const query = new URLSearchParams({ env, at });
+    return this.request(`/api/projects/${projectId}/point-in-time?${query}`);
+  }
+
+  restorePointInTime(
+    projectId: string,
+    env: string,
+    at: string,
+    dryRun = false,
+  ): Promise<PointInTimeRestoreResult> {
+    return this.request(`/api/projects/${projectId}/point-in-time/restore`, {
+      method: "POST",
+      body: { env, at, dryRun },
+    });
+  }
+
+  encrypt(
+    projectId: string,
+    plaintext: string,
+    options: { key?: string; context?: string } = {},
+  ): Promise<TransitEncryptResult> {
+    return this.request(`/api/projects/${projectId}/crypto/encrypt`, {
+      method: "POST",
+      body: { plaintext, key: options.key, context: options.context },
+    });
+  }
+
+  decrypt(
+    projectId: string,
+    ciphertext: string,
+    options: { context?: string } = {},
+  ): Promise<{ plaintext: string; key: string; keyVersion: number }> {
+    return this.request(`/api/projects/${projectId}/crypto/decrypt`, {
+      method: "POST",
+      body: { ciphertext, context: options.context },
+    });
+  }
+
+  listTransitKeys(projectId: string): Promise<{ keys: TransitKey[] }> {
+    return this.request(`/api/projects/${projectId}/crypto/keys`);
+  }
+
+  createTransitKey(projectId: string, name: string): Promise<{ key: TransitKey }> {
+    return this.request(`/api/projects/${projectId}/crypto/keys`, {
+      method: "POST",
+      body: { name },
+    });
+  }
+
+  rotateTransitKey(projectId: string, name: string): Promise<{ key: TransitKey }> {
+    return this.request(
+      `/api/projects/${projectId}/crypto/keys/${encodeURIComponent(name)}/rotate`,
+      { method: "POST" },
+    );
+  }
+
+  async getUserKeys(): Promise<{ key: UserKey | null }> {
+    return this.request("/api/auth/keys");
+  }
+
+  async putUserKeys(key: UserKey): Promise<{ ok: true }> {
+    return this.request("/api/auth/keys", { method: "PUT", body: key });
+  }
+
+  getProjectKeys(projectId: string): Promise<ProjectKeys> {
+    return this.request(`/api/projects/${projectId}/keys`);
+  }
+
+  putProjectKeys(
+    projectId: string,
+    keys: (ProjectKeyBundle & { userId: string })[],
+  ): Promise<{ ok: true }> {
+    return this.request(`/api/projects/${projectId}/keys`, {
+      method: "PUT",
+      body: { keys },
+    });
+  }
+
+  setEncryptionMode(projectId: string, mode: "server" | "e2ee"): Promise<{ mode: string }> {
+    return this.request(`/api/projects/${projectId}/encryption`, {
+      method: "PATCH",
+      body: { mode },
+    });
+  }
+
+  writeE2eeSecret(
+    projectId: string,
+    env: string,
+    key: string,
+    payload: { ciphertext: string; iv: string; tag: string; keyVersion?: number },
+    options: { path?: string; comment?: string } = {},
+  ): Promise<{ secret: { key: string; path: string; version: number } }> {
+    return this.request(`/api/projects/${projectId}/secrets/ciphertext`, {
+      method: "POST",
+      body: { env, key, ...payload, ...options },
+    });
+  }
+
+  listE2eeSecrets(
+    projectId: string,
+    env: string,
+    options: { path?: string; recursive?: boolean } = {},
+  ): Promise<{ mode: "e2ee"; secrets: E2eeSecret[] }> {
+    const query = new URLSearchParams({ env });
+    if (options.path) query.set("path", options.path);
+    if (options.recursive) query.set("recursive", "true");
+    return this.request(`/api/projects/${projectId}/secrets/ciphertext?${query}`);
   }
 
   rollbackSecret(

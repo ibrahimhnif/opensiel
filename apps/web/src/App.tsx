@@ -8,6 +8,8 @@ import { Landing } from "./components/Landing";
 import { Login } from "./components/Login";
 import { Dashboard } from "./components/Dashboard";
 import { AcceptInvite } from "./components/AcceptInvite";
+import { ConfirmProvider } from "./components/ConfirmProvider";
+import { Toaster } from "./components/ui/sonner";
 
 interface BootstrapConfig {
   initialized: boolean;
@@ -28,6 +30,7 @@ export function App() {
   const [config, setConfig] = useState<BootstrapConfig | null>(null);
   const [user, setUser] = useState<UserDto | null>(null);
   const [error, setError] = useState("");
+  const [booted, setBooted] = useState(false);
   const location = useLocation();
   const navigate = useNavigate();
 
@@ -35,17 +38,18 @@ export function App() {
     let cancelled = false;
     void (async () => {
       try {
-        const bootstrap = await api.get<BootstrapConfig>("/api/auth/config");
+        const [configResult, meResult] = await Promise.allSettled([
+          api.get<BootstrapConfig>("/api/auth/config"),
+          api.get<{ user: UserDto }>("/api/auth/me"),
+        ]);
         if (cancelled) return;
-        setConfig(bootstrap);
-        try {
-          const me = await api.get<{ user: UserDto }>("/api/auth/me");
-          if (!cancelled) setUser(me.user);
-        } catch {
-          /* not logged in */
-        }
+        if (configResult.status === "rejected") throw configResult.reason;
+        setConfig(configResult.value);
+        setUser(meResult.status === "fulfilled" ? meResult.value.user : null);
       } catch (err) {
         if (!cancelled) setError(errorMessage(err));
+      } finally {
+        if (!cancelled) setBooted(true);
       }
     })();
     return () => {
@@ -73,7 +77,7 @@ export function App() {
     );
   }
 
-  if (!config) {
+  if (!booted || !config) {
     return (
       <div className="grid min-h-full place-items-center p-6">
         <span className="flex items-center gap-2 text-sm text-muted-foreground">
@@ -87,70 +91,80 @@ export function App() {
   const inviteToken = params.get("invite");
   const acceptToken = params.get("token") ?? inviteToken;
   const ssoError = params.get("sso_error") ?? undefined;
+  const nextParam = params.get("next") ?? "";
+  const redirectTarget = nextParam.startsWith("/app") ? nextParam : "/app";
 
   return (
-    <Routes>
-      <Route
-        path="/"
-        element={
-          inviteToken ? (
-            <Navigate to={`/invite?token=${encodeURIComponent(inviteToken)}`} replace />
-          ) : (
-            <Landing authenticated={Boolean(user)} />
-          )
-        }
-      />
-      <Route
-        path="/login"
-        element={
-          user ? (
-            <Navigate to="/app" replace />
-          ) : (
-            <Login
-              config={config}
-              initialError={ssoError}
-              onLogin={(nextUser) => {
-                setUser(nextUser);
-                navigate("/app", { replace: true });
-              }}
-            />
-          )
-        }
-      />
-      <Route
-        path="/app"
-        element={
-          user ? (
-            <Dashboard
-              user={user}
-              onSignedOut={() => {
-                setUser(null);
-                navigate("/", { replace: true });
-              }}
-            />
-          ) : (
-            <Navigate to="/login" replace />
-          )
-        }
-      />
-      <Route
-        path="/invite"
-        element={
-          acceptToken ? (
-            <AcceptInvite
-              token={acceptToken}
-              onDone={(nextUser) => {
-                setUser(nextUser);
-                navigate("/app", { replace: true });
-              }}
-              onCancel={() => navigate("/")}
-            />
-          ) : (
-            <Navigate to="/" replace />
-          )
-        }
-      />
-      <Route path="*" element={<Landing authenticated={Boolean(user)} />} />
-    </Routes>
+    <>
+      <ConfirmProvider>
+        <Routes>
+          <Route
+            path="/"
+            element={
+              inviteToken ? (
+                <Navigate to={`/invite?token=${encodeURIComponent(inviteToken)}`} replace />
+              ) : (
+                <Landing authenticated={Boolean(user)} />
+              )
+            }
+          />
+          <Route
+            path="/login"
+            element={
+              user ? (
+                <Navigate to={redirectTarget} replace />
+              ) : (
+                <Login
+                  config={config}
+                  initialError={ssoError}
+                  onLogin={(nextUser) => {
+                    setUser(nextUser);
+                    navigate(redirectTarget, { replace: true });
+                  }}
+                />
+              )
+            }
+          />
+          <Route
+            path="/app"
+            element={
+              user ? (
+                <Dashboard
+                  user={user}
+                  onSignedOut={() => {
+                    setUser(null);
+                    navigate("/", { replace: true });
+                  }}
+                />
+              ) : (
+                <Navigate
+                  to={`/login?next=${encodeURIComponent(location.pathname + location.search)}`}
+                  replace
+                />
+              )
+            }
+          />
+          <Route
+            path="/invite"
+            element={
+              acceptToken ? (
+                <AcceptInvite
+                  token={acceptToken}
+                  onDone={(nextUser) => {
+                    setUser(nextUser);
+                    navigate("/app", { replace: true });
+                  }}
+                  onCancel={() => navigate("/")}
+                />
+              ) : (
+                <Navigate to="/" replace />
+              )
+            }
+          />
+          <Route path="*" element={<Landing authenticated={Boolean(user)} />} />
+        </Routes>
+      </ConfirmProvider>
+      <Toaster />
+    </>
   );
 }

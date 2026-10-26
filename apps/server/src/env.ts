@@ -1,5 +1,14 @@
-import "dotenv/config";
+import { config as loadDotenv } from "dotenv";
+import { resolve } from "node:path";
 import { z } from "zod";
+
+loadDotenv({
+  path: [
+    resolve(process.cwd(), ".env"),
+    resolve(process.cwd(), "../../.env"),
+    resolve(process.cwd(), "../.env"),
+  ],
+});
 
 const schema = z.object({
   NODE_ENV: z.enum(["development", "production", "test"]).default("development"),
@@ -36,6 +45,18 @@ const schema = z.object({
   OPENSIEL_SAML_AUDIENCE: z.string().optional(),
   OPENSIEL_SAML_ALLOWED_DOMAINS: z.string().optional(),
   OPENSIEL_SAML_AUTO_CREATE: z.enum(["true", "false"]).default("true"),
+  OPENSIEL_AUDIT_SINK: z.enum(["off", "http", "splunk", "datadog", "s3"]).default("off"),
+  OPENSIEL_AUDIT_SINK_URL: z.string().url().optional(),
+  OPENSIEL_AUDIT_SINK_TOKEN: z.string().optional(),
+  OPENSIEL_AUDIT_SINK_INTERVAL_SECONDS: z.coerce.number().int().min(10).max(3600).default(60),
+  OPENSIEL_AUDIT_SINK_BATCH: z.coerce.number().int().min(1).max(1000).default(200),
+  OPENSIEL_AUDIT_SINK_BUCKET: z.string().optional(),
+  OPENSIEL_AUDIT_SINK_PREFIX: z.string().default("opensiel-audit"),
+  OPENSIEL_AUDIT_SINK_REGION: z.string().default("us-east-1"),
+  OPENSIEL_AUDIT_SINK_ENDPOINT: z.string().url().optional(),
+  OPENSIEL_AUDIT_SINK_ACCESS_KEY_ID: z.string().optional(),
+  OPENSIEL_AUDIT_SINK_SECRET_ACCESS_KEY: z.string().optional(),
+  OPENSIEL_AWS_STS_ENDPOINT: z.string().url().default("https://sts.amazonaws.com"),
 });
 
 export interface KmsConfig {
@@ -67,6 +88,20 @@ export interface OidcConfig {
   autoCreate: boolean;
 }
 
+export interface AuditSinkConfig {
+  type: "http" | "splunk" | "datadog" | "s3";
+  intervalSeconds: number;
+  batchSize: number;
+  url?: string;
+  token?: string;
+  bucket?: string;
+  prefix?: string;
+  region?: string;
+  endpoint?: string;
+  accessKeyId?: string;
+  secretAccessKey?: string;
+}
+
 export interface Env {
   nodeEnv: "development" | "production" | "test";
   port: number;
@@ -87,6 +122,8 @@ export interface Env {
   secureCookies: boolean;
   oidc?: OidcConfig;
   saml?: SamlConfig;
+  auditSink?: AuditSinkConfig;
+  awsStsEndpoint: string;
 }
 
 export function loadEnv(source: NodeJS.ProcessEnv = process.env): Env {
@@ -200,6 +237,38 @@ export function loadEnv(source: NodeJS.ProcessEnv = process.env): Env {
         }
       : undefined;
 
+  let auditSink: AuditSinkConfig | undefined;
+  if (s.OPENSIEL_AUDIT_SINK !== "off") {
+    if (s.OPENSIEL_AUDIT_SINK === "s3") {
+      if (!s.OPENSIEL_AUDIT_SINK_BUCKET) {
+        throw new Error("OPENSIEL_AUDIT_SINK_BUCKET is required for the s3 audit sink");
+      }
+    } else {
+      if (!s.OPENSIEL_AUDIT_SINK_URL) {
+        throw new Error("OPENSIEL_AUDIT_SINK_URL is required for this audit sink");
+      }
+      if (
+        (s.OPENSIEL_AUDIT_SINK === "splunk" || s.OPENSIEL_AUDIT_SINK === "datadog") &&
+        !s.OPENSIEL_AUDIT_SINK_TOKEN
+      ) {
+        throw new Error("OPENSIEL_AUDIT_SINK_TOKEN is required for this audit sink");
+      }
+    }
+    auditSink = {
+      type: s.OPENSIEL_AUDIT_SINK,
+      intervalSeconds: s.OPENSIEL_AUDIT_SINK_INTERVAL_SECONDS,
+      batchSize: s.OPENSIEL_AUDIT_SINK_BATCH,
+      url: s.OPENSIEL_AUDIT_SINK_URL,
+      token: s.OPENSIEL_AUDIT_SINK_TOKEN,
+      bucket: s.OPENSIEL_AUDIT_SINK_BUCKET,
+      prefix: s.OPENSIEL_AUDIT_SINK_PREFIX,
+      region: s.OPENSIEL_AUDIT_SINK_REGION,
+      endpoint: s.OPENSIEL_AUDIT_SINK_ENDPOINT,
+      accessKeyId: s.OPENSIEL_AUDIT_SINK_ACCESS_KEY_ID,
+      secretAccessKey: s.OPENSIEL_AUDIT_SINK_SECRET_ACCESS_KEY,
+    };
+  }
+
   return {
     nodeEnv: s.NODE_ENV,
     port: s.PORT,
@@ -220,5 +289,7 @@ export function loadEnv(source: NodeJS.ProcessEnv = process.env): Env {
     secureCookies: publicUrl ? publicUrl.startsWith("https://") : isProd,
     oidc,
     saml,
+    auditSink,
+    awsStsEndpoint: s.OPENSIEL_AWS_STS_ENDPOINT,
   };
 }

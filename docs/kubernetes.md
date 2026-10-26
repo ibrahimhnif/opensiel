@@ -1,0 +1,271 @@
+# Kubernetes
+
+Two deployment paths:
+
+- **Helm chart (recommended)** — one command, generated secrets, optional bundled PostgreSQL.
+- **Raw manifests** — `kubectl apply` if you do not use Helm.
+
+The API serves both `/api/*` and the web UI.
+
+## Helm
+
+The release workflow publishes the chart to GHCR and attaches `opensiel-<version>.tgz` to each
+GitHub release. The container image must be public, or the cluster needs an image pull secret.
+
+```bash
+helm install opensiel oci://ghcr.io/ibrahimhnif/charts/opensiel \
+  --version 0.1.0 \
+  --namespace opensiel --create-namespace
+```
+
+With ingress:
+
+```bash
+helm install opensiel oci://ghcr.io/ibrahimhnif/charts/opensiel \
+  --version 0.1.0 \
+  --namespace opensiel --create-namespace \
+  --set ingress.enabled=true \
+  --set ingress.className=traefik \
+  --set ingress.hosts[0].host=opensiel.example.com \
+  --set ingress.tls[0].secretName=opensiel-tls \
+  --set ingress.tls[0].hosts[0]=opensiel.example.com
+```
+
+If the OCI package is not public, install the release asset instead:
+
+```bash
+helm install opensiel \
+  https://github.com/ibrahimhnif/opensiel/releases/download/v0.1.0/opensiel-0.1.0.tgz \
+  --namespace opensiel --create-namespace
+```
+
+Helm generates `OPENSIEL_MASTER_KEY`, `OPENSIEL_JWT_SECRET`, the database password, and
+`DATABASE_URL` in a Secret, and preserves them on upgrade. Back up the master key separately:
+
+```bash
+kubectl -n opensiel get secret opensiel \
+  -o jsonpath='{.data.OPENSIEL_MASTER_KEY}' | base64 -d
+```
+
+The chart values cover the image tag, replicas, resources, ingress, storage, and an external
+database. The full list is in
+[`deploy/helm/opensiel/README.md`](https://github.com/ibrahimhnif/opensiel/blob/main/deploy/helm/opensiel/README.md).
+
+Upgrade:
+
+```bash
+helm upgrade opensiel oci://ghcr.io/ibrahimhnif/charts/opensiel \
+  --version 0.1.1 --namespace opensiel --reuse-values
+helm test opensiel -n opensiel
+```
+
+After creating the owner account, close signup:
+
+```bash
+helm upgrade opensiel oci://ghcr.io/ibrahimhnif/charts/opensiel \
+  --namespace opensiel --reuse-values --set env.OPENSIEL_ALLOW_SIGNUP=false
+```
+
+## Raw manifests
+
+The manifests in [`deploy/k8s`](https://github.com/ibrahimhnif/opensiel/tree/main/deploy/k8s)
+run the API and a single PostgreSQL instance.
+
+```bash
+kubectl apply -f deploy/k8s/namespace.yaml
+kubectl apply -f deploy/k8s/postgres.yaml
+```
+
+Create the database credentials and the app secret (use the same password in both):
+
+```bash
+DB_PASSWORD="$(openssl rand -hex 16)"
+
+kubectl -n opensiel create secret generic postgres-credentials \
+  --from-literal=POSTGRES_USER=opensiel \
+  --from-literal=POSTGRES_PASSWORD="$DB_PASSWORD" \
+  --from-literal=POSTGRES_DB=opensiel
+
+kubectl -n opensiel create secret generic opensiel-secrets \
+  --from-literal=DATABASE_URL="postgres://opensiel:$DB_PASSWORD@postgres.opensiel.svc.cluster.local:5432/opensiel" \
+  --from-literal=OPENSIEL_MASTER_KEY="$(openssl rand -base64 32)" \
+  --from-literal=OPENSIEL_JWT_SECRET="$(openssl rand -hex 32)" \
+  --from-literal=OPENSIEL_PUBLIC_URL="https://opensiel.example.com" \
+  --from-literal=OPENSIEL_ALLOW_SIGNUP="true"
+```
+
+Edit `deploy/k8s/app.yaml` and `deploy/k8s/ingress.yaml`:
+
+- pin the image tag instead of `latest` in production,
+- replace `opensiel.example.com` with your hostname,
+- adjust `storageClassName` if `local-path` is not available.
+
+Then apply:
+
+```bash
+kubectl apply -f deploy/k8s/app.yaml -f deploy/k8s/ingress.yaml
+kubectl -n opensiel rollout status deploy/opensiel
+```
+
+Open the URL, create the owner account, then set `OPENSIEL_ALLOW_SIGNUP=false` in the secret and
+restart (`kubectl -n opensiel rollout restart deploy/opensiel`).
+
+If your image is private, create a pull secret and reference it from the Deployment:
+
+```bash
+kubectl -n opensiel create secret docker-registry ghcr-creds \
+  --docker-server=ghcr.io --docker-username=<user> --docker-password=<token>
+```
+
+## TLS
+
+Terminate TLS at the ingress. With cert-manager and Traefik:
+
+```yaml
+metadata:
+  annotations:
+    cert-manager.io/cluster-issuer: letsencrypt-prod
+spec:
+  tls:
+    - hosts: [opensiel.example.com]
+      secretName: opensiel-tls
+```
+
+Set `OPENSIEL_PUBLIC_URL` to the HTTPS URL so cookies are `Secure` and SSO callbacks match.
+
+## Workload identity with service-account tokens
+
+Instead of shipping a client secret, a workload can exchange its projected service-account
+token for an opensiel machine token.
+
+1. Configure the cluster with a service-account issuer and JWKS (most managed clusters already
+   do; self-managed clusters set `--service-account-issuer` and expose
+   `/openid/v1/jwks`).
+2. In **Identities**, create an identity, then add an auth method with:
+   - issuer: the cluster's service-account issuer, for example
+     `https://kubernetes.default.svc.cluster.local`
+   - audience: `opensiel`
+   - JWKS URL: `<issuer>/openid/v1/jwks` (reachable from the opensiel pod)
+   - optional allowed subjects, for example `system:serviceaccount:apps:web`
+3. Project a token with the same audience and exchange it:
+
+```yaml
+volumes:
+  - name: opensiel-token
+    projected:
+      sources:
+        - serviceAccountToken:
+            path: token
+            audience: opensiel
+            expirationSeconds: 3600
+```
+
+```bash
+TOKEN=$(curl -s -X POST "$OPENSIEL_API/api/auth/token/jwt" \
+  -H 'content-type: application/json' \
+  -d "{\"clientId\":\"$OPENSIEL_CLIENT_ID\",\"jwt\":\"$(cat /var/run/secrets/opensiel/token)\"}" \
+  | jq -r .accessToken)
+
+OPENSIEL_TOKEN="$TOKEN" opensiel run --env prod -- node server.js
+```
+
+Tokens are verified on the server against the configured issuer, audience, and JWKS; no client
+secret is stored in the workload.
+
+## Injecting secrets into pods
+
+There is no Kubernetes operator yet. The simplest pattern is an init container that exchanges
+a machine identity for a token and writes a dotenv file into a shared `emptyDir`.
+
+The published image includes the CLI at `/app/apps/cli/dist/index.js`.
+
+```yaml
+apiVersion: v1
+kind: Secret
+metadata:
+  name: opensiel-client
+  namespace: default
+type: Opaque
+stringData:
+  OPENSIEL_API: https://opensiel.example.com
+  OPENSIEL_CLIENT_ID: osl_xxxxxxxx
+  OPENSIEL_CLIENT_SECRET: oss_xxxxxxxx
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: web
+spec:
+  replicas: 1
+  selector:
+    matchLabels: { app: web }
+  template:
+    metadata:
+      labels: { app: web }
+    spec:
+      securityContext:
+        runAsUser: 1001
+        runAsGroup: 1001
+        fsGroup: 1001
+      initContainers:
+        - name: fetch-secrets
+          image: ghcr.io/ibrahimhnif/opensiel:latest
+          command: ["sh", "-c"]
+          args:
+            - |
+              set -eu
+              TOKEN=$(node -e 'fetch(process.env.OPENSIEL_API + "/api/auth/token", {
+                method: "POST",
+                headers: { "content-type": "application/json" },
+                body: JSON.stringify({
+                  clientId: process.env.OPENSIEL_CLIENT_ID,
+                  clientSecret: process.env.OPENSIEL_CLIENT_SECRET
+                })
+              }).then((r) => { if (!r.ok) process.exit(1); return r.json(); })
+                .then((d) => process.stdout.write(d.accessToken))')
+              OPENSIEL_TOKEN="$TOKEN" node /app/apps/cli/dist/index.js \
+                --api-url "$OPENSIEL_API" \
+                export --env prod --format dotenv > /secrets/app.env
+          envFrom:
+            - secretRef: { name: opensiel-client }
+          volumeMounts:
+            - { name: secrets, mountPath: /secrets }
+      containers:
+        - name: web
+          image: ghcr.io/your-org/web:latest
+          command: ["sh", "-c"]
+          args: ["set -a; . /secrets/app.env; set +a; exec node server.js"]
+          volumeMounts:
+            - { name: secrets, mountPath: /secrets }
+      volumes:
+        - name: secrets
+          emptyDir: {}
+```
+
+Notes:
+
+- The identity is `viewer` and scoped to `prod`; the token lives 15 minutes and is only used
+  during startup.
+- Secrets are fetched once per pod start. Restart the pod to pick up changes, or use the SDK
+  from your app if you need on-demand reads.
+- For long-running workloads that need fresh secrets, run a sidecar that refreshes the file or
+  call the SDK with a renewed token.
+- Node.js apps can skip the CLI and use `@liostech/opensiel-sdk` at startup.
+
+## Scaling and availability
+
+- The API is stateless; run multiple replicas behind the Service if needed.
+- Rate limits are per process.
+- The bundled PostgreSQL StatefulSet is a single replica. For production, use a managed or
+  operator-managed PostgreSQL and disable `postgresql` in the chart/manifests.
+- Sessions and machine tokens are database/JWT-based, so replicas do not need shared state.
+
+## Upgrades
+
+```bash
+kubectl -n opensiel set image deploy/opensiel opensiel=ghcr.io/ibrahimhnif/opensiel:v0.2.0
+kubectl -n opensiel rollout status deploy/opensiel
+```
+
+Migrations run at startup (`OPENSIEL_AUTO_MIGRATE=true` by default). Back up the database and
+master key before upgrading. See [Operations](operations.md).

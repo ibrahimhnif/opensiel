@@ -6,7 +6,7 @@ import type {
   EnvironmentImportDto,
   ProjectDto,
 } from "@opensiel/shared";
-import { Check, RefreshCw, X } from "lucide-react";
+import { Check, Loader2, Plus, RefreshCw, X } from "lucide-react";
 import { api, errorMessage } from "../api";
 import { cn } from "../lib/utils";
 import { Badge } from "./ui/badge";
@@ -14,14 +14,20 @@ import { Button } from "./ui/button";
 import { Card } from "./ui/card";
 import { Checkbox } from "./ui/checkbox";
 import { Input } from "./ui/input";
+import { Label } from "./ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "./ui/select";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "./ui/table";
-import { Notice } from "./Notice";
+import { Pagination } from "./Pagination";
+import { useServerList } from "../hooks/useServerList";
+import { notify } from "../lib/notify";
+import { useToastMessage } from "../hooks/useToastMessage";
+import { useConfirm } from "./ConfirmProvider";
 
 interface Props {
   project: ProjectDto;
   currentUserId: string;
   canApprove: boolean;
+  onRefresh: () => Promise<void>;
 }
 
 const STATUS_FILTERS: (ChangeRequestStatus | "all")[] = [
@@ -39,14 +45,19 @@ function statusVariant(status: ChangeRequestStatus) {
   return "secondary" as const;
 }
 
-export function ApprovalsView({ project, currentUserId, canApprove }: Props) {
-  const [requests, setRequests] = useState<ChangeRequestDto[]>([]);
+export function ApprovalsView({ project, currentUserId, canApprove, onRefresh }: Props) {
+  const confirm = useConfirm();
   const [filter, setFilter] = useState<ChangeRequestStatus | "all">("pending");
   const [envs, setEnvs] = useState<EnvironmentDto[]>(project.environments);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const [busy, setBusy] = useState(false);
   const [imports, setImports] = useState<Record<string, string>>({});
+  const [newEnvName, setNewEnvName] = useState("");
+  const [newEnvSlug, setNewEnvSlug] = useState("");
+  const [envBusy, setEnvBusy] = useState(false);
+  useToastMessage("success", notice, setNotice);
+  useToastMessage("error", error, setError);
 
   useEffect(() => {
     setEnvs(project.environments);
@@ -72,22 +83,30 @@ export function ApprovalsView({ project, currentUserId, canApprove }: Props) {
     void loadImports();
   }, [loadImports]);
 
-  const load = useCallback(async () => {
-    try {
-      const query = filter === "all" ? "" : `?status=${filter}`;
-      const result = await api.get<{ changeRequests: ChangeRequestDto[] }>(
-        `/api/projects/${project.id}/change-requests${query}`,
+  const requestList = useServerList<ChangeRequestDto>({
+    key: `${project.id}:${filter}`,
+    pageSize: 20,
+    initialSort: "requestedAt",
+    initialOrder: "desc",
+    fetcher: async ({ limit, offset, q, sort, order }) => {
+      const params = new URLSearchParams({
+        limit: String(limit),
+        offset: String(offset),
+        sort: sort || "requestedAt",
+        order,
+      });
+      if (filter !== "all") params.set("status", filter);
+      if (q) params.set("q", q);
+      const result = await api.get<{ changeRequests: ChangeRequestDto[]; total: number }>(
+        `/api/projects/${project.id}/change-requests?${params}`,
       );
-      setRequests(result.changeRequests);
-      setError("");
-    } catch (err) {
-      setError(errorMessage(err));
-    }
-  }, [project.id, filter]);
+      return { items: result.changeRequests, total: result.total };
+    },
+  });
 
   useEffect(() => {
-    void load();
-  }, [load]);
+    if (requestList.error) notify.error(requestList.error);
+  }, [requestList.error]);
 
   async function decide(request: ChangeRequestDto, decision: "approve" | "reject") {
     setBusy(true);
@@ -103,7 +122,7 @@ export function ApprovalsView({ project, currentUserId, canApprove }: Props) {
             ? `approved and applied ${request.key}`
             : `approval recorded for ${request.key}; waiting for more approvals`,
       );
-      await load();
+      requestList.reload();
     } catch (err) {
       setError(errorMessage(err));
     } finally {
@@ -115,7 +134,7 @@ export function ApprovalsView({ project, currentUserId, canApprove }: Props) {
     try {
       await api.post(`/api/projects/${project.id}/change-requests/${request.id}/cancel`);
       setNotice(`cancelled ${request.key}`);
-      await load();
+      requestList.reload();
     } catch (err) {
       setError(errorMessage(err));
     }
@@ -164,6 +183,48 @@ export function ApprovalsView({ project, currentUserId, canApprove }: Props) {
     }
   }
 
+  async function createEnvironment(event: React.FormEvent) {
+    event.preventDefault();
+    if (!newEnvName.trim()) return;
+    setEnvBusy(true);
+    setError("");
+    try {
+      const result = await api.post<{ environment: EnvironmentDto }>(
+        `/api/projects/${project.id}/environments`,
+        { name: newEnvName.trim(), slug: newEnvSlug.trim() || undefined },
+      );
+      setEnvs((current) => [...current, result.environment]);
+      setNewEnvName("");
+      setNewEnvSlug("");
+      setNotice(`environment ${result.environment.slug} created`);
+      await onRefresh();
+    } catch (err) {
+      setError(errorMessage(err));
+    } finally {
+      setEnvBusy(false);
+    }
+  }
+
+  async function deleteEnvironment(environment: EnvironmentDto) {
+    if (
+      !(await confirm({
+        title: `Delete environment ${environment.slug}?`,
+        description: "It must have no secrets.",
+        confirmLabel: "delete",
+        destructive: true,
+      }))
+    )
+      return;
+    try {
+      await api.del(`/api/projects/${project.id}/environments/${environment.id}`);
+      setEnvs((current) => current.filter((entry) => entry.id !== environment.id));
+      setNotice(`environment ${environment.slug} deleted`);
+      await onRefresh();
+    } catch (err) {
+      setError(errorMessage(err));
+    }
+  }
+
   return (
     <section className="space-y-4">
       <div className="flex flex-wrap items-center justify-between gap-3">
@@ -190,25 +251,92 @@ export function ApprovalsView({ project, currentUserId, canApprove }: Props) {
               ))}
             </SelectContent>
           </Select>
-          <Button variant="outline" size="sm" onClick={() => void load()}>
+          <Input
+            className="h-8 w-44"
+            placeholder="Search key, path, requester…"
+            value={requestList.query}
+            onChange={(event) => requestList.setQuery(event.target.value)}
+          />
+          <Button variant="outline" size="sm" onClick={() => requestList.reload()}>
             <RefreshCw className="size-4" /> refresh
           </Button>
         </div>
       </div>
 
-      {notice && (
-        <Notice tone="success" onDismiss={() => setNotice("")}>
-          {notice}
-        </Notice>
-      )}
-      {error && (
-        <Notice tone="error" onDismiss={() => setError("")}>
-          {error}
-        </Notice>
-      )}
-
       {canApprove && (
         <>
+          <div className="space-y-2">
+            <h3 className="text-sm font-medium">Environments</h3>
+            <p className="text-xs text-muted-foreground">
+              Add environments beyond the default dev, staging, and prod, for example QA or UAT. An
+              environment must have no secrets before it can be deleted.
+            </p>
+            <Card className="overflow-hidden py-0">
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Environment</TableHead>
+                    <TableHead>Name</TableHead>
+                    <TableHead className="text-right">Actions</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {envs.map((environment) => (
+                    <TableRow key={environment.id}>
+                      <TableCell>
+                        <Badge variant="outline">{environment.slug}</Badge>
+                      </TableCell>
+                      <TableCell>{environment.name}</TableCell>
+                      <TableCell className="text-right">
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          className="text-destructive hover:text-destructive"
+                          disabled={envs.length <= 1}
+                          onClick={() => void deleteEnvironment(environment)}
+                        >
+                          delete
+                        </Button>
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            </Card>
+            <form
+              className="flex flex-col gap-3 sm:flex-row sm:items-end"
+              onSubmit={createEnvironment}
+            >
+              <div className="flex-1 space-y-2">
+                <Label htmlFor="new-env-name">New environment</Label>
+                <Input
+                  id="new-env-name"
+                  placeholder="UAT"
+                  value={newEnvName}
+                  onChange={(event) => setNewEnvName(event.target.value)}
+                  required
+                />
+              </div>
+              <div className="w-full space-y-2 sm:w-40">
+                <Label htmlFor="new-env-slug">Slug (optional)</Label>
+                <Input
+                  id="new-env-slug"
+                  placeholder="uat"
+                  value={newEnvSlug}
+                  onChange={(event) => setNewEnvSlug(event.target.value)}
+                />
+              </div>
+              <Button type="submit" disabled={envBusy}>
+                {envBusy ? (
+                  <Loader2 className="size-4 animate-spin" />
+                ) : (
+                  <Plus className="size-4" />
+                )}
+                add environment
+              </Button>
+            </form>
+          </div>
+
           <div className="space-y-2">
             <h3 className="text-sm font-medium">Environment policies</h3>
             <p className="text-xs text-muted-foreground">
@@ -284,7 +412,7 @@ export function ApprovalsView({ project, currentUserId, canApprove }: Props) {
               </TableRow>
             </TableHeader>
             <TableBody>
-              {requests.map((request) => {
+              {requestList.items.map((request) => {
                 const isOwn = request.requestedById === currentUserId;
                 const pending = request.status === "pending";
                 return (
@@ -362,15 +490,16 @@ export function ApprovalsView({ project, currentUserId, canApprove }: Props) {
                   </TableRow>
                 );
               })}
-              {requests.length === 0 && (
+              {requestList.total === 0 && (
                 <TableRow>
                   <TableCell colSpan={6} className="py-8 text-center text-muted-foreground">
-                    No change requests.
+                    {requestList.query ? "No matching change requests." : "No change requests."}
                   </TableCell>
                 </TableRow>
               )}
             </TableBody>
           </Table>
+          <Pagination {...requestList.pagination} />
         </Card>
       </div>
     </section>

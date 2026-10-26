@@ -1,0 +1,18 @@
+apiVersion: v2
+name: opensiel
+description: Self-hosted secrets manager with approvals, versioning, SSO, dynamic credentials, and audit logs.
+type: application
+version: 0.1.0
+appVersion: "0.1.0"
+home: https://opensiel.liostech.id
+sources:
+  - https://github.com/ibrahimhnif/opensiel
+keywords:
+  - secrets-management
+  - secrets-manager
+  - self-hosted
+  - infisical-alternative
+  - vault-alternative
+maintainers:
+  - name: opensiel contributors
+    url: https://github.com/ibrahimhnif/opensiel

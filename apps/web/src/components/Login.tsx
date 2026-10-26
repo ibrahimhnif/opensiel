@@ -2,7 +2,8 @@ import { useState } from "react";
 import { Link } from "react-router-dom";
 import type { UserDto } from "@opensiel/shared";
 import { Fingerprint, History, Loader2, ShieldCheck } from "lucide-react";
-import { api, errorMessage } from "../api";
+import QRCode from "react-qr-code";
+import { ApiError, api, errorMessage } from "../api";
 import { Button } from "./ui/button";
 import { Card, CardContent } from "./ui/card";
 import { Input } from "./ui/input";
@@ -29,21 +30,95 @@ export function Login({ config, onLogin, initialError }: Props) {
   const [orgName, setOrgName] = useState("");
   const [error, setError] = useState(initialError ?? "");
   const [busy, setBusy] = useState(false);
+  const [mfaChallenge, setMfaChallenge] = useState("");
+  const [mfaCode, setMfaCode] = useState("");
+  const [enrollment, setEnrollment] = useState<{
+    token: string;
+    secret: string;
+    otpauthUrl: string;
+  } | null>(null);
+  const [enrollCode, setEnrollCode] = useState("");
 
   async function submit(event: React.FormEvent) {
     event.preventDefault();
     setBusy(true);
     setError("");
     try {
-      const result =
-        mode === "signup"
-          ? await api.post<{ user: UserDto }>("/api/auth/signup", {
-              email,
-              password,
-              name,
-              orgName: orgName || undefined,
-            })
-          : await api.post<{ user: UserDto }>("/api/auth/login", { email, password });
+      if (mode === "signup") {
+        const result = await api.post<{ user: UserDto }>("/api/auth/signup", {
+          email,
+          password,
+          name,
+          orgName: orgName || undefined,
+        });
+        onLogin(result.user);
+        return;
+      }
+
+      const result = await api.post<{
+        user?: UserDto;
+        token?: string;
+        mfaRequired?: boolean;
+        challengeToken?: string;
+      }>("/api/auth/login", { email, password });
+
+      if (result.mfaRequired && result.challengeToken) {
+        setMfaChallenge(result.challengeToken);
+        setMfaCode("");
+        return;
+      }
+      if (result.user) onLogin(result.user);
+    } catch (err) {
+      if (err instanceof ApiError) {
+        const body = err.body as { error?: string; enrollmentToken?: string } | undefined;
+        if (body?.error === "mfa_enrollment_required" && body.enrollmentToken) {
+          try {
+            const setup = await api.post<{ secret: string; otpauthUrl: string }>(
+              "/api/auth/mfa/setup",
+              { enrollmentToken: body.enrollmentToken },
+            );
+            setEnrollment({ token: body.enrollmentToken, ...setup });
+            setEnrollCode("");
+            return;
+          } catch (setupError) {
+            setError(errorMessage(setupError));
+            return;
+          }
+        }
+      }
+      setError(errorMessage(err));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function completeMfa(event: React.FormEvent) {
+    event.preventDefault();
+    setBusy(true);
+    setError("");
+    try {
+      const result = await api.post<{ user: UserDto }>("/api/auth/mfa/login", {
+        challengeToken: mfaChallenge,
+        code: mfaCode,
+      });
+      onLogin(result.user);
+    } catch (err) {
+      setError(errorMessage(err));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function completeEnrollment(event: React.FormEvent) {
+    event.preventDefault();
+    if (!enrollment) return;
+    setBusy(true);
+    setError("");
+    try {
+      const result = await api.post<{ user: UserDto }>("/api/auth/mfa/verify", {
+        enrollmentToken: enrollment.token,
+        code: enrollCode,
+      });
       onLogin(result.user);
     } catch (err) {
       setError(errorMessage(err));
@@ -139,64 +214,136 @@ export function Login({ config, onLogin, initialError }: Props) {
                 </>
               )}
 
-              <form className="space-y-4" onSubmit={submit}>
-                <div className="space-y-2">
-                  <Label htmlFor="email">Email</Label>
-                  <Input
-                    id="email"
-                    type="email"
-                    autoComplete="email"
-                    value={email}
-                    onChange={(event) => setEmail(event.target.value)}
-                    required
-                  />
-                </div>
+              {mfaChallenge ? (
+                <form className="space-y-4" onSubmit={completeMfa}>
+                  <div className="space-y-2">
+                    <Label htmlFor="mfa-code">Authentication code</Label>
+                    <Input
+                      id="mfa-code"
+                      autoComplete="one-time-code"
+                      autoCapitalize="characters"
+                      autoFocus
+                      value={mfaCode}
+                      onChange={(event) => setMfaCode(event.target.value)}
+                      placeholder="123456"
+                      required
+                    />
+                    <p className="text-xs text-muted-foreground">
+                      Enter the 6-digit code from your authenticator, or a recovery code.
+                    </p>
+                  </div>
+                  <Button className="w-full" type="submit" disabled={busy}>
+                    {busy && <Loader2 className="size-4 animate-spin" />}
+                    {busy ? "verifying…" : "verify"}
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="link"
+                    className="h-auto p-0 text-xs"
+                    onClick={() => {
+                      setMfaChallenge("");
+                      setMfaCode("");
+                      setError("");
+                    }}
+                  >
+                    back to password
+                  </Button>
+                </form>
+              ) : enrollment ? (
+                <form className="space-y-4" onSubmit={completeEnrollment}>
+                  <div className="space-y-1">
+                    <p className="text-sm font-medium">Set up an authenticator</p>
+                    <p className="text-xs text-muted-foreground">
+                      This organization requires MFA. Scan the code and enter the 6-digit code to
+                      finish signing in.
+                    </p>
+                  </div>
+                  <div className="flex justify-center rounded-lg bg-white p-3">
+                    <QRCode value={enrollment.otpauthUrl} size={160} />
+                  </div>
+                  <div className="space-y-1">
+                    <Label>Manual secret</Label>
+                    <code className="block rounded bg-muted px-2 py-1 text-xs break-all">
+                      {enrollment.secret}
+                    </code>
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="enroll-code">Code</Label>
+                    <Input
+                      id="enroll-code"
+                      autoComplete="one-time-code"
+                      inputMode="numeric"
+                      autoFocus
+                      value={enrollCode}
+                      onChange={(event) => setEnrollCode(event.target.value)}
+                      required
+                    />
+                  </div>
+                  <Button className="w-full" type="submit" disabled={busy}>
+                    {busy && <Loader2 className="size-4 animate-spin" />}
+                    {busy ? "verifying…" : "enable MFA and sign in"}
+                  </Button>
+                </form>
+              ) : (
+                <form className="space-y-4" onSubmit={submit}>
+                  <div className="space-y-2">
+                    <Label htmlFor="email">Email</Label>
+                    <Input
+                      id="email"
+                      type="email"
+                      autoComplete="email"
+                      value={email}
+                      onChange={(event) => setEmail(event.target.value)}
+                      required
+                    />
+                  </div>
 
-                <div className="space-y-2">
-                  <Label htmlFor="password">Password</Label>
-                  <Input
-                    id="password"
-                    type="password"
-                    autoComplete={mode === "signup" ? "new-password" : "current-password"}
-                    value={password}
-                    onChange={(event) => setPassword(event.target.value)}
-                    required
-                    minLength={mode === "signup" ? 12 : 1}
-                  />
-                </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="password">Password</Label>
+                    <Input
+                      id="password"
+                      type="password"
+                      autoComplete={mode === "signup" ? "new-password" : "current-password"}
+                      value={password}
+                      onChange={(event) => setPassword(event.target.value)}
+                      required
+                      minLength={mode === "signup" ? 12 : 1}
+                    />
+                  </div>
 
-                {mode === "signup" && (
-                  <>
-                    <div className="space-y-2">
-                      <Label htmlFor="name">Name</Label>
-                      <Input
-                        id="name"
-                        value={name}
-                        onChange={(event) => setName(event.target.value)}
-                        required
-                      />
-                    </div>
-                    <div className="space-y-2">
-                      <Label htmlFor="orgName">
-                        Organization{" "}
-                        <span className="font-normal text-muted-foreground">(optional)</span>
-                      </Label>
-                      <Input
-                        id="orgName"
-                        value={orgName}
-                        onChange={(event) => setOrgName(event.target.value)}
-                      />
-                    </div>
-                  </>
-                )}
+                  {mode === "signup" && (
+                    <>
+                      <div className="space-y-2">
+                        <Label htmlFor="name">Name</Label>
+                        <Input
+                          id="name"
+                          value={name}
+                          onChange={(event) => setName(event.target.value)}
+                          required
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <Label htmlFor="orgName">
+                          Organization{" "}
+                          <span className="font-normal text-muted-foreground">(optional)</span>
+                        </Label>
+                        <Input
+                          id="orgName"
+                          value={orgName}
+                          onChange={(event) => setOrgName(event.target.value)}
+                        />
+                      </div>
+                    </>
+                  )}
 
-                {error && <Notice tone="error">{error}</Notice>}
+                  <Button className="w-full" type="submit" disabled={busy}>
+                    {busy && <Loader2 className="size-4 animate-spin" />}
+                    {busy ? "working…" : mode === "signup" ? "Create account" : "Sign in"}
+                  </Button>
+                </form>
+              )}
 
-                <Button className="w-full" type="submit" disabled={busy}>
-                  {busy && <Loader2 className="size-4 animate-spin" />}
-                  {busy ? "working…" : mode === "signup" ? "Create account" : "Sign in"}
-                </Button>
-              </form>
+              {error && <Notice tone="error">{error}</Notice>}
 
               {config.signupEnabled && (
                 <Button

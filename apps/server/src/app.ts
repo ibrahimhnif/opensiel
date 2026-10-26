@@ -19,6 +19,14 @@ import { registerDynamicRoutes } from "./routes/dynamic.js";
 import { registerAdminRoutes } from "./routes/admin.js";
 import { registerWebhookRoutes } from "./routes/webhooks.js";
 import { registerSamlRoutes } from "./routes/saml.js";
+import { registerHistoryRoutes } from "./routes/history.js";
+import { registerTransitRoutes } from "./routes/transit.js";
+import { registerMfaRoutes } from "./routes/mfa.js";
+import { registerIdentityAuthRoutes } from "./routes/identity-auth.js";
+import { registerRotationRoutes } from "./routes/rotations.js";
+import { registerRoleRoutes } from "./routes/roles.js";
+import { registerSyncRoutes } from "./routes/syncs.js";
+import { registerE2eeRoutes } from "./routes/e2ee.js";
 import type { Deps } from "./types.js";
 
 export async function buildApp(deps: Deps): Promise<FastifyInstance> {
@@ -84,6 +92,14 @@ export async function buildApp(deps: Deps): Promise<FastifyInstance> {
   registerAdminRoutes(app, deps);
   registerWebhookRoutes(app, deps);
   registerSamlRoutes(app, deps);
+  registerHistoryRoutes(app, deps);
+  registerTransitRoutes(app, deps);
+  registerMfaRoutes(app, deps);
+  registerIdentityAuthRoutes(app, deps);
+  registerRotationRoutes(app, deps);
+  registerRoleRoutes(app, deps);
+  registerSyncRoutes(app, deps);
+  registerE2eeRoutes(app, deps);
 
   app.setErrorHandler((error, request, reply) => {
     if (error instanceof AppError) {
@@ -101,6 +117,32 @@ export async function buildApp(deps: Deps): Promise<FastifyInstance> {
 
   const webDir = deps.env.webDir ? resolve(process.cwd(), deps.env.webDir) : undefined;
   const serveWeb = Boolean(webDir && existsSync(resolve(webDir, "index.html")));
+  const docsDir = webDir ? resolve(webDir, "docs") : undefined;
+  const serveDocs = Boolean(docsDir && existsSync(resolve(docsDir, "index.html")));
+
+  function findDocsFile(rawUrl: string): string | undefined {
+    if (!docsDir) return undefined;
+    let pathname: string;
+    try {
+      pathname = decodeURIComponent(rawUrl.split("?")[0] ?? "/");
+    } catch {
+      return undefined;
+    }
+    if (pathname === "/docs") pathname = "/docs/";
+    if (!pathname.startsWith("/docs/")) return undefined;
+    const relative = pathname.slice("/docs/".length).replace(/\/+$/, "");
+    const candidates = relative
+      ? [relative, `${relative}.html`, `${relative}/index.html`]
+      : ["index.html"];
+    for (const candidate of candidates) {
+      const absolute = resolve(docsDir, candidate);
+      if (absolute !== docsDir && !absolute.startsWith(`${docsDir}/`)) continue;
+      if (absolute.endsWith(".html") && existsSync(absolute)) {
+        return `docs/${candidate}`;
+      }
+    }
+    return undefined;
+  }
 
   if (serveWeb && webDir) {
     await app.register(fastifyStatic, {
@@ -114,6 +156,11 @@ export async function buildApp(deps: Deps): Promise<FastifyInstance> {
   app.setNotFoundHandler((request, reply) => {
     if (request.url.startsWith("/api/")) {
       return reply.code(404).send({ error: "not_found", message: "route not found" });
+    }
+    if (serveDocs && request.method === "GET" && request.url.startsWith("/docs")) {
+      const file = findDocsFile(request.url);
+      if (file) return reply.sendFile(file);
+      return reply.code(404).sendFile("docs/404.html");
     }
     if (serveWeb && request.method === "GET") {
       return reply.sendFile("index.html");

@@ -3,13 +3,13 @@ import {
   constantTimeEqualHex,
   decryptValue,
   encryptValue,
-  fingerprint,
   generateDek,
   generateMasterKey,
   parseMasterKey,
   secretAad,
   sha256,
   unwrapDek,
+  valueFingerprint,
   wrapDek,
 } from "../src/crypto.js";
 
@@ -68,8 +68,15 @@ describe("envelope encryption", () => {
 describe("hashing helpers", () => {
   it("hashes deterministically", () => {
     expect(sha256("token")).toBe(sha256("token"));
-    expect(fingerprint("value")).toBe(sha256("value"));
     expect(sha256("a")).not.toBe(sha256("b"));
+  });
+
+  it("keys fingerprints so a database dump cannot confirm guesses", () => {
+    const dek = generateDek();
+    const otherDek = generateDek();
+    expect(valueFingerprint(dek, "value")).toBe(valueFingerprint(dek, "value"));
+    expect(valueFingerprint(dek, "value")).not.toBe(valueFingerprint(otherDek, "value"));
+    expect(valueFingerprint(dek, "value")).not.toBe(sha256("value"));
   });
 
   it("compares in constant time", () => {

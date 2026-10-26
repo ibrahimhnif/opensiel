@@ -1,13 +1,23 @@
 import { useCallback, useEffect, useState } from "react";
+import { useSearchParams } from "react-router-dom";
 import type { ProjectDto, UserDto } from "@opensiel/shared";
 import { FolderPlus, Loader2, LogOut, Plus } from "lucide-react";
 import { api, errorMessage } from "../api";
 import { cn } from "../lib/utils";
 import { Badge } from "./ui/badge";
 import { Button } from "./ui/button";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "./ui/dialog";
 import { Input } from "./ui/input";
+import { Label } from "./ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "./ui/select";
-import { Notice } from "./Notice";
+import { useToastMessage } from "../hooks/useToastMessage";
 import { Logo } from "./Logo";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "./ui/tabs";
 import { SecretsView } from "./SecretsView";
@@ -18,9 +28,24 @@ import { IdentitiesView } from "./IdentitiesView";
 import { AuditView } from "./AuditView";
 import { DynamicView } from "./DynamicView";
 import { WebhooksView } from "./WebhooksView";
+import { MfaCard } from "./MfaCard";
+import { RotationsView } from "./RotationsView";
+import { RolesView } from "./RolesView";
+import { SyncsView } from "./SyncsView";
 
 type Tab =
-  "secrets" | "scan" | "dynamic" | "webhooks" | "approvals" | "members" | "identities" | "audit";
+  | "secrets"
+  | "scan"
+  | "dynamic"
+  | "webhooks"
+  | "approvals"
+  | "members"
+  | "identities"
+  | "audit"
+  | "security"
+  | "rotations"
+  | "access"
+  | "syncs";
 
 const TABS: { value: Tab; label: string }[] = [
   { value: "secrets", label: "Secrets" },
@@ -31,26 +56,27 @@ const TABS: { value: Tab; label: string }[] = [
   { value: "members", label: "Members" },
   { value: "identities", label: "Identities" },
   { value: "audit", label: "Audit" },
+  { value: "rotations", label: "Rotations" },
+  { value: "syncs", label: "Syncs" },
+  { value: "access", label: "Access" },
+  { value: "security", label: "Security" },
 ];
 
 export function Dashboard({ user, onSignedOut }: { user: UserDto; onSignedOut: () => void }) {
   const [projects, setProjects] = useState<ProjectDto[]>([]);
-  const [projectId, setProjectId] = useState("");
-  const [env, setEnv] = useState("dev");
+  const [searchParams, setSearchParams] = useSearchParams();
   const [tab, setTab] = useState<Tab>("secrets");
   const [error, setError] = useState("");
   const [creating, setCreating] = useState(false);
   const [newProjectName, setNewProjectName] = useState("");
   const [loading, setLoading] = useState(true);
+  const [mobileCreateOpen, setMobileCreateOpen] = useState(false);
+  useToastMessage("error", error, setError);
 
   const loadProjects = useCallback(async () => {
     try {
       const result = await api.get<{ projects: ProjectDto[] }>("/api/projects");
       setProjects(result.projects);
-      setProjectId((current) => {
-        if (current && result.projects.some((project) => project.id === current)) return current;
-        return result.projects[0]?.id ?? "";
-      });
       setError("");
     } catch (err) {
       setError(errorMessage(err));
@@ -63,19 +89,53 @@ export function Dashboard({ user, onSignedOut }: { user: UserDto; onSignedOut: (
     void loadProjects();
   }, [loadProjects]);
 
-  const project = projects.find((candidate) => candidate.id === projectId);
+  const projectIdParam = searchParams.get("project") ?? "";
+  const envParam = searchParams.get("env") ?? "";
+  const project = projects.find((candidate) => candidate.id === projectIdParam) ?? projects[0];
+  const projectId = project?.id ?? "";
+  const env = project?.environments.some((candidate) => candidate.slug === envParam)
+    ? envParam
+    : (project?.environments[0]?.slug ?? "dev");
   const canManage = user.role === "owner" || user.role === "admin";
 
   useEffect(() => {
     if (!project) return;
-    if (!project.environments.some((candidate) => candidate.slug === env)) {
-      setEnv(project.environments[0]?.slug ?? "dev");
+    const next = new URLSearchParams(searchParams);
+    let changed = false;
+    if (next.get("project") !== project.id) {
+      next.set("project", project.id);
+      changed = true;
     }
-  }, [project, env]);
+    if (next.get("env") !== env) {
+      next.set("env", env);
+      changed = true;
+    }
+    if (changed) setSearchParams(next, { replace: true });
+  }, [project, env, searchParams, setSearchParams]);
 
-  async function createProject(event: React.FormEvent) {
+  function selectProject(id: string) {
+    const target = projects.find((candidate) => candidate.id === id);
+    const next = new URLSearchParams(searchParams);
+    next.set("project", id);
+    next.set(
+      "env",
+      target?.environments.some((candidate) => candidate.slug === envParam)
+        ? envParam
+        : (target?.environments[0]?.slug ?? "dev"),
+    );
+    setSearchParams(next);
+  }
+
+  function selectEnv(slug: string) {
+    const next = new URLSearchParams(searchParams);
+    next.set("project", projectId);
+    next.set("env", slug);
+    setSearchParams(next);
+  }
+
+  async function createProject(event: React.FormEvent): Promise<boolean> {
     event.preventDefault();
-    if (!newProjectName.trim()) return;
+    if (!newProjectName.trim()) return false;
     try {
       const result = await api.post<{ project: ProjectDto }>("/api/projects", {
         name: newProjectName.trim(),
@@ -83,9 +143,14 @@ export function Dashboard({ user, onSignedOut }: { user: UserDto; onSignedOut: (
       setNewProjectName("");
       setCreating(false);
       await loadProjects();
-      setProjectId(result.project.id);
+      setSearchParams({
+        project: result.project.id,
+        env: result.project.environments[0]?.slug ?? "dev",
+      });
+      return true;
     } catch (err) {
       setError(errorMessage(err));
+      return false;
     }
   }
 
@@ -147,7 +212,7 @@ export function Dashboard({ user, onSignedOut }: { user: UserDto; onSignedOut: (
                   "h-auto w-full justify-between px-3 py-2 font-normal",
                   candidate.id === projectId && "font-medium",
                 )}
-                onClick={() => setProjectId(candidate.id)}
+                onClick={() => selectProject(candidate.id)}
               >
                 <span className="truncate">{candidate.name}</span>
                 <span className="text-xs text-muted-foreground">
@@ -179,13 +244,18 @@ export function Dashboard({ user, onSignedOut }: { user: UserDto; onSignedOut: (
         </div>
       </aside>
 
-      <main className="flex min-w-0 flex-col gap-6 p-6">
-        <div className="flex items-center justify-between gap-3 md:hidden">
-          <Logo />
+      <main className="flex min-w-0 flex-col gap-6 p-4 md:p-6">
+        <div className="space-y-3 md:hidden">
+          <div className="flex items-center justify-between">
+            <Logo />
+            <Button variant="ghost" size="icon" onClick={signOut} aria-label="sign out">
+              <LogOut className="size-4" />
+            </Button>
+          </div>
           <div className="flex items-center gap-2">
-            {projects.length > 0 && (
-              <Select value={projectId} onValueChange={setProjectId}>
-                <SelectTrigger className="h-8 w-40">
+            {projects.length > 0 ? (
+              <Select value={projectId} onValueChange={selectProject}>
+                <SelectTrigger className="h-9 flex-1">
                   <SelectValue placeholder="Project" />
                 </SelectTrigger>
                 <SelectContent>
@@ -196,20 +266,28 @@ export function Dashboard({ user, onSignedOut }: { user: UserDto; onSignedOut: (
                   ))}
                 </SelectContent>
               </Select>
+            ) : (
+              <span className="flex-1 text-sm text-muted-foreground">No projects yet</span>
             )}
-            <Button variant="ghost" size="icon" onClick={signOut} aria-label="sign out">
-              <LogOut className="size-4" />
+            <Button
+              variant="outline"
+              size="icon"
+              className="size-9 shrink-0"
+              onClick={() => setMobileCreateOpen(true)}
+              aria-label="new project"
+            >
+              <Plus className="size-4" />
             </Button>
           </div>
         </div>
 
-        {error && (
-          <Notice tone="error" onDismiss={() => setError("")}>
-            {error}
-          </Notice>
-        )}
-
-        {!project ? (
+        {loading && projects.length === 0 ? (
+          <div className="grid flex-1 place-items-center py-16">
+            <span className="flex items-center gap-2 text-sm text-muted-foreground">
+              <Loader2 className="size-4 animate-spin" /> loading projects…
+            </span>
+          </div>
+        ) : !project ? (
           <div className="grid flex-1 place-items-center py-16">
             <div className="w-full max-w-md space-y-5 rounded-xl border bg-card p-6 text-center">
               <FolderPlus className="mx-auto size-10 text-primary" />
@@ -259,7 +337,7 @@ export function Dashboard({ user, onSignedOut }: { user: UserDto; onSignedOut: (
                       size="sm"
                       variant={environment.slug === env ? "default" : "outline"}
                       className="font-mono"
-                      onClick={() => setEnv(environment.slug)}
+                      onClick={() => selectEnv(environment.slug)}
                     >
                       {environment.slug}
                     </Button>
@@ -268,18 +346,24 @@ export function Dashboard({ user, onSignedOut }: { user: UserDto; onSignedOut: (
             </header>
 
             <Tabs value={tab} onValueChange={(value) => setTab(value as Tab)}>
-              <TabsList>
+              <TabsList className="w-full max-w-full justify-start overflow-x-auto md:w-fit">
                 {TABS.filter(
-                  (entry) => (entry.value !== "dynamic" && entry.value !== "webhooks") || canManage,
+                  (entry) =>
+                    (entry.value !== "dynamic" &&
+                      entry.value !== "webhooks" &&
+                      entry.value !== "rotations" &&
+                      entry.value !== "syncs" &&
+                      entry.value !== "access") ||
+                    canManage,
                 ).map((entry) => (
-                  <TabsTrigger key={entry.value} value={entry.value}>
+                  <TabsTrigger key={entry.value} value={entry.value} className="shrink-0">
                     {entry.label}
                   </TabsTrigger>
                 ))}
               </TabsList>
 
               <TabsContent value="secrets">
-                <SecretsView project={project} env={env} />
+                <SecretsView project={project} env={env} canManage={canManage} />
               </TabsContent>
               <TabsContent value="scan">
                 <ScanView project={project} />
@@ -291,7 +375,12 @@ export function Dashboard({ user, onSignedOut }: { user: UserDto; onSignedOut: (
                 <WebhooksView project={project} />
               </TabsContent>
               <TabsContent value="approvals">
-                <ApprovalsView project={project} currentUserId={user.id} canApprove={canManage} />
+                <ApprovalsView
+                  project={project}
+                  currentUserId={user.id}
+                  canApprove={canManage}
+                  onRefresh={loadProjects}
+                />
               </TabsContent>
               <TabsContent value="members">
                 <MembersView />
@@ -302,10 +391,57 @@ export function Dashboard({ user, onSignedOut }: { user: UserDto; onSignedOut: (
               <TabsContent value="audit">
                 <AuditView project={project} />
               </TabsContent>
+              <TabsContent value="rotations">
+                <RotationsView project={project} canManage={canManage} />
+              </TabsContent>
+              <TabsContent value="syncs">
+                <SyncsView project={project} canManage={canManage} />
+              </TabsContent>
+              <TabsContent value="access">
+                <RolesView project={project} />
+              </TabsContent>
+              <TabsContent value="security">
+                <MfaCard isOwner={user.role === "owner"} />
+              </TabsContent>
             </Tabs>
           </>
         )}
       </main>
+
+      <Dialog open={mobileCreateOpen} onOpenChange={setMobileCreateOpen}>
+        <DialogContent className="max-w-sm">
+          <form
+            className="space-y-4"
+            onSubmit={async (event) => {
+              if (await createProject(event)) setMobileCreateOpen(false);
+            }}
+          >
+            <DialogHeader>
+              <DialogTitle>New project</DialogTitle>
+              <DialogDescription>Projects group secrets by environment.</DialogDescription>
+            </DialogHeader>
+            <div className="space-y-2">
+              <Label htmlFor="mobile-project-name">Name</Label>
+              <Input
+                id="mobile-project-name"
+                autoFocus
+                value={newProjectName}
+                onChange={(event) => setNewProjectName(event.target.value)}
+                placeholder="my-app"
+                required
+              />
+            </div>
+            <DialogFooter>
+              <Button type="button" variant="outline" onClick={() => setMobileCreateOpen(false)}>
+                cancel
+              </Button>
+              <Button type="submit">
+                <Plus className="size-4" /> create
+              </Button>
+            </DialogFooter>
+          </form>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

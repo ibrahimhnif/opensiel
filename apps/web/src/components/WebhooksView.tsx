@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useEffect, useState } from "react";
 import type { ProjectDto, WebhookDto, WebhookEvent } from "@opensiel/shared";
 import { webhookEvents } from "@opensiel/shared";
 import { Copy, Loader2, Plus, RefreshCw, Send, Trash2, Webhook, X } from "lucide-react";
@@ -18,7 +18,11 @@ import {
 import { Input } from "./ui/input";
 import { Label } from "./ui/label";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "./ui/table";
-import { Notice } from "./Notice";
+import { Pagination } from "./Pagination";
+import { useServerList } from "../hooks/useServerList";
+import { notify } from "../lib/notify";
+import { useToastMessage } from "../hooks/useToastMessage";
+import { useConfirm } from "./ConfirmProvider";
 
 interface CreatedWebhook {
   url: string;
@@ -26,7 +30,7 @@ interface CreatedWebhook {
 }
 
 export function WebhooksView({ project }: { project: ProjectDto }) {
-  const [rows, setRows] = useState<WebhookDto[]>([]);
+  const confirm = useConfirm();
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const [created, setCreated] = useState<CreatedWebhook | null>(null);
@@ -34,22 +38,32 @@ export function WebhooksView({ project }: { project: ProjectDto }) {
   const [url, setUrl] = useState("");
   const [events, setEvents] = useState<WebhookEvent[]>(["secret.created", "secret.updated"]);
   const [busy, setBusy] = useState(false);
+  useToastMessage("success", notice, setNotice);
+  useToastMessage("error", error, setError);
 
-  const load = useCallback(async () => {
-    try {
-      const result = await api.get<{ webhooks: WebhookDto[] }>(
-        `/api/projects/${project.id}/webhooks`,
+  const list = useServerList<WebhookDto>({
+    key: project.id,
+    pageSize: 10,
+    initialSort: "createdAt",
+    initialOrder: "desc",
+    fetcher: async ({ limit, offset, q, sort, order }) => {
+      const params = new URLSearchParams({
+        limit: String(limit),
+        offset: String(offset),
+        order,
+      });
+      if (q) params.set("q", q);
+      if (sort) params.set("sort", sort);
+      const result = await api.get<{ webhooks: WebhookDto[]; total: number }>(
+        `/api/projects/${project.id}/webhooks?${params}`,
       );
-      setRows(result.webhooks);
-      setError("");
-    } catch (err) {
-      setError(errorMessage(err));
-    }
-  }, [project.id]);
+      return { items: result.webhooks, total: result.total };
+    },
+  });
 
   useEffect(() => {
-    void load();
-  }, [load]);
+    if (list.error) notify.error(list.error);
+  }, [list.error]);
 
   function toggleEvent(event: WebhookEvent) {
     setEvents((current) =>
@@ -70,7 +84,7 @@ export function WebhooksView({ project }: { project: ProjectDto }) {
       setOpen(false);
       setUrl("");
       setNotice("webhook created");
-      await load();
+      list.reload();
     } catch (err) {
       setError(errorMessage(err));
     } finally {
@@ -83,7 +97,7 @@ export function WebhooksView({ project }: { project: ProjectDto }) {
       await api.patch(`/api/projects/${project.id}/webhooks/${webhook.id}`, {
         enabled: !webhook.enabled,
       });
-      await load();
+      list.reload();
     } catch (err) {
       setError(errorMessage(err));
     }
@@ -101,18 +115,26 @@ export function WebhooksView({ project }: { project: ProjectDto }) {
           ? `test delivered (HTTP ${result.status})`
           : `test failed: ${result.error ?? "unknown error"}`,
       );
-      await load();
+      list.reload();
     } catch (err) {
       setError(errorMessage(err));
     }
   }
 
   async function remove(webhook: WebhookDto) {
-    if (!window.confirm(`Delete the webhook for ${webhook.url}?`)) return;
+    if (
+      !(await confirm({
+        title: "Delete webhook",
+        description: webhook.url,
+        confirmLabel: "delete",
+        destructive: true,
+      }))
+    )
+      return;
     try {
       await api.del(`/api/projects/${project.id}/webhooks/${webhook.id}`);
       setNotice("webhook deleted");
-      await load();
+      list.reload();
     } catch (err) {
       setError(errorMessage(err));
     }
@@ -136,8 +158,22 @@ export function WebhooksView({ project }: { project: ProjectDto }) {
             Send signed event payloads to an HTTPS endpoint. Payloads never include secret values.
           </p>
         </div>
-        <div className="flex items-center gap-2">
-          <Button variant="outline" size="sm" onClick={() => void load()}>
+        <div className="flex flex-wrap items-center gap-2">
+          <div className="relative w-full max-w-xs">
+            <Input
+              placeholder="Search URL…"
+              value={list.query}
+              onChange={(event) => list.setQuery(event.target.value)}
+            />
+          </div>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => list.setOrder(list.order === "asc" ? "desc" : "asc")}
+          >
+            {list.order}
+          </Button>
+          <Button variant="outline" size="sm" onClick={() => list.reload()}>
             <RefreshCw className="size-4" /> refresh
           </Button>
           <Button size="sm" onClick={() => setOpen(true)}>
@@ -145,17 +181,6 @@ export function WebhooksView({ project }: { project: ProjectDto }) {
           </Button>
         </div>
       </div>
-
-      {notice && (
-        <Notice tone="success" onDismiss={() => setNotice("")}>
-          {notice}
-        </Notice>
-      )}
-      {error && (
-        <Notice tone="error" onDismiss={() => setError("")}>
-          {error}
-        </Notice>
-      )}
 
       {created && (
         <div className="border-primary/40 bg-primary/10 text-primary rounded-lg border px-4 py-3 text-sm">
@@ -199,7 +224,7 @@ export function WebhooksView({ project }: { project: ProjectDto }) {
             </TableRow>
           </TableHeader>
           <TableBody>
-            {rows.map((webhook) => (
+            {list.items.map((webhook) => (
               <TableRow key={webhook.id}>
                 <TableCell className="max-w-sm truncate">
                   <code className="bg-transparent p-0 text-xs">{webhook.url}</code>
@@ -253,15 +278,16 @@ export function WebhooksView({ project }: { project: ProjectDto }) {
                 </TableCell>
               </TableRow>
             ))}
-            {rows.length === 0 && (
+            {list.total === 0 && (
               <TableRow>
                 <TableCell colSpan={5} className="py-8 text-center text-muted-foreground">
-                  No webhooks yet.
+                  {list.query ? "No matching webhooks." : "No webhooks yet."}
                 </TableCell>
               </TableRow>
             )}
           </TableBody>
         </Table>
+        <Pagination {...list.pagination} />
       </Card>
 
       <Dialog open={open} onOpenChange={setOpen}>
