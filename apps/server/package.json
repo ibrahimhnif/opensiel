@@ -31,7 +31,7 @@
     "libsodium-wrappers": "^0.8.4",
     "postgres": "^3.4.5",
     "undici": "^8.12.3",
-    "zod": "^3.24.1"
+    "zod": "^4.6.7"
   },
   "devDependencies": {
     "@types/libsodium-wrappers": "^0.8.2",
