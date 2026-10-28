@@ -93,7 +93,7 @@ jobs:
       packages: write
     steps:
       - uses: actions/checkout@v7
-      - uses: azure/setup-helm@v4
+      - uses: azure/setup-helm@v5
         with:
           version: v4.3.1
       - name: Lint chart
